@@ -27,6 +27,8 @@ JSON 用量后端、MCP 取消和访问日志尾部读取可运行 `make test TE
 
 UI 原生动效增量更新用 `make test TEST=ui-animation-performance`；前后对照运行 `python3 Tests/ui-animation-performance-regressions.py --compare --baseline-ref <修改前提交> --output-json <输出路径>`。使用生产曲线和图层代码、不可见夹具窗口，验证外观及播放生命周期。组件 CPU 时间与 model-layer 像素对照不能替代整窗口 FPS / GPU trace；详见 [UI 与动效审查](reviews/apple-ui-performance-2026-10-04.md)。
 
+无界面开发验证可使用 `.build/dev/bin/mtx-dev start --mode performance`，再以 `mode --json` 检查窗口和 Dock 状态，`mode desktop` 恢复。性能模式不放开 dev 的 VPN、硬件或外部客户端集成限制。
+
 CLI 命令、数据时效、JSON、启动与退出说明见 [CLI.md](CLI.md)。应用构建会内置对应版本的 CLI，正式版短名为 `mtx`，开发版为 `mtx-dev`，兼容 `claudebar` / `claudebar-dev`；显式安装命令是 `make install-cli` / `make install-cli-release`，仅安装命令链接，不安装或启动应用。
 
 ## 两个版本的隔离

@@ -2,9 +2,9 @@ import Foundation
 
 // MARK: - Chapters
 
-/// The help page's six chapters. Order is the reading order, not alphabetical.
+/// The help page's chapters. Order is the reading order, not alphabetical.
 enum HelpChapter: String, CaseIterable, Identifiable {
-    case start, proxy, sessions, vpn, keys, faq
+    case start, proxy, sessions, vpn, cli, keys, faq
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum HelpChapter: String, CaseIterable, Identifiable {
         case .proxy: return "本地代理"
         case .sessions: return "会话与用量"
         case .vpn: return "VPN"
+        case .cli: return "CLI 与性能模式"
         case .keys: return "快捷键"
         case .faq: return "排障"
         }
@@ -25,6 +26,7 @@ enum HelpChapter: String, CaseIterable, Identifiable {
         case .proxy: return "network"
         case .sessions: return "rectangle.stack"
         case .vpn: return "globe"
+        case .cli: return "terminal"
         case .keys: return "command"
         case .faq: return "stethoscope"
         }
@@ -111,7 +113,46 @@ struct HelpEntry: Identifiable {
 /// once and filters it in `onChange`, never in `body`.
 enum HelpCatalog {
 
-    static let entries: [HelpEntry] = start + proxy + sessions + vpn + keys + faq
+    static let entries: [HelpEntry] = start + proxy + sessions + vpn + cli + keys + faq
+
+    private static let cli: [HelpEntry] = [
+        HelpEntry(id: "cli-start", chapter: .cli, title: "MTX 命令行入门",
+                  summary: "mtx 查看面板，mtx start 启动，mtx stop 正常退出。", body: [
+            .para("正式版短命令是 `mtx`，兼容 `claudebar`；开发版使用 `mtx-dev` / `claudebar-dev`。`make install-cli-release` 把正式版命令链接到 `~/.local/bin`，不安装或启动正式版应用。开发版安装使用 `make install-cli`。该目录需要在 PATH 中；已打开的 zsh 可以执行 `rehash`。"),
+            .code("mtx start\nmtx -w 1\nmtx sessions count\nmtx commands\nmtx help\nmtx stop"),
+            .para("`mtx -w 1` 或 `mtx w 1` 常驻面板，每秒刷新；Ctrl-C 退出。不带秒数沿用 2 秒，范围 0.5–3600 秒。单项查询也支持 `mtx s -w 1`。常用缩写：s/sess 会话、c 数量、sys 本机、pv 供应商、md 模型、cn 连接器、mo 模式、on 启动、off 退出。子命令也能缩写，例如 `mtx s c`、`mtx pv ls`、`mtx cn off 名称`、`mtx mo p`；完整列表见 `mtx help`。参数缩写：-j JSON、-i 间隔、-n 刷新帧数、-a Agent、-s 会话状态、-l 行数。缩写不改变版本隔离、写操作限制或删除确认。"),
+            .bullets(["start / launch：启动对应版本。stop / quit：正常退出并由应用清理代理与 VPN。", "restart：正常退出后重启原来的应用包，不强制杀进程。", "system / cpu / gpu / memory / disk / battery / network / uptime：本机资源。", "greet / date / calendar / weather：问候、时钟、日历和缓存天气；weather refresh 按已有城市刷新，不请求定位。", "usage / models usage / quota / agents / alerts：用量、模型用量排名、额度、Agent 统计与健康提示。", "--json：机器可读结果。watch --json：逐行 NDJSON。completion zsh / bash / fish：补全脚本。"])
+        ], keywords: "cli terminal mtx claudebar 命令行 安装 启动 退出 stop start PATH rehash"),
+        HelpEntry(id: "cli-tui", chapter: .cli, title: "可滚动的交互终端",
+                  summary: "mtx -w 1：分页、搜索、详情、暂停与一次性控制命令。", body: [
+            .code("mtx -w 1\nmtx s -w 1\nmtx -w 1 -p\nmtx -w 1 -j -n 3"),
+            .para("输入和输出均为终端时自动进入交互面板。1–7、Tab 或左右键切换总览、会话、模型、VPN、连接器、本机和用量；上下键、j/k、PgUp/PgDn 和滚轮浏览，g/G 到首末行。刷新保留每页位置和选中记录，窗口缩放自动重排，只重绘变化的行。"),
+            .bullets(["/ 输入搜索，Enter 应用；浏览时 Esc 清除搜索。Enter 查看选中记录详情和完整 ID，Esc 关闭。", "空格冻结可见快照；后台服务和采样继续。再次空格显示最新数据。", "模型、VPN、连接器页按 r 读取目录或订阅节点预览；目录标记读取时间，再按 r 更新。", "m 开关鼠标报告；关闭后可用终端原生选择复制。? 看按键帮助，q / Ctrl-C 恢复终端并退出。"]),
+            .para("按 : 输入现有控制命令，例如 `pv cat -a claude`、`vpn pv`、`cn off \"连接器 ID\"`、`mo p`。支持缩写、引号和结果详情；只在提交时执行一次，周期刷新不重复写操作。粘贴不会自动提交，存档快照不能控制正在运行的应用，开发版限制继续生效。应用启动、退出和重启在普通 shell 中执行。"),
+            .para("不同终端的鼠标支持不同，可以始终使用键盘。-p 纯文本、-j JSON、数字计数、doctor、管道与非终端输入保留逐帧输出；交互面板支持退出时恢复输入、鼠标、光标和原屏幕。")
+        ], keywords: "cli tui terminal watch mtx 滚动 分页 搜索 详情 暂停 鼠标 键盘 命令栏"),
+        HelpEntry(id: "cli-control", chapter: .cli, title: "切换模型、供应商与连接器",
+                  summary: "先列出名称和 ID，再通过 use、enable、disable 操作。", body: [
+            .code("mtx providers catalog\nmtx providers use \"供应商名称\" --agent claude --model \"模型名称\"\nmtx models use \"模型名称\" --agent codex --provider \"供应商名称\"\nmtx providers official --agent codex\nmtx providers capture \"供应商名称\" off --agent claude"),
+            .para("切换复用应用原有的配置写入和代理协调。已在运行的外部会话不会自动换模型，需要新开会话。名称必须唯一，重复名称使用完整 ID。输出不含密钥、供应商 URL 或 MCP 环境变量。"),
+            .code("mtx connectors refresh --project /path/to/project\nmtx connectors list --json\nmtx connectors show \"名称或ID\"\nmtx connectors disable \"名称或ID\"\nmtx connectors enable \"名称或ID\"\nmtx connectors remove \"名称或ID\" --yes"),
+            .para("仅支持客户端本来允许控制的条目；原生客户端管理的连接器会明确拒绝。删除必须带 --yes。开发版不修改外部客户端连接器。"),
+            .code("mtx proxy start\nmtx proxy stop\nmtx config set appearance dark\nmtx config set token-units metric\nmtx config set weather-city 上海"),
+            .para("模型代理被流量记录、Chat API 或会话桥接需要时不能直接停止；先关闭相应记录或切换供应商。控制命令需要应用运行，通过同用户私有 socket 返回执行结果；查询不会隐式启动应用。")
+        ], keywords: "cli switch model provider 模型 供应商 切换 连接器 启用 停用 remove official config capture"),
+        HelpEntry(id: "cli-vpn", chapter: .cli, title: "CLI 管理 VPN 与节点",
+                  summary: "节点预览不启动 VPN；运行节点可以切换和测速。", body: [
+            .code("mtx vpn preview\nmtx vpn start\nmtx vpn nodes\nmtx vpn groups\nmtx vpn select \"节点名称\" --group \"分组名称\"\nmtx vpn test \"节点名称\"\nmtx vpn proxy off\nmtx vpn tun on\nmtx vpn reload\nmtx vpn stop"),
+            .para("preview 读取活动订阅的节点名称与分组，不输出原始订阅或凭据。nodes / groups 读取正在运行的内核；select 只切换可选的 Selector 分组。节点名有空格时加引号。start / stop / restart 沿用现有内核与代理清理流程。"),
+            .para("开发版可以查看库存和状态，但 VPN 启停、节点切换、测速、系统代理与 TUN 操作会在业务入口拒绝。控制失败用非零退出码，异步网络清理和刷新仍以随后 status 的读数为准。")
+        ], keywords: "cli vpn 节点 预览 groups select test 启动 关闭 代理 tun"),
+        HelpEntry(id: "cli-performance", chapter: .cli, title: "只保留 CLI 的性能模式",
+                  summary: "没有窗口、popup、菜单栏、灵动岛或 Dock 图标；后台服务继续运行。", body: [
+            .code("mtx start --mode performance\nmtx mode performance\nmtx mode status --json\nmtx mode desktop"),
+            .para("性能模式从启动时就不创建前端控制器；运行中开启会释放已有视图、计时器与鼠标监听器，关闭截图快捷键和通知展示。不会为切换模式停止 VPN 或模型代理。设置 → 启动与会话也能开启。"),
+            .para("模式按应用版本保存，下次启动沿用。性能模式下 open 和 Dock/Widget 入口不会拉起页面；使用 `mtx mode desktop` 恢复正常界面，或者退出后 `mtx start --mode desktop`。停止后台应用仍使用 `mtx stop`。")
+        ], keywords: "performance headless cli 性能 模式 后台 无界面 无窗口 Dock popup menuBar 恢复 desktop")
+    ]
 
     // MARK: 上手
 

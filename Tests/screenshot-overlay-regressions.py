@@ -30,7 +30,7 @@ build_channel = (root / 'Sources/Shared/BuildChannel.swift').read_text()
 
 # Accessors for `private` state, added on the *same types* — a follow-up
 # extension of the sliced class in the harness below cannot see private members.
-probe = build_channel + '\n' + overlay + r'''
+probe = build_channel + '\n' + (root / 'Sources/Shared/AppPresentation.swift').read_text() + '\n' + overlay + r'''
 
 extension ScreenshotPinPanel {
     var probeChromeBar: PinChromeBar { chromeBar }

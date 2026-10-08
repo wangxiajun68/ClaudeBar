@@ -531,6 +531,26 @@ final class CodexProviderStore: ObservableObject {
         }
     }
 
+    func activateForCLI(providerID: UUID, modelID: UUID) async throws {
+        try Task.checkCancellation()
+        guard activationTask == nil else { throw CLIControlFailure(message: "A Codex model switch is already pending") }
+        errorMessage = nil
+        activate(providerID: providerID, modelID: modelID)
+        if let task = activationTask {
+            await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        }
+        try Task.checkCancellation()
+        guard errorMessage == nil, activeProviderID == providerID,
+              providers.first(where: { $0.id == providerID })?.activeModelID == modelID else {
+            throw CLIControlFailure(message: "Codex model activation did not complete")
+        }
+    }
+
+    var proxyIsRequiredByCaptureOrBridge: Bool {
+        activeProvider?.captureEnabled == true || activeProvider?.wireAPI == "chat" || migrationBridgeActive
+            || claudePeer?.activeProvider?.captureEnabled == true
+    }
+
     private var activationTask: Task<Void, Never>?
     private var pendingActivation: (UUID, UUID)?
 

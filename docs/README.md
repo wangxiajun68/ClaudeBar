@@ -1,6 +1,6 @@
 # ClaudeBar 文档中心
 
-> 本仓库文档的唯一入口。最后更新：2026-10-02
+> 本仓库文档的唯一入口。最后更新：2026-10-07
 
 ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** 两层组织。先读设计建立产品上下文，再按需查阅技术实现。
 
@@ -12,6 +12,7 @@ ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** �
 |--------|------------|
 | **用户** | [README](../README.md) → [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG |
 | **排障** | [FAQ.md](FAQ.md) |
+| **终端控制 / 性能模式** | [CLI.md](CLI.md) |
 | **贡献者** | [CONTRIBUTING.md](../CONTRIBUTING.md) → [technical/10-extension-guide.md](technical/10-extension-guide.md) |
 | **维护者 / 发版** | [VERSIONING.md](VERSIONING.md) → [RELEASING.md](RELEASING.md) |
 | **安全报告** | [SECURITY.md](../SECURITY.md) |
@@ -27,6 +28,7 @@ docs/
 ├── RELEASING.md              维护者发版步骤
 ├── VERSIONING.md             版本号、tag、CHANGELOG 约定
 ├── DEVELOPMENT.md            开发环境与 dev / release 版本隔离
+├── CLI.md                    MTX 命令、自动化与性能模式
 ├── CHANGELOG.md              用户可见的版本变更
 ├── FEISHU_DOCUMENTS.md       飞书文档工作区
 ├── WORKFLOW_MONITORING.md    Claude Code workflow 状态监控

@@ -101,6 +101,7 @@ extension ProviderStore {
             connectorsScanned: connectors.hasScanned, connectorsLoading: connectors.isLoading,
             charge: .init(mode: charge.mode.label, limit: Int(charge.threshold),
                 status: charge.statusText, supported: charge.supported),
+            runMode: AppPresentation.performanceMode ? "performance" : "desktop",
             greeting: GreetingPhrase.resolve(prefs.greetingSelection, custom: prefs.greetingCustomText,
                 date: Date(), language: prefs.greetingLanguage).script,
             weather: weather.reading.map { r in

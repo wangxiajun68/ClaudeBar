@@ -22,7 +22,7 @@ if [ ! -f "$BUILD_DIR/cli/CLIVersion.swift" ] || [ "$(cat "$BUILD_DIR/cli/CLIVer
     printf '%s\n' "$VERSION_SOURCE" > "$BUILD_DIR/cli/CLIVersion.swift"
 fi
 SDK_PATH="$(xcrun --show-sdk-path --sdk macosx)"
-files=("$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift"
+files=("$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" "$PROJECT_DIR/Sources/Shared/CLIControl.swift" "$PROJECT_DIR/Sources/Shared/AppPresentation.swift"
        "$BUILD_DIR/cli/CLIVersion.swift" "$PROJECT_DIR"/Sources/CLI/*.swift)
 FINGERPRINT="$(python3 - "$OUTPUT" "$SDK_PATH:arm64-apple-macos${MACOS_MIN:-15.0}" "${SWIFT_FLAGS[*]}" "${files[@]}" <<'PYCLI'
 import hashlib

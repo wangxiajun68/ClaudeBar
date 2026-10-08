@@ -11,7 +11,7 @@ import tempfile
 import time
 
 root = Path(__file__).resolve().parents[1]
-shared = [root / 'Sources/Shared/BuildChannel.swift', root / 'Sources/Shared/CLISnapshot.swift']
+shared = [root / 'Sources/Shared/BuildChannel.swift', root / 'Sources/Shared/CLISnapshot.swift', root / 'Sources/Shared/CLIControl.swift', root / 'Sources/Shared/AppPresentation.swift']
 cli = sorted((root / 'Sources/CLI').glob('*.swift'))
 now = datetime.datetime.now(datetime.timezone.utc)
 snapshot = {
@@ -115,6 +115,14 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cli-') as temporary:
     run('commands', '--watch', code=2)
     watched = query('sessions', '--json', '--watch', '--samples', '2', '--interval', '0.5').stdout.splitlines()
     assert len(watched) == 2 and all(json.loads(row)['counts']['total'] == 14 for row in watched)
+    shorthand = query('s', '-w', '1', '-j', '-n', '2').stdout.splitlines()
+    assert len(shorthand) == 2 and all(json.loads(row)['counts']['total'] == 14 for row in shorthand)
+    timestamps = [datetime.datetime.fromisoformat(json.loads(row)['capturedAt'].replace('Z', '+00:00')) for row in shorthand]
+    assert (timestamps[1] - timestamps[0]).total_seconds() >= 0.8
+    assert query('s', 'c', '-a', 'codex').stdout.strip() == '1'
+    assert json.loads(run('cmd', '-j').stdout)['aliases']['cn'] == 'connectors'
+    # The exact requested form watches the whole panel and emits one JSON line per frame.
+    assert len(query('-w', '1', '-j', '-n', '2').stdout.splitlines()) == 2
     # A downstream consumer (head/jq) closing stdout must not raise an ObjC exception.
     pipe = subprocess.Popen([str(binary), 'sessions', '--snapshot', str(fixture), '--json', '--watch',
                              '--samples', '3', '--interval', '0.5'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -140,6 +148,8 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cli-') as temporary:
     for shell in ['bash', 'zsh', 'fish']:
         completion = run('completion', shell).stdout
         assert 'mtx-dev' in completion and 'claudebar-dev' in completion and 'sessions' in completion and 'weather' in completion
+        assert 'sess' in completion and 'cn' in completion
+        assert ('-s w' if shell == 'fish' else '-w') in completion
         if shell in ['bash', 'zsh']:
             script = temp / f'completion.{shell}'
             script.write_text(completion)
@@ -157,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cli-') as temporary:
     import pty
     master, slave = pty.openpty()
     process = subprocess.Popen([str(binary), 'sessions', '--snapshot', str(fixture), '--watch', '--interval', '0.5'],
-                               stdout=slave, stderr=slave, env=dict(os.environ, TERM='xterm-256color'))
+                               stdin=slave, stdout=slave, stderr=slave, env=dict(os.environ, TERM='xterm-256color'))
     os.close(slave)
     import threading
     chunks = []
@@ -185,6 +195,106 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cli-') as temporary:
         os.close(master)
     output = b''.join(chunks)
     assert b'\x1b[?25h' in output and b'\x1b[?1049l' in output, output
+
+
+    # Exercise the real event loop in a small PTY; fixtures only, no running app/control socket.
+    import fcntl
+    import select
+    import struct
+    import termios
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 18, 100, 0, 0))
+    original_settings = termios.tcgetattr(slave)
+    process = subprocess.Popen([str(binary), 's', '--snapshot', str(fixture), '-w', '0.5'],
+                               stdin=slave, stdout=slave, stderr=slave,
+                               env=dict(os.environ, TERM='xterm-256color'))
+    captured = bytearray()
+    def wait_for(needle, start=0, timeout=8):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if needle in captured[start:]: return
+            readable, _, _ = select.select([master], [], [], .1)
+            if readable:
+                try: captured.extend(os.read(master, 65536))
+                except OSError: break
+        assert needle in captured[start:], (needle, bytes(captured[start:]))
+    def send(text, needle):
+        start = len(captured)
+        os.write(master, text)
+        wait_for(needle, start)
+    try:
+        wait_for(b'CLAUDE/100')
+        assert b'CURSOR/cursor-m' not in captured  # Below the initial viewport.
+        assert termios.tcgetattr(slave)[3] & termios.ICANON == 0
+        send(b'G', b'CURSOR/cursor-m')
+        send(b'\r', b'SESSION cursor-main')
+        send(b'\x1b', b'CURSOR/cursor-m')
+        send(b'/matrix\r', b'1 rows')
+        send(b'\r', b'SESSION codex-main')
+        send(b'\x1b', b'CODEX/codex-ma')
+        send(b' ', b'PAUSED')
+        snapshot['sessions'][12]['project'] = 'fresh-after-pause'
+        fixture.write_text(json.dumps(snapshot))
+        # Refresh remains active while the visible frame is frozen.
+        time.sleep(.8)
+        send(b'm', b'\x1b[?1006l')
+        assert b'fresh-after-pause' not in captured
+        send(b' ', b'0 rows')  # Search matrix no longer matches in the newly loaded frame.
+        send(b'\x1b', b'14 rows')  # Clear this page's search.
+        send(b'm', b'\x1b[?1006h')
+        send(b'\x1b[<65;2;8M', b'4-14/14')
+        send(b':vpn pv\r', b'Archived snapshot views cannot control')
+        send(b'?', b'MTX INTERACTIVE TERMINAL')
+        mark = len(captured)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 10, 45, 0, 0))
+        process.send_signal(signal.SIGWINCH)
+        wait_for(b'\x1b[2J', mark)
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=10) == 130
+        while select.select([master], [], [], .1)[0]:
+            try:
+                chunk = os.read(master, 65536)
+                if not chunk: break
+                captured.extend(chunk)
+            except OSError: break
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            process.wait(timeout=10)
+        restored = termios.tcgetattr(slave)
+        restored[3] &= ~termios.PENDIN  # Darwin marks queued canonical input for reprocessing.
+        original_settings[3] &= ~termios.PENDIN
+        assert restored == original_settings
+        os.close(slave); os.close(master)
+    assert process.returncode == 130
+    assert all(sequence in captured for sequence in [b'\x1b[?1006l', b'\x1b[?2004l', b'\x1b[?25h', b'\x1b[?1049l'])
+
+    for finite in [False, True]:
+        master, slave = pty.openpty()
+        original_settings = termios.tcgetattr(slave)
+        process = subprocess.Popen([str(binary), 's', '--snapshot', str(fixture), '-w', '.5'] + (['-n', '2'] if finite else []),
+                                   stdin=slave, stdout=slave, stderr=slave, env=dict(os.environ, TERM='xterm-256color'))
+        output = bytearray(); deadline = time.monotonic() + 10; sent = False
+        try:
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], .1)[0]:
+                    output.extend(os.read(master, 65536))
+                if not finite and b'CLAUDE/100' in output and not sent:
+                    os.write(master, b'q'); sent = True
+                if process.poll() is not None: break
+            assert process.wait(timeout=2) == 0
+            while select.select([master], [], [], .1)[0]:
+                chunk = os.read(master, 65536)
+                if not chunk: break
+                output.extend(chunk)
+            restored = termios.tcgetattr(slave)
+            restored[3] &= ~termios.PENDIN; original_settings[3] &= ~termios.PENDIN
+            assert restored == original_settings
+            assert b'\x1b[?2004l' in output and b'\x1b[?1049l' in output
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait()  # Only this isolated CLI fixture.
+            os.close(slave); os.close(master)
 
     # Direct production renderer tests with synthetic host telemetry (no hardware reads).
     harness = temp / 'Renderer.swift'
@@ -251,12 +361,98 @@ import Darwin
             let vpn = CLIRenderer(terminal: terminal, options: vpnOptions).render(frame)
             precondition(!vpn.contains("\u{1B}"))
         }
+
+        var catalog = CLITUIState(command: "models")
+        catalog.receive(frame)
+        let providerReply = CLIControl.response(.init(command: "providers", arguments: ["catalog"]), message: "Catalog", result: ["providers": [
+            ["id": "p-1", "name": "Provider One", "agent": "claude", "active": true,
+             "models": [["id": "m-1", "name": "Model One", "active": true]]]]])
+        precondition(catalog.receiveCatalog(providerReply) && catalog.page == "models")
+        let catalogRows = catalog.rows(options: .init(), terminal: .init(width: 100, height: 30, color: false, ascii: false, plain: false))
+        precondition(catalogRows.count == 3 && catalogRows.last!.detail.contains("ID: m-1"))
+        let nodeReply = CLIControl.response(.init(command: "vpn", arguments: ["preview"]), message: "Preview", result: ["source": "subscription",
+            "nodes": [["name": "Hong Kong 01"]], "groups": [["name": "Main", "nodes": ["Hong Kong 01"]]]])
+        precondition(catalog.receiveCatalog(nodeReply) && catalog.page == "vpn")
+        catalog.viewports["vpn"] = .init(query: "Hong Kong")
+        precondition(catalog.rows(options: .init(), terminal: .init(width: 100, height: 30, color: false, ascii: false, plain: false)).count == 1)
+
+        // Decode split UTF-8 and split escape reports; pasted CR must never submit a command.
+        var input = CLITUIInput()
+        precondition(input.feed([27, 91]).isEmpty)
+        precondition(input.feed([65]) == [.up])
+        precondition(input.feed(Array("\u{1B}[<65;9;5M".utf8)) == [.mouse(65, 9, 5, false)])
+        precondition(input.feed([27, 91, 77, 96, 113]).isEmpty)
+        precondition(input.feed([37]) == [.mouse(64, 81, 5, false)])
+        precondition(input.feed([27]).isEmpty)
+        precondition(input.feed([], flushEscape: true) == [.escape])
+        let chinese = Array("中".utf8)
+        precondition(input.feed(Array(chinese.prefix(1))).isEmpty)
+        precondition(input.feed(Array(chinese.dropFirst())) == [.text("中")])
+        let paste = input.feed(Array("\u{1B}[200~vpn off\r\u{1B}[201~".utf8))
+        precondition(!paste.contains(.enter))
+        precondition(paste.allSatisfy { if case .paste = $0 { return true }; return false })
+        precondition(input.feed([255, 113]) == [.text("q")])
+        let argv = try CLITUIState.arguments("vpn s 'Hong Kong 01' --group \"Main group\"")
+        precondition(argv == ["vpn", "s", "Hong Kong 01", "--group", "Main group"])
+        let literalArgv = try CLITUIState.arguments("cn s '$(touch secret)' " )
+        precondition(literalArgv == ["cn", "s", "$(touch secret)"])
+        do { _ = try CLITUIState.arguments("vpn s 'broken"); preconditionFailure() } catch {}
+        var viewport = CLITUIViewport()
+        let records = (0..<30).map { CLITUIRow(id: "id-\($0)", text: "record \($0)") }
+        viewport.reconcile(records, height: 5); viewport.move(12, rows: records, height: 5)
+        precondition(viewport.selected == "id-12" && viewport.offset == 8)
+        var inserted = [CLITUIRow(id: "new", text: "new")] + records
+        viewport.reconcile(inserted, height: 5)
+        precondition(viewport.selected == "id-12" && viewport.offset == 9 && viewport.top == "id-8")
+        inserted.removeAll { $0.id == "id-12" }
+        viewport.reconcile(inserted, height: 5)
+        precondition(viewport.selected == "id-8")
+        viewport.scroll(100, rows: inserted, height: 5)
+        precondition(viewport.offset == inserted.count - 5)
+        viewport.reconcile([], height: 5); precondition(viewport.offset == 0 && viewport.selected == nil)
+        var tui = CLITUIState(command: "sessions")
+        tui.receive(frame); let beforePause = tui.frame!.capturedAt
+        tui.togglePause(latest: frame)
+        var next = frame; next.capturedAt = frame.capturedAt.addingTimeInterval(20)
+        next.system!.cpuPercent = 99; tui.receive(next)
+        precondition(tui.frame!.capturedAt == beforePause)
+        tui.togglePause(latest: next); precondition(tui.frame!.capturedAt == next.capturedAt)
+        for _ in 0..<100 { tui.receive(next) }; precondition(tui.history.count == 60)
+        tui.viewports["sessions"] = .init(query: "matrix")
+        precondition(tui.rows(options: .init(), terminal: .init(width: 100, height: 20, color: false, ascii: false, plain: false)).isEmpty)
+        tui.viewports["sessions"] = .init()
+        tui.modal = ["A long detail / 中文 / 👨‍👩‍👧‍👦 " + String(repeating: "Long path ", count: 30)]
+        for width in [1, 12, 45, 100] {
+            for height in [1, 7, 18, 40] {
+                let screen = tui.screen(options: .init(), terminal: .init(width: width, height: height, color: true, ascii: false, plain: false))
+                precondition(screen.count == height)
+                precondition(screen.allSatisfy { CLITerminal.cells(CLITUIState.plain($0)) <= max(1, width - 1) })
+            }
+        }
+        tui.modal = nil
+        for page in CLITUIState.pages {
+            tui.page = page
+            for width in [12, 45, 64, 65, 66, 100] {
+                let terminal = CLITerminal(width: width, height: 18, color: true, ascii: false, plain: false)
+                let screen = tui.screen(options: .init(), terminal: terminal)
+                precondition(screen.count == 18 && screen.allSatisfy { CLITerminal.cells(CLITUIState.plain($0)) <= width - 1 })
+                let rows = tui.rows(options: .init(), terminal: CLITUIState.bodyTerminal(terminal))
+                precondition(rows.contains { $0.id == tui.viewports[page]?.top })
+            }
+        }
+        var diff = CLITUIDiff()
+        precondition(diff.draw(["a", "b"], width: 30).contains("\u{1B}[2J"))
+        precondition(diff.draw(["a", "b"], width: 30).isEmpty)
+        let changed = diff.draw(["a", "c"], width: 30)
+        precondition(changed.contains("\u{1B}[2;1H") && !changed.contains("\u{1B}[1;1H") && !changed.contains("\u{1B}[2J"))
+        precondition(diff.draw(["a", "c"], width: 20).contains("\u{1B}[2J"))
+        print("PASS: TUI input, stable viewport, pause, command quoting, Unicode clipping and incremental rendering")
         print("PASS: renderer width, CJK, telemetry, injection defense and freshness")
     }
 }
 ''')
     renderer = temp / 'renderer'
-    renderer_sources = shared + [path for path in cli if path.name != 'ClaudeBarCLI.swift']
+    renderer_sources = shared + [path for path in cli if path.name not in ['ClaudeBarCLI.swift', 'CLIControlClient.swift', 'CLITUIRuntime.swift']]
     subprocess.run(['swiftc', '-O', '-parse-as-library', *map(str, renderer_sources), str(harness),
                     '-framework', 'AppKit', '-framework', 'IOKit', '-o', str(renderer)], check=True)
     subprocess.run([str(renderer), str(fixture)], check=True)

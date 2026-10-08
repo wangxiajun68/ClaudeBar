@@ -196,6 +196,15 @@ func run() {
           "the completion path still asks for authorization while undetermined")
     check(center.added.count == 1, "and submits as it did before")
 
+    center.reset()
+    AppPresentation.performanceMode = true
+    park()
+    probe.notifyIdle(session: SessionInfo(projectFolder: "ClaudeBar", waitingReason: "",
+                                          pid: 42, sessionId: "6f2a-session", cwd: "/Users/me/ClaudeBar"))
+    check(center.added.isEmpty, "performance mode suppresses banners")
+    check(center.requestAuthorizationCalls == 0, "performance mode never prompts for notifications")
+    AppPresentation.performanceMode = false
+
     print("\(checks - failures.count)/\(checks) waiting-notify checks passed")
     if !failures.isEmpty { exit(1) }
 }
@@ -263,6 +272,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-waiting-notify-') as folder:
         '}',
         '/// The production prompt gate; the fixture picks which side of it runs.',
         'enum BuildChannel { static var promptsForSystemPermissions = true }',
+        (root / 'Sources/Shared/AppPresentation.swift').read_text(),
         '/// What the stubbed center answers `getNotificationSettings` with.',
         'struct NotificationSettingsStub { var authorizationStatus: UNAuthorizationStatus }',
         '',

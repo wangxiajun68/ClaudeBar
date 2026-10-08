@@ -22,6 +22,7 @@ struct CLISnapshot: Codable {
     var connectorsScanned: Bool
     var connectorsLoading: Bool
     var charge: Charge
+    var runMode: String? = nil
     var greeting: String? = nil
     var weather: Weather? = nil
     var weatherLoading: Bool? = nil

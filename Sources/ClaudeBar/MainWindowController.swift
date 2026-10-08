@@ -38,9 +38,21 @@ final class MainWindowController {
         }
     }
 
+    func teardown() {
+        for token in windowObservers { NotificationCenter.default.removeObserver(token) }
+        windowObservers.removeAll()
+        if let appearanceObs { NotificationCenter.default.removeObserver(appearanceObs) }
+        appearanceObs = nil
+        window?.close()
+        window?.contentView = nil
+        window = nil
+        UIWakePolicy.setMainWindowVisible(false)
+    }
+
     /// Bring the window to the front, creating it on first call, rebuilding its
     /// content if it was torn down on close, or focusing it if it is already up.
     func showWindow() {
+        guard AppPresentation.allowsInterface else { return }
         if let window, window.isVisible {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)

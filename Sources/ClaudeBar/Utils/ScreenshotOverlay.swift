@@ -14,6 +14,7 @@ final class ScreenshotOverlayController {
     fileprivate var canvases: [SnipCanvas] = []
     private var panels: [NSWindow] = []
     private var capturing = false
+    private var captureTask: Task<Void, Never>?
     fileprivate var pinPanels: [NSPanel] = []
     /// Session keyDown tap active only while capturing. The overlay panels
     /// are nonactivating, so the front app is never disturbed — which also
@@ -33,9 +34,10 @@ final class ScreenshotOverlayController {
     private init() {}
 
     func begin() {
+        guard AppPresentation.allowsInterface else { return }
         guard !capturing else { return }
         capturing = true
-        Task { await run() }
+        captureTask = Task { await run() }
     }
 
     private func run() async {
@@ -47,6 +49,7 @@ final class ScreenshotOverlayController {
             NSSound.beep()
             return
         }
+        guard AppPresentation.allowsInterface, !Task.isCancelled else { return }
         if !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
             capturing = false
@@ -70,20 +73,24 @@ final class ScreenshotOverlayController {
         do {
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         } catch {
+            guard !Task.isCancelled else { return }
             capturing = false
             NSSound.beep()
             return
         }
+        guard AppPresentation.allowsInterface, !Task.isCancelled else { return }
 
         var shots: [(NSScreen, CGImage)] = []
         for screen in screens {
             do {
                 shots.append((screen, try await Self.captureDisplay(screen, in: content)))
             } catch {
+                guard !Task.isCancelled else { return }
                 capturing = false
                 NSSound.beep()
                 return
             }
+            guard AppPresentation.allowsInterface, !Task.isCancelled else { return }
         }
 
         let windows = WindowSnapper.windowsByScreen(screens)
@@ -91,6 +98,7 @@ final class ScreenshotOverlayController {
     }
 
     private func present(shots: [(NSScreen, CGImage)], windows: [CGDirectDisplayID: [CGRect]]) {
+        guard AppPresentation.allowsInterface, !Task.isCancelled else { return }
         // Close a previous overlay without flipping `capturing` off — that flag
         // gates Esc/Space. `dismissOverlay` used to set it false here, so the
         // freeze was on screen but every key handler bailed out.
@@ -180,7 +188,15 @@ final class ScreenshotOverlayController {
     }
 
     func cancel() {
+        captureTask?.cancel()
+        captureTask = nil
         dismissOverlay()
+    }
+
+    func stopForPerformanceMode() {
+        cancel()
+        for pin in pinPanels { pin.orderOut(nil); pin.close(); pin.contentView = nil }
+        pinPanels.removeAll()
     }
 
     /// Session-wide keyDown tap, active only during a capture. Swallows only

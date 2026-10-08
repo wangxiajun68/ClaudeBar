@@ -95,6 +95,7 @@ final class ScreenshotHotKey: ObservableObject {
         // shortcut and only beep. The toggle still records the intent; the
         // registration is the side effect this build must not reach.
         guard BuildChannel.promptsForSystemPermissions else { return }
+        guard AppPresentation.allowsInterface else { return }
         unregister()
         installHandlerIfNeeded()
         installTap()

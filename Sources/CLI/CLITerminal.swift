@@ -233,9 +233,14 @@ struct CLIRenderer {
         if command == "commands" {
             lines.append(t.heading("COMMAND DIRECTORY"))
             lines += t.table(headers: ["AREA", "COMMANDS"], rows: [
-                ["Observatory", "status dashboard watch alerts"], ["Local machine", "system cpu gpu memory disk battery network uptime"],
+                ["Observatory", "status dashboard watch [-w 1] alerts"], ["Local machine", "system cpu gpu memory disk battery network uptime"],
                 ["Your day", "greet date calendar weather [refresh]"], ["Agents", "sessions count agents usage models quota providers"],
-                ["Services", "vpn proxy connectors config"], ["Application", "start stop open refresh paths doctor"],
+                ["Models", "providers catalog/use/official/capture · models list/use"],
+                ["Services", "vpn start/stop/preview/nodes/select · proxy start/stop"],
+                ["Connectors", "connectors list/refresh/show/enable/disable/remove"],
+                ["Application", "start stop restart mode desktop/performance open refresh paths doctor"],
+                ["Preferences", "config · config set KEY VALUE"],
+                ["Short forms", "s=sessions c=count sys=system pv=providers cn=connectors mo=mode; help lists all"],
                 ["Shell", "completion version help"]], weights: [22, 78])
         }
         if let host = frame.system, command != "alerts" {

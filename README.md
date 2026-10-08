@@ -140,9 +140,11 @@ ClaudeBar 项目代码采用 [MIT License](LICENSE)。第三方组件与素材�
 ```bash
 make build
 .build/dev/bin/mtx-dev start
-.build/dev/bin/mtx-dev watch
+.build/dev/bin/mtx-dev -w 1
 .build/dev/bin/mtx-dev sessions count
 .build/dev/bin/mtx-dev system --json
 ```
+
+支持 Claude / Codex 的供应商与模型切换、VPN 启停与节点控制、连接器启停，以及 `mtx start --mode performance` 无界面运行。性能模式隐藏 Dock、菜单栏、灵动岛和窗口，使用 `mtx mode desktop` 恢复；应用帮助页内置「CLI 与性能模式」文档。
 
 正式版命令为 `.build/release/bin/mtx`。完整命令与显式 CLI 安装说明见 [docs/CLI.md](docs/CLI.md)。

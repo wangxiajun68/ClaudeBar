@@ -265,7 +265,7 @@ fi
 # Release keeps WMO. Object/dependency caches survive bundle reconstruction.
 APP_MAP_FLAGS=()
 if [ "$CLAUDEBAR_CHANNEL" = dev ]; then
-    APP_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/app" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" "${swift_files[@]}")"
+    APP_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/app" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" "$PROJECT_DIR/Sources/Shared/CLIControl.swift" "$PROJECT_DIR/Sources/Shared/AppPresentation.swift" "${swift_files[@]}")"
     APP_MAP_FLAGS=(-emit-executable -emit-module-path "$BUILD_DIR/objects/app/$APP_EXECUTABLE.swiftmodule" -output-file-map "$APP_MAP")
 fi
 swiftc "${SWIFT_FLAGS[@]}" ${APP_MAP_FLAGS[@]+"${APP_MAP_FLAGS[@]}"} \
@@ -289,7 +289,7 @@ swiftc "${SWIFT_FLAGS[@]}" ${APP_MAP_FLAGS[@]+"${APP_MAP_FLAGS[@]}"} \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
     "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" \
-    "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" \
+    "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" "$PROJECT_DIR/Sources/Shared/CLIControl.swift" "$PROJECT_DIR/Sources/Shared/AppPresentation.swift" \
     "${swift_files[@]}"
 
 # Drop local symbols from the shipped binary (16 MB → 7 MB). `-x` keeps the
@@ -325,7 +325,7 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <key>LSMinimumSystemVersion</key>
     <string>${MACOS_MIN}</string>
     <key>LSUIElement</key>
-    <false/>
+    <true/>
     <key>ClaudeBarBuildChannel</key>
     <string>${CLAUDEBAR_CHANNEL}</string>
     <key>CFBundleURLTypes</key>

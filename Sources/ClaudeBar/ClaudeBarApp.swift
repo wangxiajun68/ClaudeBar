@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
@@ -11,26 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingOpenURL = false
     private var pendingCLIURLs: [URL] = []
     private var cliSnapshotTimer: Timer?
+    private let cliControlServer = CLIControlServer()
+    private var cliCommands: CLICommandService?
+    private var presentationObserver: AnyCancellable?
+    private var presentationIsPerformance: Bool?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let prefs = AppPreferences.shared
+        if CommandLine.arguments.contains("--performance") { prefs.performanceMode = true }
+        if CommandLine.arguments.contains("--desktop") { prefs.performanceMode = false }
+        AppPresentation.performanceMode = prefs.performanceMode
+        // LSUIElement starts without a Dock icon; desktop mode opts in explicitly.
+        NSApp.setActivationPolicy(prefs.performanceMode ? .prohibited : .regular)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // .regular: the app has a Dock icon, standard app menu, and proper
-        // window management for the new main window. The menu-bar status item
-        // and its non-activating popup panel work regardless of this policy.
-        NSApp.setActivationPolicy(.regular)
-        AppearanceSync.apply()
+        if AppPresentation.allowsInterface { AppearanceSync.apply() }
         BatteryChargeController.shared.probe()
-        // Touch the notification service before launch returns so its
-        // `UNUserNotificationCenter` delegate is installed in time. The
-        // singleton registers the delegate in its `init`, and nothing else here
-        // reaches it synchronously: the first `post(...)` rides the async
-        // session scan, whose main-actor publish cannot run before this method
-        // returns. Apple's contract is explicit — a delegate assigned after
-        // launch "might cause you to miss incoming notifications" — and the one
-        // that matters is the banner tap that *launches* the app
-        // (在终端继续 / 去确认 → `.resumeSession`), whose response would arrive
-        // before the service existed. Creating it installs the delegate; the
-        // authorization prompt stays behind its own build-channel gate.
-        _ = NotificationService.shared
+        if AppPresentation.allowsInterface { _ = NotificationService.shared }
 
         let store = ProviderStore()
         providerStore = store
@@ -54,22 +53,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             VpnSystemProxyController.clearSystemProxyAsync()
         }
 
-        // The menu bar's ↓/↑ strip is always on screen, and without a tunnel
-        // the reading it carries is the machine's own throughput, so the
-        // sampler starts with the app rather than with the VPN.
-        SystemThroughput.shared.start()
-
-        let controller = MenuBarController(providerStore: store, codexProviderStore: codexStore)
-        controller.setup()
-        menuBarController = controller
-
-        let island = NotchIslandController(providerStore: store, codexStore: codexStore)
-        island.start()
-        notchIslandController = island
-
-        let main = MainWindowController(providerStore: store, codexProviderStore: codexStore)
-        mainWindowController = main
-        main.showWindow()
+        applyPresentation(performance: AppPreferences.shared.performanceMode)
+        presentationObserver = AppPreferences.shared.$performanceMode.dropFirst().removeDuplicates()
+            .sink { [weak self] enabled in
+                // Tear down SwiftUI after the event that changed its binding finishes.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.applyPresentation(performance: enabled) }
+                }
+            }
+        let commands = CLICommandService(store: store, codex: codexStore, presentation: { [weak self] in
+            self?.presentationReport() ?? [:]
+        })
+        cliCommands = commands
+        do {
+            try cliControlServer.start(at: CLIControl.socketURL(home: FileManager.default.homeDirectoryForCurrentUser,
+                                                               appName: BuildChannel.appName)) { request in
+                await commands.execute(request)
+            }
+        } catch {
+            NSLog("ClaudeBar CLI control unavailable (%@)", String(describing: type(of: error)))
+        }
 
         // The menu-bar popup's "open main window" button posts this notification.
         NotificationCenter.default.addObserver(
@@ -99,7 +102,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CursorUsageStore.shared.start()
         CursorUsageStore.shared.refresh()
 
-        ScreenshotHotKey.shared.startIfEnabled()
 
         // Fetches only when the saved preference already asks for a converted
         // cost display — the default 分列 mode makes no outbound request at all.
@@ -130,8 +132,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .fanPermissionNeeded, object: nil)
     }
 
+    @MainActor private func applyPresentation(performance: Bool) {
+        guard presentationIsPerformance != performance else { return }
+        AppPresentation.performanceMode = performance
+        presentationIsPerformance = performance
+        if performance {
+            ScreenshotHotKey.shared.stop()
+            ScreenshotOverlayController.shared.stopForPerformanceMode()
+            mainWindowController?.teardown()
+            mainWindowController = nil
+            notchIslandController?.stop()
+            notchIslandController = nil
+            menuBarController?.teardown()
+            menuBarController = nil
+            // Includes transient sheets/tools belonging to this application.
+            for window in NSApp.windows { window.orderOut(nil); window.close(); window.contentView = nil }
+            UIWakePolicy.setMainWindowVisible(false)
+            UIWakePolicy.setPopupOpen(false)
+            UIWakePolicy.setIslandExpanded(false)
+            SystemThroughput.shared.stop()
+            NSApp.setActivationPolicy(.prohibited)
+        } else if let store = providerStore, let codex = codexProviderStore {
+            NSApp.setActivationPolicy(.regular)
+            AppearanceSync.apply()
+            _ = NotificationService.shared
+            SystemThroughput.shared.start()
+            let menu = MenuBarController(providerStore: store, codexProviderStore: codex)
+            menu.setup(); menuBarController = menu
+            let island = NotchIslandController(providerStore: store, codexStore: codex)
+            island.start(); notchIslandController = island
+            let main = MainWindowController(providerStore: store, codexProviderStore: codex)
+            mainWindowController = main
+            main.showWindow()
+            ScreenshotHotKey.shared.startIfEnabled()
+        }
+        providerStore?.publishCLISnapshot()
+    }
+
+    @MainActor private func presentationReport() -> [String: Any] {
+        ["mode": presentationIsPerformance == true ? "performance" : "desktop",
+         "dockIcon": NSApp.activationPolicy() == .regular,
+         "visibleWindows": NSApp.windows.filter(\.isVisible).count,
+         "mainWindow": mainWindowController != nil, "menuBar": menuBarController != nil,
+         "island": notchIslandController != nil]
+    }
+
     /// 风扇调速需要 root；弹窗引导用户安装特权辅助工具或打开系统设置。
     @objc private func fanPermissionNeeded() {
+        guard AppPresentation.allowsInterface else { return }
         let alert = NSAlert()
         alert.messageText = "风扇调速需要管理员权限"
         alert.informativeText = "调整风扇转速需要安装 ClaudeBar 特权辅助工具（输入一次管理员密码）。"
@@ -158,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// when present: it points at the window already holding a *live* session,
     /// and the store only knows it through the pid.
     @objc private func resumeSession(_ note: Notification) {
+        guard AppPresentation.allowsInterface else { return }
         let info = note.userInfo ?? [:]
         guard let agent = info["agent"] as? String,
               let sessionId = info["sessionId"] as? String, !sessionId.isEmpty else { return }
@@ -185,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showMainWindow(_ note: Notification) {
+        guard AppPresentation.allowsInterface else { return }
         // Cross-surface entries name their destination on the same notification
         // (`userInfo["page"]`, optionally `userInfo["editor"]`) instead of
         // posting a second one: a fresh window's SwiftUI graph subscribes to
@@ -213,13 +263,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == BuildChannel.urlScheme {
             if url.host == "cli" {
-                if mainWindowController == nil {
+                if providerStore == nil {
                     pendingCLIURLs.append(url)
                 } else {
                     handleCLIURL(url)
                 }
                 continue
             }
+            guard AppPresentation.allowsInterface else { continue }
             guard let menuBarController else {
                 pendingOpenURL = true
                 continue
@@ -243,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.providerStore?.publishCLISnapshot()
             }
         case "/open":
+            guard AppPresentation.allowsInterface else { return }
             let pageName = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "page" })?.value ?? "dashboard"
             guard let page = AppPage(rawValue: pageName) else { return }
@@ -254,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Re-open the main window if the user clicked the Dock icon while it was
     /// closed. The app stays alive after the window closes (status item runs).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard AppPresentation.allowsInterface else { return false }
         if !flag { mainWindowController?.showWindow() }
         return true
     }
@@ -270,6 +323,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ports. `VpnManager.reapOrphanCore()` covers the crash case; this covers
     /// the ordinary Quit menu item.
     func applicationWillTerminate(_ notification: Notification) {
+        presentationObserver?.cancel()
+        presentationObserver = nil
+        cliControlServer.stop()
+        mainWindowController?.teardown()
+        notchIslandController?.stop()
+        menuBarController?.teardown()
         cliSnapshotTimer?.invalidate()
         cliSnapshotTimer = nil
         BatteryChargeController.shared.shutdown()

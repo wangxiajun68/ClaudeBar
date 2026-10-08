@@ -27,6 +27,14 @@ import Darwin
     }
 
     @MainActor static func run(_ options: CLIOptions) throws {
+        if let control = options.controlRequest { try CLIControlClient.execute(control, options: options); return }
+        if options.command == "restart" {
+            let bundle = try applicationURL(explicit: options.appPath)
+            _ = try normalQuit()
+            var startup = options; startup.command = "start"; startup.appPath = bundle.path
+            try run(startup)
+            return
+        }
         let weatherRefresh = options.command == "weather" && options.argument == "refresh"
         switch weatherRefresh ? "refresh" : options.command {
         case "help": print(help); return
@@ -43,12 +51,24 @@ import Darwin
         case "start", "open":
             let bundle = try applicationURL(explicit: options.appPath)
             let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
+            configuration.activates = options.launchMode != "performance"
+            if let mode = options.launchMode { configuration.arguments = [mode == "performance" ? "--performance" : "--desktop"] }
             let running = NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID)
             if let existing = running.first?.bundleURL {
                 // Never launch a second checkout of the same channel beside the installed instance.
                 if options.appPath != nil && existing.resolvingSymlinksInPath() != bundle.resolvingSymlinksInPath() {
                     throw CLIError("This channel is already running from another bundle; quit it normally first", code: 4)
+                }
+            }
+            if options.command == "start", let mode = options.launchMode, !running.isEmpty {
+                try CLIControlClient.execute(.init(command: "mode", arguments: [mode]), options: options)
+                return
+            }
+            if options.command == "open" {
+                let current = try? CLIControlClient.response(.init(command: "mode", arguments: ["status"]))
+                let mode = current?.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["mode"] as? String
+                if mode == "performance" || (mode == nil && readFrame(options).snapshot?.runMode == "performance") {
+                    throw CLIError("Performance mode has no pages; use mode desktop first", code: 4)
                 }
             }
             let target = running.first?.bundleURL ?? bundle
@@ -73,14 +93,8 @@ import Darwin
             if let launchError { throw CLIError("Launch failed: \(launchError.localizedDescription)", code: 4) }
             try actionOutput(options, "Application opened", extra: ["app": target.path]); return
         case "stop":
-            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID)
-            guard apps.count <= 1 else { throw CLIError("Multiple instances of this channel are running; quit them from their menus", code: 4) }
-            guard let app = apps.first else { try actionOutput(options, "Already stopped"); return }
-            guard app.terminate() else { throw CLIError("Application declined normal termination", code: 4) }
-            let deadline = Date().addingTimeInterval(10)
-            while !app.isTerminated && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
-            guard app.isTerminated else { throw CLIError("Normal quit is still pending; check the application", code: 4) }
-            try actionOutput(options, "Application stopped normally"); return
+            let stopped = try normalQuit()
+            try actionOutput(options, stopped ? "Application stopped normally" : "Already stopped"); return
         case "refresh":
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID).first,
                   let bundle = app.bundleURL else { throw CLIError("Application is offline. Use start first", code: 3) }
@@ -99,14 +113,16 @@ import Darwin
             try actionOutput(options, weatherRefresh ? "Weather refresh requested for the configured city" : "Refresh requested; read status after the next scan"); return
         default: break
         }
-        let interactive = options.watch && !options.json && isatty(STDOUT_FILENO) != 0
+        let interactive = options.watch && !options.json && isatty(STDOUT_FILENO) != 0 && isatty(STDIN_FILENO) != 0
             && ProcessInfo.processInfo.environment["TERM"] != "dumb" && !options.plain
+            && !options.count && !["count", "doctor"].contains(options.command)
         let previousINT = signal(SIGINT) { _ in ClaudeBarCLI.interrupted = true }
         let previousTERM = signal(SIGTERM) { _ in ClaudeBarCLI.interrupted = true }
+        let previousHUP = signal(SIGHUP) { _ in ClaudeBarCLI.interrupted = true }
+        let previousQUIT = signal(SIGQUIT) { _ in ClaudeBarCLI.interrupted = true }
         let previousPIPE = signal(SIGPIPE, SIG_DFL)
-        defer { signal(SIGINT, previousINT); signal(SIGTERM, previousTERM); signal(SIGPIPE, previousPIPE) }
-        if interactive { write("\u{1B}[?1049h\u{1B}[?25l") }
-        defer { if interactive { write("\u{1B}[?25h\u{1B}[?1049l") } }
+        defer { signal(SIGINT, previousINT); signal(SIGTERM, previousTERM); signal(SIGHUP, previousHUP); signal(SIGQUIT, previousQUIT); signal(SIGPIPE, previousPIPE) }
+        if interactive { try CLITUIRuntime.run(options); return }
         var sample = 0
         repeat {
             let start = ProcessInfo.processInfo.systemUptime
@@ -125,11 +141,7 @@ import Darwin
                     }
                     let screen = CLITerminal.current(options)
                     let text = CLIRenderer(terminal: screen, options: options).render(frame)
-                    if interactive {
-                        let rows = text.components(separatedBy: "\n")
-                        let clipped = rows.count > screen.height ? Array(rows.prefix(max(1, screen.height - 1))) + ["More data: use a focused command / enlarge terminal"] : rows
-                        write("\u{1B}[H\u{1B}[2J" + clipped.joined(separator: "\n") + "\n")
-                    } else { print(text) }
+                    print(text)
                 }
             }
             sample += 1
@@ -139,9 +151,20 @@ import Darwin
         if interrupted { throw CLIError("Interrupted", code: 130) }
     }
 
-    static func readFrame(_ options: CLIOptions) -> CLIFrame {
-        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID)
-        let running = !applications.isEmpty
+    @MainActor static func normalQuit() throws -> Bool {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID)
+        guard apps.count <= 1 else { throw CLIError("Multiple instances of this channel are running; quit them from their menus", code: 4) }
+        guard let app = apps.first else { return false }
+        guard app.terminate() else { throw CLIError("Application declined normal termination", code: 4) }
+        let deadline = Date().addingTimeInterval(10)
+        while !app.isTerminated && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+        guard app.isTerminated else { throw CLIError("Normal quit is still pending; check the application", code: 4) }
+        return true
+    }
+
+    static func readFrame(_ options: CLIOptions, processIDs: [Int]? = nil) -> CLIFrame {
+        let pids = processIDs ?? NSRunningApplication.runningApplications(withBundleIdentifier: BuildChannel.bundleID).map { Int($0.processIdentifier) }
+        let running = !pids.isEmpty
         let file = options.snapshotPath.map { URL(fileURLWithPath: $0) }
             ?? CLISnapshot.fileURL(home: FileManager.default.homeDirectoryForCurrentUser, appName: BuildChannel.appName)
         var snapshot: CLISnapshot?
@@ -159,7 +182,7 @@ import Darwin
             snapshotError = FileManager.default.fileExists(atPath: file.path) ? "Snapshot unreadable or malformed" : "No application snapshot available"
         }
         let host = ["status", "dashboard", "system", "cpu", "gpu", "memory", "disk", "battery", "network", "uptime", "alerts"].contains(options.command) ? CLISystem.read() : nil
-        return .init(snapshot: snapshot, snapshotError: snapshotError, running: running, archived: options.snapshotPath != nil, system: host, snapshotProcessMatches: applications.contains { Int($0.processIdentifier) == snapshot?.pid })
+        return .init(snapshot: snapshot, snapshotError: snapshotError, running: running, archived: options.snapshotPath != nil, system: host, snapshotProcessMatches: snapshot.map { pids.contains($0.pid) } ?? false)
     }
 
     static func object<T: Encodable>(_ value: T) throws -> Any {
@@ -179,7 +202,11 @@ import Darwin
             result["date"] = lifestyle.info
             result["greeting"] = frame.snapshot?.greeting ?? lifestyle.greeting
         }
-        if options.command == "commands" { result["commands"] = CLIOptions.commands }
+        if options.command == "commands" {
+            result["commands"] = CLIOptions.commands
+            result["aliases"] = CLIOptions.aliases
+            result["subcommandAliases"] = CLIOptions.subcommandAliases
+        }
         if options.command == "alerts" { result["alerts"] = try object(CLIAlert.collect(frame)) }
         if ["status", "dashboard", "weather"].contains(options.command) {
             result["weatherAvailable"] = frame.snapshot?.weather != nil
@@ -193,6 +220,7 @@ import Darwin
         guard let snapshot = frame.snapshot else { return result }
         result["updatedAt"] = ISO8601DateFormatter().string(from: snapshot.updatedAt)
         result["appVersion"] = snapshot.appVersion
+        result["runMode"] = snapshot.runMode ?? "desktop"
         switch options.command {
         case "sessions", "count", "status", "dashboard":
             let rows = options.sessions(in: snapshot)
@@ -279,6 +307,8 @@ import Darwin
     static func doctor(_ options: CLIOptions, frame: CLIFrame) -> [String: Any] {
         var values: [String: Any] = pathInfo()
         values["version"] = CLIVersion.value
+        values["controlSocket"] = CLIControl.socketURL(home: FileManager.default.homeDirectoryForCurrentUser, appName: BuildChannel.appName).path
+        values["runMode"] = frame.snapshot?.runMode ?? "unknown"
         values["appRunning"] = frame.running; values["freshness"] = frame.freshness
         values["snapshotReadable"] = frame.snapshot != nil
         values["systemIntegration"] = BuildChannel.allowsSystemIntegration
@@ -296,7 +326,7 @@ import Darwin
         Alias: \(BuildChannel.cliExecutable) (same compiled channel)
 
         status / dashboard    Machine + agent sessions + usage + services (default)
-        watch                 Live Matrix dashboard; Ctrl-C to leave
+        watch [SEC] / -w [SEC] Live Matrix dashboard; e.g. -w 1, Ctrl-C to leave
         sessions [list|count] All main Claude / Codex / Cursor sessions
         count                 Print only the matching session count
         system                Live CPU, GPU, memory, disk, battery, network, uptime
@@ -311,59 +341,117 @@ import Darwin
         commands              Browse command groups
         usage                 Selected-period and today's tokens; model breakdown
         providers / quota     Provider inventory / Codex account allowance
+        providers catalog     Full provider/model IDs (same-user live control)
+        providers use TARGET  Activate provider; --agent claude|codex --model MODEL
+        providers official    Restore official config for --agent claude|codex
+        providers capture TARGET on|off  Toggle this provider's traffic recording
+        models list           Configured models and IDs (models usage: token ranking)
+        models use TARGET     Switch active provider's model; optional --provider
+        vpn start|stop|restart|reload    Control the existing VPN lifecycle
+        vpn nodes|groups      Runtime nodes/groups; vpn preview: saved subscription
+        vpn select NODE       Switch node; optional --group NAME
+        vpn test NODE         Measure node latency
+        vpn proxy|tun on|off   System proxy / TUN policy
+        proxy start|stop       Start or stop model routing proxy
+        connectors list       Live inventory with control IDs and capabilities
+        connectors refresh    Rescan; optional --project PATH
+        connectors show TARGET        Credential-free item details
+        connectors enable|disable TARGET   Toggle supported connector
+        connectors remove TARGET --yes     Remove a removable connector
+        config set KEY VALUE  appearance, token-units, weather-city, vpn-guard
+        mode [status|performance|desktop]  Change presentation without stopping services
         vpn / proxy           VPN and local LLM proxy status
         connectors            Skills, MCP and plugin inventory
         config / paths        Credential-free policy / channel-specific paths
         doctor                Read-only CLI, application and snapshot diagnostics
-        start                 Launch this channel's application
-        stop                  Normal quit of this channel (allows app cleanup)
+        start / launch        Launch this channel's application; --mode performance
+        restart               Normal quit and relaunch; optional --mode desktop
+        stop / quit           Normal quit of this channel (allows app cleanup)
         open [page]           Open dashboard, sessions, providers, connectors,
                               usage, traffic, vpn, settings or help
         refresh               Request asynchronous usage/session/inventory scan
         completion [shell]    Generate zsh (default), bash or fish completion
         version / help        Build version / this guide
 
-        --json                Structured JSON; --watch emits NDJSON
-        -w, --watch           Repeat a query (never repeat actions)
-        --interval SEC        Refresh interval 0.5...3600 (default 2)
-        --samples N           Stop watching after N frames
-        --agent AGENT         claude | codex | cursor
-        --status STATE        busy | waiting | idle
+        -j, --json            Structured JSON; --watch emits NDJSON
+        -w, --watch [SEC]      Repeat a query, optional seconds (never repeat actions)
+        -i, --interval SEC    Refresh interval 0.5...3600 (default 2)
+        -n, --samples N       Stop watching after N frames
+        -a, --agent AGENT     claude | codex | cursor
+        -s, --status STATE    busy | waiting | idle
         --include-subagents   Include Codex helpers in session list and count
-        --limit N             Limit displayed rows; counts still cover all matches
+        -l, --limit N         Limit displayed rows; counts still cover all matches
         --count               Numeric output for sessions
-        --compact             Compact greeting; more room for telemetry
-        --plain               Minimal uncolored output, no alternate screen
+        -c, --compact         Compact greeting; more room for telemetry
+        -p, --plain           Minimal uncolored output, no alternate screen
         --ascii               ASCII borders and meters
         --no-color            Disable ANSI colors (also honors NO_COLOR)
         --snapshot FILE       Read an archived snapshot, matching channel only
+        --provider / --model / --group  Explicit selection for control commands
+        --project PATH        Connector inventory project scope
+        --mode MODE           Initial desktop/performance mode (start/restart)
+        -y, --yes             Explicit connector removal
         --app BUNDLE          Explicit matching application for start/open/doctor
+
+        Interactive watch (stdin + stdout TTY):
+        ↑↓ / jk / PgUp / PgDn  Scroll; g/G first/last; mouse wheel supported
+        Tab / ←→ / 1–7         Switch pages; / search; Enter details; Esc close
+        Space                 Freeze view while backend sampling continues
+        :                     Run one control command; quotes and aliases work
+        r                     Reload model/VPN/connector catalogs or resample locally
+        m / ? / q             Toggle mouse (copy text) / help / exit
+        Plain, numeric, doctor, JSON and redirected watch stay streaming.
+
+        Command abbreviations:
+        \(CLIOptions.aliases.keys.sorted().map { "  " + $0 + " = " + CLIOptions.aliases[$0]! }.joined(separator: "\n"))
+        Subcommand abbreviations (only the verb is expanded; target names stay exact):
+        \(CLIOptions.subcommandAliases.keys.sorted().map { command in
+            "  " + command + ": " + CLIOptions.subcommandAliases[command]!.keys.sorted().map {
+                $0 + "=" + CLIOptions.subcommandAliases[command]![$0]!
+            }.joined(separator: " ")
+        }.joined(separator: "\n"))
 
         App data: private heartbeat snapshot (3s); stale after 15s or app exit.
         Host data: permission-free local sampling, even while app is offline.
         No snapshot: focused app queries exit 3; use start then retry.
         Exit codes: 0 success, 1 runtime error, 2 arguments, 3 no data,
-                    4 app lifecycle failure, 130 interrupted.
+                    4 app lifecycle failure, 5 control failure/restriction, 130 interrupted.
         """
     }
 
     static func completion(_ shell: String) -> String {
         let executable = BuildChannel.cliShortExecutable
         let aliases = executable + " " + BuildChannel.cliExecutable
-        let commands = CLIOptions.commands.joined(separator: " ")
-        let flags = "--json --watch --interval --samples --agent --status --include-subagents --limit --count --compact --plain --ascii --no-color --snapshot --app --help --version"
+        let commands = Set(CLIOptions.commands + Array(CLIOptions.aliases.keys)).sorted().joined(separator: " ")
+        let flags = "-w -j -i -n -a -s -l -c -p -y -h -V --json --watch --interval --samples --agent --status --include-subagents --limit --count --provider --model --group --project --mode --yes --compact --plain --ascii --no-color --snapshot --app --help --version"
+        func names(_ command: String) -> String {
+            ([command] + CLIOptions.aliases.filter { $0.value == command }.map(\.key)).sorted().joined(separator: "|")
+        }
+        func verbs(_ command: String, _ full: String) -> String {
+            full + " " + (CLIOptions.subcommandAliases[command]?.keys.sorted().joined(separator: " ") ?? "")
+        }
         switch shell {
         case "bash":
             return """
             _claudebar_complete() {
               local previous="${COMP_WORDS[COMP_CWORD-1]}" choices="\(commands) \(flags)"
               case "$previous" in
-                --agent) choices="claude codex cursor" ;;
-                --status) choices="busy waiting idle" ;;
-                open) choices="\(CLISnapshot.pages.joined(separator: " "))" ;;
-                weather) choices="refresh" ;;
-                completion) choices="bash zsh fish" ;;
-                --app|--snapshot) COMPREPLY=( $(compgen -f -- "${COMP_WORDS[COMP_CWORD]}") ); return ;;
+                --agent|-a) choices="claude codex cursor" ;;
+                --status|-s) choices="busy waiting idle" ;;
+                -w|--watch|-i|--interval|watch|w) choices="0.5 1 2 5 10 30 60" ;;
+                \(names("open"))) choices="\(CLISnapshot.pages.joined(separator: " "))" ;;
+                \(names("weather"))) choices="\(verbs("weather", "refresh"))" ;;
+                \(names("completion"))) choices="bash zsh fish" ;;
+                --mode) choices="desktop performance" ;;
+                \(names("providers"))) choices="\(verbs("providers", "list catalog use official capture"))" ;;
+                \(names("models"))) choices="\(verbs("models", "list catalog use usage"))" ;;
+                vpn) choices="\(verbs("vpn", "status start stop restart reload nodes groups preview select test proxy tun"))" ;;
+                \(names("proxy"))) choices="\(verbs("proxy", "status start stop on off"))" ;;
+                \(names("connectors"))) choices="\(verbs("connectors", "list refresh show enable disable remove"))" ;;
+                \(names("mode"))) choices="\(verbs("mode", "status desktop performance"))" ;;
+                \(names("config"))) choices="\(verbs("config", "set"))" ;;
+                \(names("sessions"))) choices="\(verbs("sessions", "list count"))" ;;
+                --app|--snapshot|--project) COMPREPLY=( $(compgen -f -- "${COMP_WORDS[COMP_CWORD]}") ); return ;;
               esac
               COMPREPLY=( $(compgen -W "$choices" -- "${COMP_WORDS[COMP_CWORD]}") )
             }
@@ -374,7 +462,8 @@ import Darwin
                 + "complete -c \(executable) -l agent -r -a 'claude codex cursor'\n"
                 + "complete -c \(executable) -l status -r -a 'busy waiting idle'\n"
                 + "complete -c \(executable) -n '__fish_seen_subcommand_from open' -a '\(CLISnapshot.pages.joined(separator: " "))'\n"
-                + flags.split(separator: " ").filter { !["--agent", "--status"].contains(String($0)) }.map { "complete -c \(executable) -l \($0.dropFirst(2))" }.joined(separator: "\n")
+                + flags.split(separator: " ").filter { $0.hasPrefix("--") && !["--agent", "--status"].contains(String($0)) }.map { "complete -c \(executable) -l \($0.dropFirst(2))" }.joined(separator: "\n")
+                + "\n" + flags.split(separator: " ").filter { !$0.hasPrefix("--") }.map { "complete -c \(executable) -s \($0.dropFirst())" }.joined(separator: "\n")
             return script + "\n" + script.replacingOccurrences(of: "-c " + executable, with: "-c " + BuildChannel.cliExecutable)
         default:
             return """
@@ -382,12 +471,22 @@ import Darwin
             _\(executable.replacingOccurrences(of: "-", with: "_"))() {
               local previous="$words[CURRENT-1]"
               case "$previous" in
-                --agent) compadd claude codex cursor; return ;;
-                --status) compadd busy waiting idle; return ;;
-                open) compadd \(CLISnapshot.pages.joined(separator: " ")); return ;;
-                weather) compadd refresh; return ;;
-                completion) compadd zsh bash fish; return ;;
-                --app|--snapshot) _files; return ;;
+                --agent|-a) compadd claude codex cursor; return ;;
+                --status|-s) compadd busy waiting idle; return ;;
+                -w|--watch|-i|--interval|watch|w) compadd 0.5 1 2 5 10 30 60; return ;;
+                \(names("open"))) compadd \(CLISnapshot.pages.joined(separator: " ")); return ;;
+                \(names("weather"))) compadd \(verbs("weather", "refresh")); return ;;
+                \(names("completion"))) compadd zsh bash fish; return ;;
+                --mode) compadd desktop performance; return ;;
+                \(names("providers"))) compadd \(verbs("providers", "list catalog use official capture")); return ;;
+                \(names("models"))) compadd \(verbs("models", "list catalog use usage")); return ;;
+                vpn) compadd \(verbs("vpn", "status start stop restart reload nodes groups preview select test proxy tun")); return ;;
+                \(names("proxy"))) compadd \(verbs("proxy", "status start stop on off")); return ;;
+                \(names("connectors"))) compadd \(verbs("connectors", "list refresh show enable disable remove")); return ;;
+                \(names("mode"))) compadd \(verbs("mode", "status desktop performance")); return ;;
+                \(names("config"))) compadd \(verbs("config", "set")); return ;;
+                \(names("sessions"))) compadd \(verbs("sessions", "list count")); return ;;
+                --app|--snapshot|--project) _files; return ;;
               esac
               compadd -- \(commands) \(flags)
             }

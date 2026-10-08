@@ -162,6 +162,9 @@ struct SettingsView: View {
     private var generalSettings: some View {
         VStack(spacing: 24) {
             SettingsGroup(title: "启动与会话", symbol: "terminal") {
+                SettingsToggleRow(title: "性能模式", caption: "释放全部前端界面、菜单栏与 Dock 图标，仅保留 CLI 和后台服务。使用 mtx mode desktop 恢复界面。",
+                                  isOn: $prefs.performanceMode)
+                SettingsDivider()
                 SettingsToggleRow(title: "登录时启动", caption: launchAtLogin.lastError ?? "登录 Mac 后自动运行 ClaudeBar。",
                                   isOn: Binding(get: { launchAtLogin.isOn }, set: { launchAtLogin.setEnabled($0) }))
                 if launchAtLogin.needsApproval {

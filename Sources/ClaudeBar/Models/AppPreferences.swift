@@ -44,6 +44,13 @@ enum TokenUnitStyle: String {
 final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
 
+    @Published var performanceMode: Bool = UserDefaults.standard.bool(forKey: "performanceMode") {
+        didSet {
+            UserDefaults.standard.set(performanceMode, forKey: "performanceMode")
+            AppPresentation.performanceMode = performanceMode
+        }
+    }
+
     /// Post a macOS notification when a session flips busy → idle.
     @Published var idleNotifyEnabled: Bool {
         didSet {

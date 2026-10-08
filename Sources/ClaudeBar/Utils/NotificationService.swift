@@ -64,8 +64,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// that says why.
     func requestAuthorizationIfNeeded() {
         guard BuildChannel.promptsForSystemPermissions else { return }
+        guard AppPresentation.allowsInterface else { return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
+            guard AppPresentation.allowsInterface else { return }
             switch settings.authorizationStatus {
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -198,6 +200,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     private func post(delivery: Delivery, title: String, body: String, subtitle: String,
                       categoryID: String, route: ResumeRoute) {
+        guard AppPresentation.allowsInterface else { return }
         if delivery == .idlePreference, !AppPreferences.shared.idleNotifyEnabled { return }
         ensureCategory()
         // The parked fallback is a sole-signal path, so it must not reach the
@@ -234,6 +237,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// shape (category, identifier, tap payload) exists.
     private func submit(title: String, body: String, subtitle: String,
                         categoryID: String, route: ResumeRoute) {
+        guard AppPresentation.allowsInterface else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -260,6 +264,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async
         -> UNNotificationPresentationOptions {
+        guard AppPresentation.allowsInterface else { return [] }
         return [.banner, .sound]
     }
 

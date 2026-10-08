@@ -50,6 +50,7 @@ final class MenuBarController: NSObject {
 
     @MainActor
     func setup() {
+        guard AppPresentation.allowsInterface else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else {
             NSLog("[ClaudeBar] statusItem.button is nil — aborting")
@@ -70,6 +71,21 @@ final class MenuBarController: NSObject {
                 self.applyPanelAppearance(to: panel)
             }
         }
+    }
+
+    func teardown() {
+        hide()
+        removeMonitors()
+        teardownVpnRateDisplay()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+        if let appearanceObs { NotificationCenter.default.removeObserver(appearanceObs) }
+        appearanceObs = nil
+        panel?.contentView = nil
+        panel?.close()
+        panel = nil
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        statusItem = nil
     }
 
     /// ClashX-style: a 20pt-tall two-line accessory, not NSStatusBarButton's
@@ -153,7 +169,7 @@ final class MenuBarController: NSObject {
     ///   being proxied when nothing is.
     @MainActor
     private func tickVpnRate() {
-        guard let button = statusItem.button, let accessory = rateAccessory else { return }
+        guard let button = statusItem?.button, let accessory = rateAccessory else { return }
         let running = VpnManager.shared.isRunning
         let battery = currentBattery() ?? .absent
         let source = running ? VpnLiveRates.shared : nil

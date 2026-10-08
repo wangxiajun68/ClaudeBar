@@ -111,6 +111,7 @@ final class NotchIslandController {
     }
 
     func start() {
+        guard AppPresentation.allowsInterface else { return }
         // Watch for parks from the moment the app runs, so a disabled island (no
         // panel, no strip) still posts the fallback banner.
         ensureModel()
@@ -150,6 +151,14 @@ final class NotchIslandController {
                 }
             }
             .store(in: &prefsCancellables)
+    }
+
+    func stop() {
+        prefsCancellables.removeAll()
+        uninstall()
+        modelCancellables.removeAll()
+        model?.setPeriodicRefresh(false)
+        model = nil
     }
 
     // MARK: Install / uninstall
