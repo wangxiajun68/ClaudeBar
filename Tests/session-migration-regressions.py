@@ -554,7 +554,7 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
             _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
             let writeResult = sqlite3_step(stmt)
             precondition(writeResult == SQLITE_DONE,
-                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer)))")
+                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer))), errno \(sqlite3_system_errno(writer)), readonly \(sqlite3_db_readonly(writer, \"main\")), exists \(FileManager.default.fileExists(atPath: storePath))")
         }
         let recoveredCursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
         try await delayedWrite.value
