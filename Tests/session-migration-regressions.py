@@ -143,19 +143,19 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
             let storePath = CommandLine.arguments[2], blobID = CommandLine.arguments[3]
             let blob = FileHandle.standardInput.readDataToEndOfFile()
             try await Task.sleep(for: .milliseconds(150))
-        var writer: OpaquePointer?, stmt: OpaquePointer?
-        precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
-        defer { sqlite3_finalize(stmt); sqlite3_close(writer) }
-        // A retry can still hold a read transaction when this fixture's
-        // delayed write lands. Match the reader's bounded busy wait.
-        precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
-        precondition(sqlite3_prepare_v2(writer,"INSERT INTO blobs VALUES (?,?)",-1,&stmt,nil) == SQLITE_OK)
-        sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
-        _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
-        let writeResult = sqlite3_step(stmt)
-        let readOnly = sqlite3_db_readonly(writer, "main")
-        precondition(writeResult == SQLITE_DONE,
-                     "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer))), errno \(sqlite3_system_errno(writer)), readonly \(readOnly), exists \(FileManager.default.fileExists(atPath: storePath))")
+            var writer: OpaquePointer?, stmt: OpaquePointer?
+            precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
+            defer { sqlite3_finalize(stmt); sqlite3_close(writer) }
+            // A retry can still hold a read transaction when this fixture's
+            // delayed write lands. Match the reader's bounded busy wait.
+            precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
+            precondition(sqlite3_prepare_v2(writer,"INSERT INTO blobs VALUES (?,?)",-1,&stmt,nil) == SQLITE_OK)
+            sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
+            _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
+            let writeResult = sqlite3_step(stmt)
+            let readOnly = sqlite3_db_readonly(writer, "main")
+            precondition(writeResult == SQLITE_DONE,
+                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer))), errno \(sqlite3_system_errno(writer)), readonly \(readOnly), exists \(FileManager.default.fileExists(atPath: storePath))")
             return
         }
         let cwd = CommandLine.arguments[2], facts = CommandLine.arguments[3]
