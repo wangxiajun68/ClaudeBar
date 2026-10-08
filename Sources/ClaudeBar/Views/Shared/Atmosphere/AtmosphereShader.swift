@@ -135,6 +135,7 @@ static Light light(constant Uniforms &u, float2 par, float W, float skyH) {
 // Cloud density on a perspective ceiling: rows near the horizon are farther
 // away, so the same noise is compressed and drifts slower on screen.
 static float cloudField(texture2d<float> nt, float2 uv, float aspect, float t, float wind, float cover, int octaves) {
+    if (cover <= 0.0) return 0.0;
     // Below the deck's far edge the result is masked to zero; skip the noise.
     float fade = smoothstep(HORIZON + 0.05, HORIZON - 0.08, uv.y);
     if (fade <= 0.0) return 0.0;
@@ -346,7 +347,7 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
     // --- cirrus ----------------------------------------------------------------
     float2 cp = pt + par * 0.12;
     float2 cuv = float2(cp.x / W, cp.y / skyH);
-    float cirrusBand = smoothstep(HORIZON, 0.2, cuv.y);
+    float cirrusBand = u.cloud.x > 0.0 ? smoothstep(HORIZON, 0.2, cuv.y) : 0.0;
     float cir = cirrusBand > 0.0 ? fbm(nt, float2(cuv.x * aspect * 3.2 + t * u.cloud.z * 0.0015, cuv.y * 11.0), 4) : 0.0;
     float wisp = smoothstep(0.52, 0.78, cir) * (1.0 - u.cloud.x * 0.7) * cirrusBand;
     float3 wispCol = mix(skyGradient(u, cuv.y) * 1.25 + 0.08, lightCol, 0.25 * lightVis);

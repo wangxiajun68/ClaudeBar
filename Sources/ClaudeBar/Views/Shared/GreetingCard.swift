@@ -233,17 +233,19 @@ struct GreetingStatusSheet: View {
     }
 
     private func makeScene() -> SkyScene {
-        if manual {
+        if manual && weatherRendering {
             return scene(for: manualWeather)
         }
-        // 天气渲染关掉时天空改要求按太阳高度连续插值的晴空：调色、日月与云量
-        // 都还在，但没有雨雪、雾、闪电和玻璃雨滴——设置里那一项的说明是
+        // 天气渲染关掉时保留按太阳高度连续插值的晴空调色与日月，
+        // 不再画云、雨雪、雾、闪电和玻璃雨滴——设置里那一项的说明是
         // 「保留日照天空」，而只要还画 `reading.sky`，关掉之后卡片仍旧在下雨。
         // 星点从真实坐标与星历投影，关掉天气后那串坐标既不是所在也不是此刻，
         // 所以这一档收掉星层（日月只跟太阳高度角走，保留）。
         if !liveWeather {
             var pinned = SkyScene.make(sky: .clear, rainChance: 0, windKph: 6, windDirection: "",
                                        astronomy: astronomy)
+            pinned.cloudCover = 0
+            pinned.cloudDarkness = 0
             pinned.stars = []
             pinned.starVisibility = 0
             return pinned
@@ -448,7 +450,7 @@ struct GreetingStatusSheet: View {
                 .frame(width: m.width, alignment: .topTrailing)
                 .modifier(StatusArrival(arrived: arrived, delay: 1.2, reduceMotion: reduceMotion))
             Group {
-                if manual {
+                if manual && weatherRendering {
                     skyConsole(scene: scene, ink: bottomLeftInk, vivid: !bottomLeftDark)
                         .frame(width: m.consoleWidth, alignment: .leading)
                         .offset(x: m.margin, y: m.chartTop)
@@ -575,7 +577,7 @@ struct GreetingStatusSheet: View {
     }
 
     private func rainbowVisible(_ scene: SkyScene) -> Bool {
-        guard let rainbowUntil, rainbowUntil > skyDate else { return false }
+        guard weatherRendering, let rainbowUntil, rainbowUntil > skyDate else { return false }
         return scene.sunAltitude > 3 && scene.sunAltitude < 42 && scene.rain == 0
     }
 
@@ -772,11 +774,11 @@ struct GreetingStatusSheet: View {
     /// sky must not turn today's real sun into a moon.
     private func conditionRow(night: Bool, ink: Color, vivid: Bool) -> some View {
         HStack(alignment: .center, spacing: 10) {
-            if let day = focusedDay {
+            if liveWeather, let day = focusedDay {
                 WeatherGlyph(symbol: day.sky.symbol(), size: 28, ink: ink, vivid: vivid)
                 bigTemperature(day.high, ink: ink)
                 caption(day.sky.caption, high: nil, low: day.low, ink: ink)
-            } else if let reading {
+            } else if liveWeather, let reading {
                 WeatherGlyph(symbol: reading.sky.symbol(night: night), size: 28, ink: ink, vivid: vivid)
                 bigTemperature(reading.temperatureC, ink: ink)
                 caption(reading.skyLabel, high: reading.highC, low: reading.lowC, ink: ink)

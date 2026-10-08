@@ -34,9 +34,49 @@ source = 'import AppKit\nimport SwiftUI\nimport CryptoKit\n'
 source += read('Sources/ClaudeBar/Utils/SkyAstronomy.swift')
 source += declaration('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
+source += read('Sources/ClaudeBar/Views/Shared/WeatherReadingSky.swift')
 for name in ('SkyScene', 'AtmosphereShader', 'AtmosphereRenderer', 'GreetingScript', 'AtmosphereView'):
     source += read(f'Sources/ClaudeBar/Views/Shared/Atmosphere/{name}.swift') + '\n'
 source = source.replace('final class AtmosphereMTKView:', 'class AtmosphereMTKView:')
+
+# Exercise production scene selection and the cached-reading branch with synthetic inputs.
+# The small glyph/text dependencies record what the actual SwiftUI builder selects.
+source += declaration('Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift', 'enum PinnedSky {')
+source += r'''
+@MainActor enum WeatherPresentationProbe {
+    static var temperatures: [Double] = []
+    static var symbols: [String] = []
+    static func reset() { temperatures = []; symbols = [] }
+}
+@MainActor struct WeatherGlyph: View {
+    init(symbol: String, size: CGFloat, ink: Color, vivid: Bool) { WeatherPresentationProbe.symbols.append(symbol) }
+    var body: some View { EmptyView() }
+}
+@MainActor struct GreetingWeatherFixture {
+    var manual = false
+    var manualWeather = SkyScene.Weather.thunder
+    var weatherRendering = true
+    var manualWeatherFetch = false
+    var reading: WeatherReading?
+    var focusedDay: WeatherDay?
+    var weatherLoading = false
+    var skyDate = Date(timeIntervalSince1970: 1_790_570_000)
+    var rainbowUntil: Date? = Date(timeIntervalSince1970: 1_790_570_030)
+    var astronomy = SkyAstronomy.snapshot(date: Date(timeIntervalSince1970: 1_790_570_000), latitude: 23.13, longitude: 113.26)
+    func bigTemperature(_ value: Double, ink: Color) -> some View {
+        WeatherPresentationProbe.temperatures.append(value); return EmptyView()
+    }
+    func caption(_ value: String, high: Double?, low: Double?, ink: Color) -> some View { EmptyView() }
+'''
+for marker in ('    private var liveWeather: Bool {', '    private func scene(for weather:',
+               '    private func makeScene()', '    private static func sample(',
+               '    private func conditionRow(', '    private func rainbowVisible('):
+    source += declaration('Sources/ClaudeBar/Views/Shared/GreetingCard.swift', marker).replace('private ', '')
+source += '}\nstruct SkyModeFixture {\nvar skyMode: String\nvar rendering: Bool\n'
+for marker in ('    private var manual: Bool {', '    private var none: Bool {', '    private var selection: Int {'):
+    source += declaration('Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift', marker).replace('private ', '')
+source += '}\n'
+
 
 main = r'''
 final class FixtureWindow: NSWindow {
@@ -62,6 +102,41 @@ func hash(_ image: CGImage) -> String {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         GreetingScript.resourceRoot = URL(fileURLWithPath: "FONT_ROOT")
+
+        let reading = WeatherReading(place: "fixture", temperatureC: 22, feelsLikeC: 20, conditionCode: 200,
+            conditionText: "雷雨", highC: 26, lowC: 18, humidity: 70, windKph: 20, windDirection: "东南",
+            isDay: true, sunrise: "06:00", sunset: "18:00", rainChance: 90,
+            observedAt: Date(timeIntervalSince1970: 1_790_570_000), skyHint: .thunder)
+        for manual in [false, true] {
+            for picked in [SkyScene.Weather.clear, .cloudy, .overcast, .lightRain, .heavyRain, .thunder, .snow, .fog] {
+                var fixture = GreetingWeatherFixture(manual: manual, manualWeather: picked, reading: reading)
+                let enabled = fixture.makeScene()
+                require(enabled.weather == (manual ? picked : .thunder), "Enabled auto/manual scene must retain weather")
+                fixture.weatherRendering = false
+                let disabled = fixture.makeScene()
+                require(disabled.weather == .clear && disabled.rain == 0 && disabled.snow == 0
+                    && disabled.fog == 0 && disabled.thunder == 0 && disabled.glassDrops == 0
+                    && disabled.cloudCover == 0 && disabled.stars.isEmpty && disabled.starVisibility == 0,
+                    "Disabled weather must remove layers even with manual weather and a cached reading")
+                WeatherPresentationProbe.reset()
+                _ = fixture.conditionRow(night: false, ink: .black, vivid: true)
+                require(WeatherPresentationProbe.temperatures.isEmpty, "Disabled weather must hide cached temperature")
+                require(WeatherPresentationProbe.symbols == [PinnedSky.sky(for: nil).symbol(night: false)], "Disabled weather must use the daylight glyph")
+                require(!fixture.rainbowVisible(disabled), "Disabled weather must hide a pending rainbow")
+                fixture.weatherRendering = true
+                require(fixture.makeScene().weather == enabled.weather, "Re-enabling must restore the previous auto/manual weather")
+                WeatherPresentationProbe.reset()
+                _ = fixture.conditionRow(night: false, ink: .black, vivid: true)
+                require(WeatherPresentationProbe.temperatures == [22], "Enabled weather must restore cached temperature")
+            }
+            let mode = SkyModeFixture(skyMode: manual ? "manual" : "auto", rendering: false)
+            require(mode.none && mode.selection == 0, "Disabled preference must show selected photo mode even if manual is persisted")
+        }
+        var empty = GreetingWeatherFixture(weatherRendering: false)
+        require(empty.makeScene().weather == .clear, "Disabled weather without cache must retain daylight")
+        empty.manual = true; empty.manualWeather = .thunder; empty.manualWeatherFetch = true
+        require(empty.makeScene().rain == 0, "Preview fetch policy must not bypass the disabled preference")
+        print("PASS weather rendering switch: cached conditions, all manual modes, daylight layers and re-enable")
         let gpu = AtmosphereGPU.loadNow()!
         let scene = SkyScene.make(sky: .rain, rainChance: 90, windKph: 12, windDirection: "东南",
                                   astronomy: SkyAstronomy.snapshot(date: Date(timeIntervalSince1970: 1_790_570_000), latitude: 23.13, longitude: 113.26))
@@ -96,6 +171,17 @@ func hash(_ image: CGImage) -> String {
         input.reduceMotion = true
         let cache = StillCache()
         let size = CGSize(width: 1100, height: 474)
+        var daylightInput = input
+        daylightInput.scene = empty.makeScene()
+        let daylightRenderer = AtmosphereRenderer(gpu: gpu)
+        daylightRenderer.input = daylightInput
+        let daylight = daylightRenderer.snapshot(size: size, scale: 1)!
+        daylightInput.scene.cloudDarkness = 0.9
+        daylightInput.scene.windSpeed = 90
+        daylightRenderer.input = daylightInput
+        let windyDaylight = daylightRenderer.snapshot(size: size, scale: 1)!
+        require(hash(daylight) == hash(windyDaylight), "Zero cloud cover must suppress both cirrus and cloud deck in the production shader")
+        print("PASS disabled weather shader: no residual cloud layers")
         if CommandLine.arguments.contains("--profile") {
             for i in 0..<180 {
                 PROFILE_RENDER
@@ -216,8 +302,8 @@ CACHE
 }
 '''
 if asynchronous:
-    start = source.index('@Observable @MainActor private final class StillCache')
-    worker_fixture = worker_fixture.replace('CACHE', source[start:])
+    cache_source = read('Sources/ClaudeBar/Views/Shared/Atmosphere/AtmosphereView.swift')
+    worker_fixture = worker_fixture.replace('CACHE', cache_source[cache_source.index('@Observable @MainActor private final class StillCache'):])
 
 raster_method = declaration('Sources/ClaudeBar/Views/Shared/Atmosphere/AtmosphereRenderer.swift', '    private func finishRasterizing(').replace('private func', 'func', 1)
 raster_fixture = r'''

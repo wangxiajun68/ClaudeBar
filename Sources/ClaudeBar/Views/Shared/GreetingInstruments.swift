@@ -566,12 +566,11 @@ enum PinnedSky {
 }
 
 /// Automatic or manual sky; when rendering is disabled, the photo button
-/// restores live weather.
+/// restores the previously selected sky mode.
 struct SkyModeToggle: View {
     /// "auto" / "manual"; legacy values behave as automatic.
     var skyMode: String
-    /// 偏好里「实时天气（天气渲染）」那一项。关掉意思是天空现在停在某一层，
-    /// 也正是这一格出现的原因。
+    /// 偏好里「天气渲染」那一项；关闭时只保留日照天空。
     var rendering: Bool
     var ink: Color
     var setManual: (Bool) -> Void
@@ -582,15 +581,15 @@ struct SkyModeToggle: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var manual: Bool { skyMode == "manual" }
-    private var none: Bool { !rendering && !manual }
+    private var none: Bool { !rendering }
 
-    private var selection: Int { manual ? 1 : 0 }
+    private var selection: Int { none ? 0 : (manual ? 1 : 0) }
 
     var body: some View {
         HStack(spacing: 0) {
             if none {
                 segment(0, title: "贴图", symbol: "photo",
-                        help: "天气渲染已关闭：天空停在一种天气上，点一下重新打开")
+                        help: "天气渲染已关闭：保留日照天空，点击恢复之前的天空模式")
             } else {
                 segment(0, title: "自动", symbol: "sparkles", help: "天空跟随实时天气与时间")
                 segment(1, title: "手动", symbol: "slider.horizontal.3", help: "自选天气与时段，拖动时间轴预览")
