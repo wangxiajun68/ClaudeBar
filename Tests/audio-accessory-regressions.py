@@ -100,6 +100,21 @@ func failures(_ label: String, _ condition: Bool) -> Bool {
     return condition
 }
 
+// Log persistence and OSLogStore queries can take longer than a fixed sleep on
+// CI. Observe the marker through an independent fresh store before testing the
+// production cache; keep the window edge fixed so a slow query cannot drop it.
+func waitForLog(_ marker: String, since: Date) -> Bool {
+    let deadline = Date().addingTimeInterval(15)
+    repeat {
+        if let fresh = try? OSLogStore.local(),
+           LogSource.query(fresh, since: since.addingTimeInterval(-120))?.contains(where: { $0.message.contains(marker) }) == true {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    } while Date() < deadline
+    return false
+}
+
 @main struct Regression {
     static func main() {
         var ok = true
@@ -110,9 +125,9 @@ func failures(_ label: String, _ condition: Bool) -> Bool {
         ok = failures("first read must succeed", first != nil) && ok
         let baseline = first?.count ?? -1
 
-        Thread.sleep(forTimeInterval: 0.4)
-        probeLog.notice("one")
-        Thread.sleep(forTimeInterval: 0.6)
+        let firstMarker = "one-" + UUID().uuidString
+        probeLog.notice("\(firstMarker, privacy: .public)")
+        ok = failures("first marker must persist in a fresh log store", waitForLog(firstMarker, since: t0)) && ok
 
         // Same window, inside the store's lifetime: reuse is correct and the
         // new entry is legitimately not part of this snapshot.
@@ -123,16 +138,24 @@ func failures(_ label: String, _ condition: Bool) -> Bool {
         // The window the poller actually asks for — it advances with
         // `lastLogReadAt`, so it crosses the store's build time. Rebuilding is
         // the only way the entry becomes visible.
-        let advanced = LogSource.entries(since: Date()) ??
-            LogSource.entries(since: Date().addingTimeInterval(5))
-        Thread.sleep(forTimeInterval: 0.6)
-        probeLog.notice("two")
-        Thread.sleep(forTimeInterval: 0.6)
-        let after = LogSource.entries(since: Date().addingTimeInterval(-1))?.count ?? -1
+        let advanced = LogSource.entries(since: Date())
+        let windowStart = (LogSource.storeBuiltAt ?? Date()).addingTimeInterval(0.001)
+        // Advance beyond the cached snapshot's edge, with a small timestamp
+        // margin for OSLog's clock conversion. Never derive the query cutoff
+        // from how long a store query or log persistence happened to take.
+        Thread.sleep(forTimeInterval: 0.1)
+        let secondMarker = "two-" + UUID().uuidString
+        probeLog.notice("\(secondMarker, privacy: .public)")
+        ok = failures("second marker must persist in a fresh log store", waitForLog(secondMarker, since: windowStart)) && ok
+        // Simulate a query/scheduler delay longer than the old one-second
+        // window. The fixed edge must still include this exact marker.
+        Thread.sleep(forTimeInterval: 1.2)
+        let afterEntries = LogSource.entries(since: windowStart)
+        let after = afterEntries?.count ?? -1
         ok = failures("an advanced window must see entries written after the last read",
-                      after > (advanced?.count ?? -1)) && ok
+                      afterEntries?.contains(where: { $0.message.contains(secondMarker) }) == true) && ok
         ok = failures("the window that was just read must not be empty at the new edge",
-                      (advanced?.count ?? 0) >= 0) && ok
+                      advanced != nil) && ok
 
         // --- 2. Device typing ------------------------------------------------
         // A real `bluetoothd` line (AirPods Pro), verbatim from this machine.
