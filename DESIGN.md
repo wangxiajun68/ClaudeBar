@@ -629,7 +629,11 @@ amber wood, sparse curved grain, a thin stitched jade cushion and a highlighted
 wooden mallet form the surface itself. Its standard instrument is 28% smaller
 in linear size than the original; only artwork and feedback paths follow the
 size setting. The 26pt hover tools, 11pt counts and 12pt Token label retain
-native dimensions. Tools are separate circles on translucent black backgrounds;
+native dimensions. Six coloured particles can overlap across at most eight
+strike groups; only the latest strike's Token label rises along the middle
+path and fades, keeping rapid taps free of overlapping words. Every strike
+still increments the counts; Reduce Motion keeps only the latest label's
+stationary fade. Tools are separate circles on translucent black backgrounds;
 the accessory has no generic card frame, inner rings or panel fill. Rest,
 hover, automatic striking, shared shape capture and bounded
 Reduce Motion behavior are specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

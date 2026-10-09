@@ -150,7 +150,7 @@ private struct WoodenFishBurstLayer: View {
     var body: some View {
         ZStack {
             ForEach(pool.ids, id: \.self) { id in
-                WoodenFishBurst(strikeID: id, displayScale: displayScale) {
+                WoodenFishBurst(showsWord: id == pool.ids.last, displayScale: displayScale) {
                     pool.expire(id)
                 }
             }
@@ -161,7 +161,7 @@ private struct WoodenFishBurstLayer: View {
 }
 
 private struct WoodenFishBurst: View {
-    let strikeID: UInt
+    let showsWord: Bool
     let displayScale: CGFloat
     let expire: () -> Void
     @State private var progress = 0.0
@@ -172,11 +172,13 @@ private struct WoodenFishBurst: View {
             ForEach(reduceMotion ? [1] : Array(0..<7), id: \.self) { lane in
                 Group {
                     if lane == 1 {
-                        Text("Token +1")
+                        if showsWord {
+                            Text("Token +1")
                             .font(.system(size: 12 / displayScale, weight: .semibold, design: .rounded))
                             .foregroundStyle(Color(hex: 0x8CEAFF))
                             .padding(.horizontal, 6 / displayScale).padding(.vertical, 3 / displayScale)
                             .background(Color.black.opacity(0.72), in: Capsule())
+                        }
                     } else {
                         RoundedRectangle(cornerRadius: 1)
                             .fill(lane.isMultiple(of: 3) ? Color(hex: 0xE3B8FF) :
@@ -184,11 +186,9 @@ private struct WoodenFishBurst: View {
                             .frame(width: 3 / displayScale, height: 3 / displayScale).rotationEffect(.degrees(45))
                     }
                 }
-                // Successive words take left/centre/right paths so native-size
-                // labels remain separated above the smaller instrument.
-                .modifier(WoodenFishParticleFlight(progress: progress,
-                                                   lane: lane == 1 ? Int(strikeID % 3) : lane,
-                                                   reducedMotion: reduceMotion))
+                // Particles overlap; one newest word stays readable even
+                // when taps arrive faster than a label can leave the wood.
+                .modifier(WoodenFishParticleFlight(progress: progress, lane: lane, reducedMotion: reduceMotion))
             }
         }
         .frame(width: 240, height: 200)
