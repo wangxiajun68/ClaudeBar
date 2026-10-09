@@ -624,16 +624,45 @@ those checks.
 
 ## Desktop wooden fish
 
-The desktop wooden fish is a transparent native vector accessory: softly lit
-amber wood, sparse curved grain, a thin stitched jade cushion and a highlighted
-wooden mallet form the surface itself. Its standard instrument is 28% smaller
-in linear size than the original; only artwork and feedback paths follow the
-size setting. The 26pt hover tools, 11pt counts and 12pt Token label retain
-native dimensions. Six coloured particles can overlap across at most eight
-strike groups; only the latest strike's Token label rises along the middle
-path and fades, keeping rapid taps free of overlapping words. Every strike
-still increments the counts; Reduce Motion keeps only the latest label's
-stationary fade. Tools are separate circles on translucent black backgrounds;
-the accessory has no generic card frame, inner rings or panel fill. Rest,
-hover, automatic striking, shared shape capture and bounded
-Reduce Motion behavior are specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).
+The desktop wooden fish is a compact solid-colour native vector instrument
+on a transparent desktop window. Opaque jade (`#BDDCD1` / `#245D60`) fills
+the body; teal (`#23828C` / `#68CDC7`) carries its bold contour and the solid
+mallet handle. Coral (`#B85B49` / `#F29B86`) marks the mouth and solid eye;
+warm gold (`#AD7A32` / `#E4BF77`) identifies the solid round mallet head.
+Quieter green (`#478C82` / `#9ECFC3`) carries the inner and base arcs.
+Round caps, round joins and 16 / 10 / 8 foreground stroke widths establish
+the broad, rounded drawing. A narrow contrasting keyline follows the same
+paths. The instrument uses flat opaque fills without texture, shadow or
+cushion; this local accessory language does not change the app's card system.
+
+The body's visible ellipse, including its keyline, is 178 × (178 / φ) in
+artwork coordinates, where φ is the golden ratio. Both axes use the same
+projection scale. The eye's centre sits at 1 / φ of the width and 1 / φ² of
+the height; the visible mallet head diameter / handle thickness ratio and
+the body width / base arc width ratio are φ. These relationships keep the
+outline round and proportionate at every size.
+
+Only the instrument appears at rest; hover slightly brightens it and reveals
+separate native tool circles and counts. The solid body, mallet, contours
+and base arc capture strikes; surrounding transparent space and tool gaps
+pass clicks through. Pressing briefly scales the instrument or tool. Space
+strikes, window-local Escape pauses and resets the manual chain, and the
+right-click and More menus share their options. There is no idle animation.
+
+The three artwork scales are 0.60 / 0.72 / 0.88. The 26pt tools, 11pt counts,
+12pt Token labels and 24pt word-row spacing retain native dimensions.
+Each strike emits its own Token label, including recent events coalesced in
+one frame. A bounded two-column, four-row word cloud holds up to eight
+labels between the tool row and footer. Labels drift upward by 20pt over
+1.35 seconds and clear at 1.42 seconds; six coloured particles per strike
+share the same eight-group limit. Normal labels are cyan; manual combos
+from eight onward and surprise strikes use gold.
+
+Manual gaps of at most 0.55 seconds form a combo. Milestone and rhythm
+surprises temporarily appear in the count capsule; automatic strikes do not
+consume the session's first manual strike of the day or trigger combos and
+surprises. Every strike still adds exactly one count and changes no real
+Token usage. Reduce Motion removes particles and instrument, mallet and
+press transforms, leaving only the latest label's fixed-position fade.
+Exact rhythm messages, cooldowns, lifecycle rules and verification status are
+specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

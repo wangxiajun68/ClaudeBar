@@ -66,6 +66,10 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard AppPresentation.allowsInterface, panel == nil else { return }
         model.refreshDay()
         let panel = WoodenFishPanel(contentRect: placedFrame(size: model.size.panelSize))
+        panel.onEscape = { [weak self] in
+            self?.model.isAutomatic = false
+            self?.model.endInteraction()
+        }
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: WoodenFishView(model: model) { [weak self] in self?.strike() })
         self.panel = panel
@@ -97,9 +101,9 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         audio?.stop(); audio = nil
     }
 
-    func strike() {
+    func strike(automatic: Bool = false) {
         guard AppPresentation.allowsInterface, panel?.isVisible == true else { return }
-        model.strike()
+        model.strike(automatic: automatic)
         guard !model.muted, model.volume > 0 else { return }
         if audio == nil {
             audio = WoodenFishAudio()
@@ -113,7 +117,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard automatic, AppPresentation.allowsInterface, panel != nil,
               WoodenFishModel.intervals.contains(interval) else { return }
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.strike() }
+            MainActor.assumeIsolated { self?.strike(automatic: true) }
         }
         timer.tolerance = min(0.05, interval * 0.05)
         RunLoop.main.add(timer, forMode: .common)
@@ -140,7 +144,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
                             y: panel.frame.maxY - mouse.y)
         let hovered = panel.frame.contains(mouse)
         if model.isHovered != hovered { model.isHovered = hovered }
-        let capture = WoodenFishGeometry.captures(point, showsTools: hovered || model.isAutomatic, scale: scale)
+        let capture = WoodenFishGeometry.captures(point, scale: scale)
         if panel.ignoresMouseEvents == capture { panel.ignoresMouseEvents = !capture }
     }
 
@@ -176,6 +180,25 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
 }
 
 private final class WoodenFishPanel: NSPanel {
+    var onEscape: (() -> Void)?
+
+    // This accessory can become key without a focused SwiftUI control.
+    // Handle Escape in its own window; never install a global key listener.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        if event.type == .leftMouseDown, event.modifierFlags.contains(.option) {
+            let point = CGPoint(x: event.locationInWindow.x, y: frame.height - event.locationInWindow.y)
+            if WoodenFishGeometry.captures(point, scale: frame.width / 260) {
+                performDrag(with: event)
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
+
     init(contentRect: CGRect) {
         super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)

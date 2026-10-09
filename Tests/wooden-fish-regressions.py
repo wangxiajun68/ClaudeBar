@@ -67,22 +67,22 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(left.contains(secondary) && secondary.minX == -1200, "secondary display restored")
         expect(screen.contains(WoodenFishPlacement.frame(origin: secondary.origin, size: size, screens: [screen])), "removed display recovered")
         expect(screen.contains(WoodenFishPlacement.frame(origin: CGPoint(x: 1439, y: 874), size: size, screens: [screen])), "top and right clamped")
-        expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 150), showsTools: false), "wood captures taps")
-        expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 196), showsTools: false), "cushion captures taps")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 100), showsTools: true), "transparent margins are click-through")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18), showsTools: false), "invisible tools cannot steal clicks")
-        expect(WoodenFishGeometry.captures(CGPoint(x: 70, y: 18), showsTools: true), "revealed grip is reachable")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 85, y: 18), showsTools: true), "tool gaps remain click-through")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 41.75, y: 182.75), showsTools: true), "transparent cushion corner cannot steal clicks")
-        expect(WoodenFishGeometry.captures(CGPoint(x: 248, y: 63), showsTools: false), "visible mallet tip captures taps")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 150)), "wood captures taps")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 130, y: 229)), "bold base line captures taps")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 100)), "transparent margins are click-through")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18)), "invisible tools cannot steal clicks")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18)), "removed controls cannot capture clicks")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 85, y: 18)), "tool gaps remain click-through")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 31, y: 182.75)), "transparent outer corner cannot steal clicks")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 248, y: 63)), "visible mallet tip captures taps")
         for size in WoodenFishSize.allCases {
             let s = size.scale
             let wood = CGPoint(x: 110 * s, y: 36 + (150 - 36) * s)
-            expect(WoodenFishGeometry.captures(wood, showsTools: false, scale: s), "scaled wood captures taps below native toolbar")
+            expect(WoodenFishGeometry.captures(wood, scale: s), "scaled wood captures taps below native toolbar")
             let grip = CGPoint(x: size.panelSize.width / 2 - 60, y: 18)
-            expect(WoodenFishGeometry.captures(grip, showsTools: true, scale: s), "native grip stays reachable at every size")
-            expect(!WoodenFishGeometry.captures(CGPoint(x: grip.x + 15, y: 18), showsTools: true, scale: s), "native tool gaps stay click-through")
-            expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 36), showsTools: false, scale: s), "compact transparent margin stays click-through")
+            expect(!WoodenFishGeometry.captures(grip, scale: s), "removed native toolbar stays click-through at every size")
+            expect(!WoodenFishGeometry.captures(CGPoint(x: grip.x + 15, y: 18), scale: s), "native tool gaps stay click-through")
+            expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 36), scale: s), "compact transparent margin stays click-through")
         }
         var bursts = WoodenFishBurstPool()
         for id in UInt(1)...UInt(1000) { bursts.emit(id) }
@@ -106,6 +106,67 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         let leftLabel = WoodenFishMotion.particle(progress: 0.5, lane: 0, reducedMotion: false)
         let rightLabel = WoodenFishMotion.particle(progress: 0.5, lane: 2, reducedMotion: false)
         expect(leftLabel.offset.x < 0 && rightLabel.offset.x > 0, "labels diverge on opposite sides")
+        let painted = WoodenFishGeometry.bodyPath().boundingBoxOfPath.insetBy(dx: -WoodenFishGeometry.outlineWidth / 2, dy: -WoodenFishGeometry.outlineWidth / 2)
+        expect(abs(painted.width / painted.height - (1 + sqrt(5.0)) / 2) < 0.00001, "visible resonator follows the golden ratio")
+        var coalesced = WoodenFishBurstPool()
+        coalesced.emit(from: 0, through: 1000, feedback: WoodenFishStrikeFeedback(combo: 32, surprise: .cache))
+        expect(coalesced.ids == Array(UInt(993)...UInt(1000)), "coalesced input preserves eight independent recent words")
+        expect(coalesced.entries.filter { $0.feedback.surprise != nil }.count == 1, "coalesced events cannot duplicate a surprise")
+        coalesced.emit(from: 1000, through: 1000, feedback: .init())
+        expect(coalesced.entries.count == 8, "duplicate publication creates no feedback")
+        var wrapped = WoodenFishBurstPool()
+        wrapped.emit(from: UInt.max - 1, through: 1, feedback: .init())
+        expect(wrapped.ids == [UInt.max, 0, 1], "strike ID overflow still emits recent words")
+        let leftWord = WoodenFishMotion.word(progress: 0.5, id: 1, reducedMotion: false)
+        let rightWord = WoodenFishMotion.word(progress: 0.5, id: 2, reducedMotion: false)
+        expect(rightWord.offset.x - leftWord.offset.x >= 68, "word columns leave space for native labels")
+        expect(WoodenFishMotion.wordRowOffset(rank: 6) - WoodenFishMotion.wordRowOffset(rank: 4) <= -24, "word rows separate native labels")
+        let stillWord = WoodenFishMotion.word(progress: 0.5, id: 3, reducedMotion: true)
+        expect(stillWord.offset == .zero && stillWord.angle == 0 && stillWord.scale == 1, "reduced motion word is stationary")
+        for size in WoodenFishSize.allCases {
+            for rank in 0..<8 {
+                for step in 0...10 {
+                    let word = WoodenFishMotion.word(progress: Double(step) / 10, id: UInt(rank), reducedMotion: false)
+                    let center = 36 + 91 * size.scale + word.offset.y + WoodenFishMotion.wordRowOffset(rank: rank)
+                    expect(center - 12 > 36, "eight native labels clear hovered toolbar at every size")
+                    expect(center + 12 < size.panelSize.height - 28, "labels clear count footer at every size")
+                }
+            }
+        }
+        var daily = WoodenFishRhythm()
+        _ = daily.strike(at: date, automatic: true, today: 1, total: 1)
+        expect(daily.strike(at: date.addingTimeInterval(1), automatic: false, today: 2, total: 2).surprise == .firstOfDay, "automatic beat cannot consume first manual greeting")
+        daily.resetChain()
+        expect(daily.strike(at: date.addingTimeInterval(10), automatic: false, today: 3, total: 3).surprise == nil, "resetting chain does not repeat daily greeting")
+        expect(daily.strike(at: date.addingTimeInterval(86400), automatic: false, today: 1, total: 4).surprise == .firstOfDay, "new day enables first manual greeting")
+        var rhythm = WoodenFishRhythm()
+        var beat = WoodenFishStrikeFeedback()
+        for i in 1...32 {
+            beat = rhythm.strike(at: date.addingTimeInterval(Double(i) * 0.1), automatic: false, today: i, total: i)
+            if i == 8 { expect(beat.surprise == .flow && beat.combo == 8, "eight manual beats reveal flow") }
+            if i == 16 { expect(beat.surprise == .matrix, "sixteen manual beats reveal the Matrix surprise") }
+            if i == 32 { expect(beat.surprise == .cache, "thirty-two manual beats reveal cache surprise") }
+        }
+        beat = rhythm.strike(at: date.addingTimeInterval(5), automatic: false, today: 33, total: 33)
+        expect(beat.combo == 1, "pause resets manual combo")
+        for i in 2...8 { beat = rhythm.strike(at: date.addingTimeInterval(5 + Double(i - 1) * 0.1), automatic: false, today: 33 + i, total: 33 + i) }
+        expect(beat.combo == 8 && beat.surprise == nil, "same surprise cannot spam within eight seconds")
+        for count in [1, 8, 16, 32, 108, 1024, 4096] {
+            let automatic = rhythm.strike(at: date.addingTimeInterval(10), automatic: true, today: count, total: count)
+            expect(automatic.combo == 0 && automatic.surprise == nil, "automatic beats do not farm combos or surprises")
+        }
+        var milestones = WoodenFishRhythm()
+        expect(milestones.strike(at: date, automatic: false, today: 20, total: 108).surprise == .peace, "108 lifetime milestone")
+        expect(milestones.strike(at: date.addingTimeInterval(1), automatic: false, today: 21, total: 1024).surprise == .hello, "1024 lifetime milestone")
+        expect(milestones.strike(at: date.addingTimeInterval(2), automatic: false, today: 22, total: 4096).surprise == .innerPeace, "4096 lifetime milestone")
+        expect(milestones.strike(at: date.addingTimeInterval(-1), automatic: false, today: 23, total: 4097).combo == 1, "clock reversal cannot extend a combo")
+        model.endInteraction()
+        model.strike(at: date, automatic: true)
+        expect(model.feedback.combo == 0 && model.feedback.surprise == nil, "production model propagates automatic origin")
+        model.strike(at: date.addingTimeInterval(0.1))
+        expect(model.feedback.combo == 1, "new manual interaction starts cleanly")
+        model.resetCounts(at: date)
+        expect(model.feedback == WoodenFishStrikeFeedback(), "record reset clears session feedback")
         let wave = WoodenFishTone.wave()
         expect(String(data: wave.prefix(4), encoding: .utf8) == "RIFF", "RIFF header")
         expect(String(data: wave[8..<16], encoding: .utf8) == "WAVEfmt ", "WAVE format")
@@ -116,7 +177,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(samples.first == 0 && samples.contains { abs(Int($0)) > 10_000 }, "audible attack without hard onset")
         expect(samples.suffix(441).allSatisfy { abs(Int($0)) < 30 }, "damped tail avoids click")
         expect(samples.allSatisfy { abs(Int($0)) < 32_767 }, "waveform not clipped")
-        print("PASS: private counts, restoration, midnight, reset, overflow, multi-screen placement, bounded bursts, reduced motion and damped PCM")
+        print("PASS: private counts, restoration, midnight, reset, overflow, multi-screen placement, golden proportions, manual rhythm, coalesced words, reduced motion and damped PCM")
     }
 }
 '''

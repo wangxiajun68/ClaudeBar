@@ -333,10 +333,20 @@ final class CodexProxyServer: @unchecked Sendable {
                 // An empty catalog therefore reads as "no models", which is
                 // the file-missing case, not an upstream failure.
                 let tap = await startLog(request, source: .codex, kind: .models, provider: "")
-                await serveModels(connection)
+                await serveModels(connection, thirdParty: CaptureSource.isThirdPartyClient(headers: request.headers))
                 tap.finish(status: 200)
                 return
             }
+        }
+
+        if request.method == "POST", CaptureSource.isThirdPartyClient(headers: request.headers),
+           ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages", "/v1/messages/count_tokens", "/messages/count_tokens"].contains(path),
+           let body = request.body,
+           let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+           await FreeModelGateway.shared.handles(model: json["model"] as? String ?? "", thirdParty: true) {
+            await forwardGateway(connection, request: request, json: json, path: path)
+            connection.cancel()
+            return
         }
 
         if isAnthropicPath || hasAnthropicHeaders {
@@ -768,6 +778,223 @@ final class CodexProxyServer: @unchecked Sendable {
                 capError = error.localizedDescription
                 statusCode = Self.statusFromProxyError(error)
             }
+            throw error
+        }
+    }
+
+    // MARK: - Third-party free-model gateway
+
+    private func forwardGateway(_ connection: NWConnection, request: HTTPRequest,
+                                json: [String: Any], path: String) async {
+        let gateway = FreeModelGateway.shared
+        var plan: FreeModelGateway.Plan?
+        var headWritten = false
+        let anthropic = path.hasSuffix("/messages")
+        do {
+            if path.hasSuffix("/messages/count_tokens") {
+                var estimate = json; estimate["max_tokens"] = 1
+                let adapted = try GatewayWireAdapter.request(estimate, path: "/v1/messages")
+                let requirements = try GatewayRequirements(chat: adapted.chat)
+                await respond(connection, status: "200 OK", contentType: "application/json",
+                    body: try JSONSerialization.data(withJSONObject: ["input_tokens": max(1, requirements.context - requirements.output - 1024)]))
+                return // conservative local estimate; no quota or upstream I/O
+            }
+            let adapted = try GatewayWireAdapter.request(json, path: path)
+            let requirements = try GatewayRequirements(chat: adapted.chat)
+            let selected = try await gateway.begin(requirements)
+            plan = selected
+            let deadline = Date().addingTimeInterval(60)
+            var lastFailure: Error = GatewayFailure.coolingDown
+            for candidate in selected.candidates {
+                try Self.throwIfInterrupted(nil)
+                guard Date() < deadline else { break }
+                guard await gateway.canAttempt(candidate, plan: selected) else { continue }
+                try await gateway.started(candidate, plan: selected)
+                do {
+                    try await forwardGatewayCandidate(connection, request: request, adapted: adapted,
+                        candidate: candidate, plan: selected, headWritten: &headWritten)
+                    await gateway.finish(selected)
+                    return
+                } catch {
+                    lastFailure = error
+                    let code = GatewayWireAdapter.status(error)
+                    // A second model must never write into a partially delivered
+                    // stream, nor retry an invalid request. Account failures
+                    // cool the provider, so another provider can still serve it.
+                    guard !headWritten, !Self.wasInterrupted(), code != 0,
+                          FreeModelGateway.retryable(status: code) else { throw error }
+                }
+            }
+            throw lastFailure
+        } catch {
+            if !Self.wasInterrupted(), !(error is CancellationError) {
+                let code = GatewayWireAdapter.status(error)
+                if code == 0 { if let plan { await gateway.finish(plan) }; return }
+                let message = (error as? GatewayFailure)?.localizedDescription
+                    ?? "自动网关请求失败，请检查模型池或稍后重试。"
+                let event: [String: Any] = ["type": "error", "error": ["type": "gateway_error", "message": message]]
+                if headWritten {
+                    if anthropic { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
+                    else if path.hasSuffix("/responses") {
+                        try? await writeMigration(connection, data: CodexProxyTransform.synthesizeFailed(message: message))
+                    } else {
+                        try? await writeMigration(connection, data: CodexProxyTransform.sse(event))
+                        try? await writeMigration(connection, data: CodexProxyTransform.sseRaw("[DONE]"))
+                    }
+                } else {
+                    // Before any head is sent, preserve a real HTTP error even
+                    // for stream clients; never pretend a failed request is 200.
+                    await respond(connection, status: "\(max(400, code)) Error", contentType: "application/json",
+                        body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data())
+                }
+            }
+        }
+        if let plan { await gateway.finish(plan) }
+    }
+
+    private func forwardGatewayCandidate(_ connection: NWConnection, request: HTTPRequest,
+        adapted: GatewayWireAdapter.Request, candidate: FreeModelGateway.Candidate,
+        plan: FreeModelGateway.Plan, headWritten: inout Bool) async throws {
+        let started = Date()
+        let streamUpstream = adapted.stream || adapted.wire != .chat
+        let outbound = FreeModelGateway.outbound(adapted.chat, candidate: candidate, stream: streamUpstream)
+        let outData = try JSONSerialization.data(withJSONObject: outbound)
+        let upstream = CodexProxyState.UpstreamEndpoint(baseURL: candidate.endpoint.baseURL,
+            apiKey: candidate.endpoint.apiKey, wireAPI: "chat", name: candidate.endpoint.name)
+        var logRequest = request
+        var routedJSON = try JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any] ?? [:]
+        routedJSON["model"] = candidate.member.model
+        logRequest.body = try JSONSerialization.data(withJSONObject: routedJSON)
+        let kind: ProxyLogKind = adapted.wire == .anthropic ? .anthropic
+            : (adapted.wire == .responses ? .openaiResponses : .openaiChat)
+        let log = await startLog(logRequest, source: .codex, kind: kind, provider: candidate.endpoint.name)
+        let tap = await makeOpenAITap(kind: .openaiChat, request: request, json: routedJSON,
+            rewritten: outData, stream: adapted.stream, upstream: upstream)
+        bindInterrupt(tap, connection: connection)
+        var totals = TokenTotals()
+        var task: URLSessionDataTask?
+        var retryAfter: Double?
+        defer { task?.cancel() }
+        do {
+            guard let url = chatCompletionsURL(candidate.endpoint.baseURL) else { throw GatewayFailure.invalidRequest }
+            var req = URLRequest(url: url, timeoutInterval: 20)
+            req.httpMethod = "POST"; req.httpBody = outData
+            req.setValue("Bearer \(candidate.endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+            req.setValue(streamUpstream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
+            try Self.throwIfInterrupted(tap)
+            let (bytes, response) = try await GatewayNetwork.shared.session.bytes(for: req,
+                delegate: InterruptWatcher { Self.attachUpstream(tap, task: $0) })
+            task = bytes.task
+            Self.attachUpstream(tap, task: bytes.task)
+            guard let http = response as? HTTPURLResponse else { throw GatewayFailure.upstream(502) }
+            retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            guard (200..<300).contains(http.statusCode) else { throw GatewayFailure.upstream(http.statusCode) }
+            let latency = Date().timeIntervalSince(started)
+            if !streamUpstream {
+                var data = Data()
+                for try await byte in bytes {
+                    try Self.throwIfInterrupted(tap)
+                    guard data.count < AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    data.append(byte)
+                }
+                guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      value["error"] == nil, let choices = value["choices"] as? [[String: Any]],
+                      choices.first?["message"] is [String: Any], choices.first?["finish_reason"] is String else {
+                    throw GatewayFailure.upstream(502)
+                }
+                tap?.applyChat(value); totals.applyChat(value)
+                headWritten = true
+                await respond(connection, status: "200 OK", contentType: "application/json", body: data)
+            } else {
+                guard http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true else {
+                    throw GatewayFailure.upstream(502)
+                }
+                var chatState = CodexProxyTransform.ChatStreamState()
+                chatState.registry = adapted.registry
+                var anthropic = AgentProtocolBridge.ChatStream(stream: .init(model: candidate.member.model))
+                var message = AgentProtocolBridge.MessageAccumulator()
+                var responseBody: [String: Any]?
+                var terminal = false
+                var sawData = false
+                var accumulatedBytes = 0
+                func deliver(_ events: [[String: Any]]) async throws {
+                    for event in events {
+                        if adapted.stream {
+                            try await writeMigration(connection, data: adapted.wire == .anthropic
+                                ? AgentProtocolBridge.sse(event) : CodexProxyTransform.sse(event))
+                        } else if adapted.wire == .anthropic { try message.apply(event) }
+                        else if event["type"] as? String == "response.completed" {
+                            responseBody = event["response"] as? [String: Any]
+                        }
+                    }
+                }
+                for try await line in bytes.lines {
+                    try Self.throwIfInterrupted(tap)
+                    guard line.utf8.count <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    guard line.hasPrefix("data:") else { continue }
+                    let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    if payload == "[DONE]" { break }
+                    guard let data = payload.data(using: .utf8),
+                          var delta = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        throw GatewayFailure.upstream(502)
+                    }
+                    if let error = delta["error"] as? [String: Any] {
+                        throw GatewayFailure.upstream(error["code"] as? Int ?? 502)
+                    }
+                    accumulatedBytes += data.count
+                    guard accumulatedBytes <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    // Delay the client head until the first valid data frame.
+                    // OpenRouter can report a provider error in a 200 stream.
+                    if !sawData, adapted.stream {
+                        headWritten = true
+                        try await writeMigration(connection, data: sseHead())
+                    }
+                    sawData = true
+                    tap?.applyChat(delta); totals.applyChat(delta); log.note(tokens: totals)
+                    if (delta["choices"] as? [[String: Any]] ?? []).contains(where: { $0["finish_reason"] is String }) { terminal = true }
+                    switch adapted.wire {
+                    case .chat:
+                        try await writeMigration(connection, data: CodexProxyTransform.sse(delta))
+                    case .responses:
+                        // Usage may arrive before the finish marker. Complete
+                        // once, after EOF has proved the response is terminal.
+                        delta.removeValue(forKey: "usage")
+                        try await deliver(CodexProxyTransform.chatDeltaToResponsesEvents(delta, state: &chatState))
+                    case .anthropic:
+                        try await deliver(anthropic.apply(delta))
+                    }
+                }
+                guard sawData, terminal else { throw GatewayFailure.incomplete }
+                if adapted.wire == .responses {
+                    let result: [String: Any] = ["id": chatState.responseID, "object": "response",
+                        "created_at": Int(Date().timeIntervalSince1970), "status": "completed",
+                        "model": candidate.member.model, "usage": ["input_tokens": (totals.input ?? 0) + (totals.cacheRead ?? 0) + (totals.cacheWrite ?? 0),
+                            "output_tokens": totals.output ?? 0, "total_tokens": totals.total ?? 0,
+                            "input_tokens_details": ["cached_tokens": totals.cacheRead ?? 0]]]
+                    try await deliver(CodexProxyTransform.completedEvents(state: &chatState, response: result))
+                } else if adapted.wire == .anthropic { try await deliver(anthropic.finish()) }
+                if adapted.stream, adapted.wire != .anthropic {
+                    try await writeMigration(connection, data: CodexProxyTransform.sseRaw("[DONE]"))
+                } else if !adapted.stream {
+                    let value = adapted.wire == .anthropic ? try message.result() : (responseBody ?? [:])
+                    headWritten = true
+                    await respond(connection, status: "200 OK", contentType: "application/json",
+                        body: try JSONSerialization.data(withJSONObject: value))
+                }
+            }
+            tap?.finish(state: .done, status: 200, error: nil)
+            log.finish(status: 200, tokens: totals)
+            await FreeModelGateway.shared.report(candidate, plan: plan, status: 200, latency: latency)
+        } catch {
+            let interrupted = Self.wasInterrupted() || GatewayWireAdapter.status(error) == 0
+            let status = interrupted ? 0 : GatewayWireAdapter.status(error)
+            tap?.finish(state: interrupted ? .aborted : .error, status: status,
+                        error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）")
+            log.finish(status: status, error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）", tokens: totals)
+            await FreeModelGateway.shared.report(candidate, plan: plan, status: status,
+                latency: Date().timeIntervalSince(started), retryAfter: retryAfter)
             throw error
         }
     }
@@ -1261,9 +1488,19 @@ final class CodexProxyServer: @unchecked Sendable {
         connection.cancel()
     }
 
-    private func serveModels(_ connection: NWConnection) async {
-        let body = CodexModelCatalog.readJSON()
+    private func serveModels(_ connection: NWConnection, thirdParty: Bool = false) async {
+        var body = CodexModelCatalog.readJSON()
             ?? Data(#"{"object":"list","data":[],"models":[]}"#.utf8)
+        let ids = thirdParty ? await FreeModelGateway.shared.advertisedModels() : []
+        if !ids.isEmpty {
+            var catalog = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            var rows = catalog["data"] as? [[String: Any]] ?? []
+            for id in ids where !rows.contains(where: { $0["id"] as? String == id }) {
+                rows.append(["id": id, "object": "model", "created": 0, "owned_by": "claudebar"])
+            }
+            catalog["object"] = "list"; catalog["data"] = rows
+            body = (try? JSONSerialization.data(withJSONObject: catalog)) ?? body
+        }
         await respond(connection, status: "200 OK", contentType: "application/json", body: body)
         connection.cancel()
     }

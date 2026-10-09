@@ -84,6 +84,10 @@ enum FilePaths {
         appSupportDir.appendingPathComponent("proxy-token")
     }
 
+    static var freeModelPoolFile: URL {
+        appSupportDir.appendingPathComponent("free-model-pool.json")
+    }
+
     /// Capture payload directories hold decoded media (`<id>/` per capture);
     /// the capture rows themselves live in `proxy-capture.db`.
     static var capturePayloadsDir: URL {

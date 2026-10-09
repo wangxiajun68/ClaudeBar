@@ -8,6 +8,7 @@ final class WoodenFishModel: ObservableObject {
     static let shared = WoodenFishModel()
     private let defaults: UserDefaults
     private var day: String
+    private var rhythm = WoodenFishRhythm()
 
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: "woodenFishEnabled") } }
     @Published var muted: Bool { didSet { defaults.set(muted, forKey: "woodenFishMuted") } }
@@ -20,11 +21,12 @@ final class WoodenFishModel: ObservableObject {
     @Published var size: WoodenFishSize {
         didSet { defaults.set(size.rawValue, forKey: "woodenFishSize") }
     }
-    @Published var isAutomatic = false
+    @Published var isAutomatic = false { didSet { endInteraction() } }
     @Published var isHovered = false
     @Published private(set) var today: Int
     @Published private(set) var total: Int
     @Published private(set) var strikeID: UInt = 0
+    @Published private(set) var feedback = WoodenFishStrikeFeedback()
     @Published var soundAvailable = true
 
     init(defaults: UserDefaults = .standard, now: Date = Date()) {
@@ -45,19 +47,23 @@ final class WoodenFishModel: ObservableObject {
 
     static let intervals: [Double] = [0.5, 1, 2, 3]
 
-    func strike(at now: Date = Date()) {
+    func strike(at now: Date = Date(), automatic: Bool = false) {
         refreshDay(at: now)
         if total < Int.max { total += 1 }
         if today < total { today += 1 }
+        feedback = rhythm.strike(at: now, automatic: automatic, today: today, total: total)
         strikeID &+= 1
         saveCounts()
     }
+
+    func endInteraction() { rhythm.resetChain(); feedback = .init() }
 
     func refreshDay(at now: Date = Date()) {
         let newDay = Self.dayKey(now)
         guard newDay != day else { return }
         day = newDay
         today = 0
+        endInteraction()
         saveCounts()
     }
 
@@ -65,6 +71,8 @@ final class WoodenFishModel: ObservableObject {
         day = Self.dayKey(now)
         today = 0
         total = 0
+        rhythm = WoodenFishRhythm()
+        feedback = .init()
         saveCounts()
     }
 

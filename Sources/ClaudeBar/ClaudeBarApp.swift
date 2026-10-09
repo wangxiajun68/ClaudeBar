@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.peer = codexStore
         codexStore.claudePeer = store
         codexStore.load()
+        FreeModelGatewayStore.shared.start(providers: codexStore, claude: store)
 
         // VPN module: start the mihomo core if it was enabled last session,
         // and restore the system proxy if we took it over.
@@ -328,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ports. `VpnManager.reapOrphanCore()` covers the crash case; this covers
     /// the ordinary Quit menu item.
     func applicationWillTerminate(_ notification: Notification) {
+        FreeModelGatewayStore.shared.stop()
         presentationObserver?.cancel()
         presentationObserver = nil
         cliControlServer.stop()

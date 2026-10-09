@@ -19,6 +19,11 @@ source += '\n'.join((root / path).read_text() for path in (
     'Sources/ClaudeBar/Views/Shared/WoodenFishView.swift',
     'Sources/ClaudeBar/WoodenFishController.swift',
 ))
+# accessibilityReduceMotion is read-only in SwiftUI; inject only the binding
+# into this isolated preview to exercise the production reduced-motion branch.
+if '--reduced-motion' in sys.argv:
+    source = source.replace('@Environment(\\.accessibilityReduceMotion) private var reduceMotion',
+                            'private let reduceMotion = true')
 source += r'''
 final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
@@ -46,11 +51,23 @@ enum AppPresentation { static var allowsInterface = true }
             while model.total < 2, Date() < deadline {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.02))
             }
-            precondition(model.total >= 2, "real repeating timer")
+            precondition(model.total >= 2 && model.feedback.combo == 0 && model.feedback.surprise == nil, "real repeating timer has automatic feedback")
             model.interval = 3
             let afterChange = model.total
             RunLoop.current.run(until: Date().addingTimeInterval(0.7))
             precondition(model.total == afterChange, "old cadence was invalidated")
+            if let panel = NSApp.windows.first {
+                panel.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
+                panel.makeKey()
+                panel.makeFirstResponder(panel.contentView)
+                let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                    context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                    isARepeat: false, keyCode: 53)!
+                panel.sendEvent(escape)
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                precondition(!model.isAutomatic, "real Escape handler pauses automatic strikes")
+            } else { preconditionFailure("real controller panel missing") }
             model.enabled = false
             precondition(!model.isAutomatic, "hide stops automatic mode")
             let hidden = model.total
@@ -67,12 +84,12 @@ enum AppPresentation { static var allowsInterface = true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.6))
             precondition(model.total == hidden, "no ticks after teardown")
             precondition(NSApp.windows.allSatisfy { !$0.isVisible }, "no panel left behind")
-            print("PASS: manual strike, auto timer, cadence replacement, hide/show and performance teardown")
+            print("PASS: manual strike, auto timer, cadence replacement, native Escape, hide/show and performance teardown")
             return
         }
         if CommandLine.arguments.contains("--motion") {
-            model.size = .regular
-            model.isHovered = false
+            model.size = CommandLine.arguments.contains("--small") ? .small : .regular
+            model.isHovered = CommandLine.arguments.contains("--hover")
             let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
             host.frame = CGRect(origin: .zero, size: model.size.panelSize)
             let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -85,10 +102,10 @@ enum AppPresentation { static var allowsInterface = true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
             let start = Date()
             var taps = 0
-            for frame in 0..<72 {
+            for frame in 0..<180 {
                 RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 30))
-                // First strike, then four quick taps after the first settles.
-                if [1, 34, 37, 40, 43].contains(frame) {
+                // First strike, then 32 quick taps: cloud overlap and all combo tiers.
+                if frame == 1 || (45...107).contains(frame) && (frame - 45).isMultiple(of: 2) {
                     model.strike()
                     taps += 1
                 }
@@ -99,13 +116,15 @@ enum AppPresentation { static var allowsInterface = true }
                     to: URL(fileURLWithPath: CommandLine.arguments[1])
                         .appendingPathComponent(String(format: "motion-%03d.png", frame)))
             }
-            precondition(taps == 5 && model.total == 5, "animation preserves rapid-tap counts")
+            precondition(taps == 33 && model.total == 33, "animation preserves rapid-tap counts")
+            precondition(model.feedback.combo == 32 && model.feedback.surprise == .cache, "real fast-tap rhythm reaches all tiers")
             window.orderOut(nil)
             window.contentView = nil
             print("Rendered real strike animation at 30fps, including overlapping rapid taps")
             return
         }
         for _ in 0..<108 { model.strike() }
+        model.endInteraction()
         for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for size in WoodenFishSize.allCases {

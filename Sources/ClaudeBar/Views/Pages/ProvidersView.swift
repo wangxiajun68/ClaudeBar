@@ -6,6 +6,7 @@ struct ProvidersView: View {
     @ProviderState(.configuration) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @AppStorage("providersStack") private var clientRaw = "claude"
+    @AppStorage("modelsSurface") private var surfaceRaw = "providers"
     @State private var query = ""
     @State private var category: ProviderCatalogEntry.Category?
     @State private var configuredOnly = false
@@ -110,6 +111,14 @@ struct ProvidersView: View {
     private func workspace(_ f: Facts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            Picker("模型工作区", selection: $surfaceRaw) {
+                Text("供应商").tag("providers")
+                Text("自动网关").tag("gateway")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 240)
+            .padding(.horizontal, Theme.Space.s24)
+            .padding(.bottom, Theme.Space.s16)
             if let error = f.error {
                 // A raw red `Label` was the one error in the app with no band
                 // behind it; every other page states a failure on a surface.
@@ -124,9 +133,16 @@ struct ProvidersView: View {
                 messageBanner(importNote, symbol: "arrow.left.arrow.right",
                               tint: Theme.Ink.success) { self.importNote = nil }
             }
-            directoryToolbar
-            connectionStrip(f)
-            directory(f)
+            if surfaceRaw == "gateway" {
+                FreeModelGatewayView {
+                    clientRaw = "codex"
+                    setupEntry = ProviderCatalogEntry.all.first { $0.id == "openrouter" }
+                }
+            } else {
+                directoryToolbar
+                connectionStrip(f)
+                directory(f)
+            }
         }
     }
 
