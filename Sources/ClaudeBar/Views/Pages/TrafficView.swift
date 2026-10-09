@@ -495,7 +495,9 @@ struct TrafficView: View {
                                  onSelect: { filter = $0 })
                 Spacer(minLength: 8)
                 if !catalog.records.isEmpty {
-                    ActionButton("清空", tone: .destructive) { confirmClear = true }
+                    ActionIcon(symbol: "trash", tint: Theme.Ink.error, size: 30) { confirmClear = true }
+                        .help("清空全部抓包记录…")
+                        .accessibilityLabel("清空全部抓包记录")
                 }
             }
             .padding(.horizontal, Theme.Space.s12)

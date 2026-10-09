@@ -12,6 +12,8 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private var observers: [NSObjectProtocol] = []
     private var positionSave: DispatchWorkItem?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
 
     init(model: WoodenFishModel? = nil) { self.model = model ?? .shared }
 
@@ -68,6 +70,8 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         panel.contentView = NSHostingView(rootView: WoodenFishView(model: model) { [weak self] in self?.strike() })
         self.panel = panel
         panel.orderFrontRegardless()
+        installMouseMonitors()
+        syncPointer()
         dayTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refreshDay() }
         }
@@ -76,6 +80,10 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
     }
 
     private func uninstall() {
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+        globalMouseMonitor = nil; localMouseMonitor = nil
+        model.isHovered = false
         automaticTimer?.invalidate(); automaticTimer = nil
         dayTimer?.invalidate(); dayTimer = nil
         model.isAutomatic = false
@@ -97,7 +105,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
             audio = WoodenFishAudio()
             model.soundAvailable = audio?.available == true
         }
-        audio?.play(volume: model.volume)
+        model.soundAvailable = audio?.play(volume: model.volume) == true
     }
 
     private func configureTimer(automatic: Bool, interval: Double) {
@@ -110,6 +118,30 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         timer.tolerance = min(0.05, interval * 0.05)
         RunLoop.main.add(timer, forMode: .common)
         automaticTimer = timer
+        syncPointer()
+    }
+
+    private func installMouseMonitors() {
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncPointer() }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            MainActor.assumeIsolated { self?.syncPointer() }
+            return event
+        }
+    }
+
+    private func syncPointer() {
+        guard let panel else { return }
+        let mouse = NSEvent.mouseLocation
+        let scale = panel.frame.width / 260
+        let point = CGPoint(x: mouse.x - panel.frame.minX,
+                            y: panel.frame.maxY - mouse.y)
+        let hovered = panel.frame.contains(mouse)
+        if model.isHovered != hovered { model.isHovered = hovered }
+        let capture = WoodenFishGeometry.captures(point, showsTools: hovered || model.isAutomatic, scale: scale)
+        if panel.ignoresMouseEvents == capture { panel.ignoresMouseEvents = !capture }
     }
 
     private func placedFrame(size: CGSize, origin: CGPoint? = nil) -> CGRect {
@@ -121,14 +153,17 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard let panel else { return }
         let origin = CGPoint(x: panel.frame.minX, y: panel.frame.maxY - size.panelSize.height)
         panel.setFrame(placedFrame(size: size.panelSize, origin: origin), display: true)
+        syncPointer()
     }
 
     private func reposition() {
         guard let panel else { return }
         panel.setFrame(placedFrame(size: panel.frame.size, origin: panel.frame.origin), display: true)
+        syncPointer()
     }
 
     func windowDidMove(_ notification: Notification) {
+        syncPointer()
         positionSave?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
@@ -149,6 +184,7 @@ private final class WoodenFishPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        acceptsMouseMovedEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]

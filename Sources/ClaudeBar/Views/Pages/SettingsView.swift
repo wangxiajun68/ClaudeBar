@@ -517,6 +517,8 @@ struct SettingsView: View {
                                 }
                             }
                             SettingsDivider()
+                            ProxyAccessToken()
+                            SettingsDivider()
                             ProxyCurlExample(model: proxyCurlModel)
                             SettingsDivider()
                             SettingsToggleRow(title: "记录第三方流量", caption: "第三方客户端的请求将显示在「流量」页。", isOn: $prefs.proxyThirdPartyTrafficEnabled)

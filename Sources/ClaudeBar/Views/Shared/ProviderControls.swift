@@ -384,9 +384,8 @@ struct ProviderActivationControl: View {
 /// always redraws the same card. A `@State` copy would let the card and its
 /// own editor disagree the moment either wrote.
 ///
-/// The glyph carries both facts at a glance (colour = on/off, slashed mark =
-/// off) and the wording mirrors the editor's toggle, because this is the same
-/// setting said in two places rather than a second one.
+/// The compact capture mark shares the app's instrument stroke and ActionIcon
+/// interaction. A filled green status dot means on; a hollow dot means off.
 struct ProviderCaptureControl: View {
     let enabled: Bool
     let providerName: String
@@ -395,21 +394,28 @@ struct ProviderCaptureControl: View {
     private var tint: Color { enabled ? Theme.Ink.success : Theme.textSecondary }
 
     var body: some View {
-        Button { onToggle(!enabled) } label: {
-            Label(enabled ? "抓包" : "未抓包", systemImage: enabled ? "dot.radiowaves.left.and.right" : "dot.radiowaves.left.and.right.slash")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(tint.opacity(enabled ? 0.14 : 0.07)))
-                .overlay(Capsule().strokeBorder(tint.opacity(enabled ? 0.30 : 0.14), lineWidth: 0.75))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
+        ActionIcon(symbol: "capture.requests", tint: tint, size: 30) { onToggle(!enabled) }
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(enabled ? tint.opacity(0.10) : Theme.fieldWell)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(enabled ? tint.opacity(0.28) : Theme.hairline, lineWidth: 0.75)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(enabled ? tint : Theme.cardSurface)
+                    .overlay { Circle().strokeBorder(tint, lineWidth: 1) }
+                    .frame(width: 5, height: 5)
+                    .padding(5)
+                    .allowsHitTesting(false)
+            }
         .help(enabled
               ? "正在记录 \(providerName) 的请求报文，写进「流量」页；点一下关闭"
               : "记录 \(providerName) 的请求报文：打开后这个供应商的请求会带着完整对话写进「流量」页，正文只留在本机")
-        .accessibilityLabel("记录请求报文")
+        .accessibilityLabel("\(providerName) 抓包")
         .accessibilityValue(enabled ? "开启" : "关闭")
     }
 }

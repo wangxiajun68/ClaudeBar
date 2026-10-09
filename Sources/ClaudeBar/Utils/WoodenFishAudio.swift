@@ -48,13 +48,13 @@ final class WoodenFishAudio {
         voices = (0..<4).compactMap { _ in NSSound(data: wave) }
     }
 
-    func play(volume: Double) {
-        guard !voices.isEmpty else { return }
+    @discardableResult func play(volume: Double) -> Bool {
+        guard !voices.isEmpty else { return false }
         let voice = voices[cursor]
         cursor = (cursor + 1) % voices.count
         voice.stop()
         voice.volume = Float(min(1, max(0, volume)))
-        voice.play()
+        return voice.play()
     }
 
     func stop() { voices.forEach { $0.stop() } }

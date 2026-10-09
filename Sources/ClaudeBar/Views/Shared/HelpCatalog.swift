@@ -169,6 +169,17 @@ enum HelpCatalog {
             keywords: "onboarding first launch 第一次 授权 permission"
         ),
         HelpEntry(
+            id: "start-wooden-fish",
+            chapter: .start,
+            title: "桌面悬浮木鱼",
+            summary: "设置 → 通用 → 桌面木鱼：开启透明的矢量木鱼，点击即可敲击。",
+            body: [
+                .para("木鱼直接悬浮在桌面上，透明区域不会挡住其他窗口。点击木鱼或垫子敲击；窗口获得键盘焦点后也可按空格。敲棒会抬起、落下并回弹，伴随「Token +1」文字与彩色粒子向外散开。每次增加一份功德，今日按本机日期归零，累计和位置会保存；Token 文字是趣味反馈，不改变模型实际用量。"),
+                .bullets(["悬停显示工具：拖动把手、静音、自动敲击、更多选项、隐藏。", "更多选项可设置 0.5 / 1 / 2 / 3 秒节奏、小巧 / 标准 / 大号，并确认清空功德。", "音量在设置中调整。隐藏、休眠、退出或进入性能模式会停止自动敲击与音效；重新显示不会自动播放。"]),
+            ],
+            keywords: "wooden fish 木鱼 功德 悬浮 桌面 自动 敲击 矢量 静音"
+        ),
+        HelpEntry(
             id: "start-add-provider",
             chapter: .start,
             title: "加第一个供应商",

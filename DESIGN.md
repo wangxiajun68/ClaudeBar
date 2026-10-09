@@ -153,6 +153,16 @@ scale rather than taste:
 light and dark and belongs to no family. `SectionHeader` is the only section
 heading and `StatusPill` the only capsule readout.
 
+The provider card's capture control is a 30pt `ActionIcon`: its own
+`capture.requests` mark combines capture corners with bidirectional data flow.
+A solid green dot means enabled; a hollow grey dot means disabled. Help and
+the accessibility value retain the meaning, and state comes from the saved
+provider's `captureEnabled`. See [the providers brief](docs/design/surfaces/providers.md).
+The traffic page's 300pt list toolbar uses a 30pt trash `ActionIcon` in
+`Theme.Ink.error` for clearing all captures. Help and the accessibility label
+state that scope; the action opens the existing confirmation before deleting
+all records and request / response bodies.
+
 **`adaptiveGlassButton()` is gone**, and so is the habit behind it. It was the
 name of the one push button for two generations of this design — Liquid Glass,
 then a bordered system button, then a machined pill — and every one of those was
@@ -611,3 +621,15 @@ include the settings page. Settings verification therefore rests on the
 registered regression suites (`make test`) and manual runs of the dev build;
 installation, actual system authorization and proxy rebinding remain outside
 those checks.
+
+## Desktop wooden fish
+
+The desktop wooden fish is a transparent native vector accessory: softly lit
+amber wood, sparse curved grain, a thin stitched jade cushion and a highlighted
+wooden mallet form the surface itself. Its standard instrument is 28% smaller
+in linear size than the original; only artwork and feedback paths follow the
+size setting. The 26pt hover tools, 11pt counts and 12pt Token label retain
+native dimensions. Tools are separate circles on translucent black backgrounds;
+the accessory has no generic card frame, inner rings or panel fill. Rest,
+hover, automatic striking, shared shape capture and bounded
+Reduce Motion behavior are specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

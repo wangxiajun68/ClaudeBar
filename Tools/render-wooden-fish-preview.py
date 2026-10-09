@@ -14,6 +14,8 @@ source = theme[:theme.index('// MARK: - Soft drop shadow')] + '\n'
 source += '\n'.join((root / path).read_text() for path in (
     'Sources/ClaudeBar/Models/WoodenFishModel.swift',
     'Sources/ClaudeBar/Utils/WoodenFishAudio.swift',
+    'Sources/ClaudeBar/Utils/WoodenFishGeometry.swift',
+    'Sources/ClaudeBar/Utils/WoodenFishMotion.swift',
     'Sources/ClaudeBar/Views/Shared/WoodenFishView.swift',
     'Sources/ClaudeBar/WoodenFishController.swift',
 ))
@@ -68,16 +70,53 @@ enum AppPresentation { static var allowsInterface = true }
             print("PASS: manual strike, auto timer, cadence replacement, hide/show and performance teardown")
             return
         }
+        if CommandLine.arguments.contains("--motion") {
+            model.size = .regular
+            model.isHovered = false
+            let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
+            host.frame = CGRect(origin: .zero, size: model.size.panelSize)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.contentView = host
+            window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
+            window.orderFrontRegardless()
+            host.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let start = Date()
+            var taps = 0
+            for frame in 0..<72 {
+                RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 30))
+                // First strike, then four quick taps after the first settles.
+                if [1, 34, 37, 40, 43].contains(frame) {
+                    model.strike()
+                    taps += 1
+                }
+                host.layoutSubtreeIfNeeded()
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("bitmap") }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try rep.representation(using: .png, properties: [:])!.write(
+                    to: URL(fileURLWithPath: CommandLine.arguments[1])
+                        .appendingPathComponent(String(format: "motion-%03d.png", frame)))
+            }
+            precondition(taps == 5 && model.total == 5, "animation preserves rapid-tap counts")
+            window.orderOut(nil)
+            window.contentView = nil
+            print("Rendered real strike animation at 30fps, including overlapping rapid taps")
+            return
+        }
         for _ in 0..<108 { model.strike() }
         for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for size in WoodenFishSize.allCases {
                 model.size = size
-                model.isAutomatic = dark
-                let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {})
-                    .background(Theme.bgPrimary))
+                model.isAutomatic = false
+                model.isHovered = CommandLine.arguments.contains("--hover")
+                let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
                 host.frame = CGRect(origin: .zero, size: size.panelSize)
                 let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isOpaque = false
+                window.backgroundColor = .clear
                 window.contentView = host
                 window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
                 window.orderFrontRegardless()
@@ -85,7 +124,8 @@ enum AppPresentation { static var allowsInterface = true }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
                 guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("bitmap") }
                 host.cacheDisplay(in: host.bounds, to: rep)
-                let name = "\(size.rawValue)-\(dark ? "dark" : "light").png"
+                let suffix = model.isHovered ? "-hover" : ""
+                let name = "\(size.rawValue)-\(dark ? "dark" : "light")\(suffix).png"
                 try rep.representation(using: .png, properties: [:])!.write(
                     to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(name))
                 window.orderOut(nil)

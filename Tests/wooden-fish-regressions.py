@@ -8,6 +8,8 @@ root = Path(__file__).resolve().parents[1]
 source = '\n'.join((root / path).read_text() for path in (
     'Sources/ClaudeBar/Models/WoodenFishModel.swift',
     'Sources/ClaudeBar/Utils/WoodenFishAudio.swift',
+    'Sources/ClaudeBar/Utils/WoodenFishGeometry.swift',
+    'Sources/ClaudeBar/Utils/WoodenFishMotion.swift',
 ))
 source += r'''
 func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt = #line) {
@@ -65,6 +67,45 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(left.contains(secondary) && secondary.minX == -1200, "secondary display restored")
         expect(screen.contains(WoodenFishPlacement.frame(origin: secondary.origin, size: size, screens: [screen])), "removed display recovered")
         expect(screen.contains(WoodenFishPlacement.frame(origin: CGPoint(x: 1439, y: 874), size: size, screens: [screen])), "top and right clamped")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 150), showsTools: false), "wood captures taps")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 196), showsTools: false), "cushion captures taps")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 100), showsTools: true), "transparent margins are click-through")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18), showsTools: false), "invisible tools cannot steal clicks")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 70, y: 18), showsTools: true), "revealed grip is reachable")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 85, y: 18), showsTools: true), "tool gaps remain click-through")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 41.75, y: 182.75), showsTools: true), "transparent cushion corner cannot steal clicks")
+        expect(WoodenFishGeometry.captures(CGPoint(x: 248, y: 63), showsTools: false), "visible mallet tip captures taps")
+        for size in WoodenFishSize.allCases {
+            let s = size.scale
+            let wood = CGPoint(x: 110 * s, y: 36 + (150 - 36) * s)
+            expect(WoodenFishGeometry.captures(wood, showsTools: false, scale: s), "scaled wood captures taps below native toolbar")
+            let grip = CGPoint(x: size.panelSize.width / 2 - 60, y: 18)
+            expect(WoodenFishGeometry.captures(grip, showsTools: true, scale: s), "native grip stays reachable at every size")
+            expect(!WoodenFishGeometry.captures(CGPoint(x: grip.x + 15, y: 18), showsTools: true, scale: s), "native tool gaps stay click-through")
+            expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 36), showsTools: false, scale: s), "compact transparent margin stays click-through")
+        }
+        var bursts = WoodenFishBurstPool()
+        for id in UInt(1)...UInt(1000) { bursts.emit(id) }
+        expect(bursts.ids == Array(UInt(993)...UInt(1000)), "rapid taps retain only eight newest bursts")
+        bursts.expire(1)
+        expect(bursts.ids.count == 8, "evicted burst cleanup cannot remove newer feedback")
+        bursts.emit(1000)
+        expect(bursts.ids.count == 8, "duplicate trigger cannot leak a burst")
+        for id in bursts.ids { bursts.expire(id) }
+        expect(bursts.ids.isEmpty, "finished bursts release every entry")
+        for lane in 0..<7 {
+            let start = WoodenFishMotion.particle(progress: -1, lane: lane, reducedMotion: false)
+            let middle = WoodenFishMotion.particle(progress: 0.4, lane: lane, reducedMotion: false)
+            let end = WoodenFishMotion.particle(progress: 2, lane: lane, reducedMotion: false)
+            expect(start.opacity == 0 && end.opacity == 0 && middle.opacity == 1, "fade has visible middle and invisible endpoints")
+            expect(abs(middle.offset.x) < 100 && abs(middle.offset.y) < 100, "particles stay within reserved canvas")
+            let reduced = WoodenFishMotion.particle(progress: 0.4, lane: lane, reducedMotion: true)
+            expect(reduced.offset == .zero && reduced.angle == 0 && reduced.scale == 1 && reduced.opacity == middle.opacity,
+                   "reduce motion keeps only a stationary fade")
+        }
+        let leftLabel = WoodenFishMotion.particle(progress: 0.5, lane: 0, reducedMotion: false)
+        let rightLabel = WoodenFishMotion.particle(progress: 0.5, lane: 2, reducedMotion: false)
+        expect(leftLabel.offset.x < 0 && rightLabel.offset.x > 0, "labels diverge on opposite sides")
         let wave = WoodenFishTone.wave()
         expect(String(data: wave.prefix(4), encoding: .utf8) == "RIFF", "RIFF header")
         expect(String(data: wave[8..<16], encoding: .utf8) == "WAVEfmt ", "WAVE format")
@@ -75,7 +116,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(samples.first == 0 && samples.contains { abs(Int($0)) > 10_000 }, "audible attack without hard onset")
         expect(samples.suffix(441).allSatisfy { abs(Int($0)) < 30 }, "damped tail avoids click")
         expect(samples.allSatisfy { abs(Int($0)) < 32_767 }, "waveform not clipped")
-        print("PASS: private counts, restoration, midnight, reset, overflow, multi-screen placement and damped PCM")
+        print("PASS: private counts, restoration, midnight, reset, overflow, multi-screen placement, bounded bursts, reduced motion and damped PCM")
     }
 }
 '''

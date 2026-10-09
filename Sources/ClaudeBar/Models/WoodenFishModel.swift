@@ -21,6 +21,7 @@ final class WoodenFishModel: ObservableObject {
         didSet { defaults.set(size.rawValue, forKey: "woodenFishSize") }
     }
     @Published var isAutomatic = false
+    @Published var isHovered = false
     @Published private(set) var today: Int
     @Published private(set) var total: Int
     @Published private(set) var strikeID: UInt = 0
@@ -95,9 +96,9 @@ enum WoodenFishSize: String, CaseIterable, Identifiable {
         switch self { case .small: return "小巧"; case .regular: return "标准"; case .large: return "大号" }
     }
     var scale: CGFloat {
-        switch self { case .small: return 0.85; case .regular: return 1; case .large: return 1.2 }
+        switch self { case .small: return 0.60; case .regular: return 0.72; case .large: return 0.88 }
     }
-    var panelSize: CGSize { CGSize(width: 260 * scale, height: 330 * scale) }
+    var panelSize: CGSize { CGSize(width: 260 * scale, height: 70 + 200 * scale) }
 }
 
 enum WoodenFishPlacement {

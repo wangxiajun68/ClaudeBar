@@ -4,7 +4,7 @@ import SwiftUI
 /// Compact labels stay monochrome; only live instruments use semantic color.
 struct InstrumentGlyph: View, Animatable {
     enum Kind { case cpu, gpu, memory, disk, link, ethernet, fan, config, sessions, tokens, vpn, refresh
-        case overview, traffic, settings, help, power, notification, search, weather }
+        case overview, traffic, capture, settings, help, power, notification, search, weather }
     var kind: Kind
     var tint: Color = Theme.chartBlue
     var phase: Double = 0
@@ -28,6 +28,7 @@ struct InstrumentGlyph: View, Animatable {
         case "chart.bar": return .tokens
         case "square.grid.2x2": return .overview
         case "arrow.left.arrow.right", "waveform", "dot.radiowaves.left.and.right": return .traffic
+        case "capture.requests": return .capture
         case "slider.horizontal.3", "gearshape": return .settings
         case "book.closed", "questionmark", "questionmark.circle": return .help
         case "globe", "shield", "shield.checkered": return .vpn
@@ -144,6 +145,18 @@ struct InstrumentGlyph: View, Animatable {
                 circle(7+shift,12,1,ink.opacity(0.4),fill:true)
                 circle(12,12,1,ink.opacity(0.65),fill:true)
                 circle(17-shift,12,1,ink,fill:true)
+            case .capture:
+                // Capture corners contain the two directions of a request exchange.
+                // This is a compact action mark, not the traffic page's meter.
+                for points in [[CGPoint(x: 7, y: 3), CGPoint(x: 3, y: 3), CGPoint(x: 3, y: 7)],
+                               [CGPoint(x: 17, y: 3), CGPoint(x: 21, y: 3), CGPoint(x: 21, y: 7)],
+                               [CGPoint(x: 3, y: 17), CGPoint(x: 3, y: 21), CGPoint(x: 7, y: 21)]] {
+                    line(points, ink.opacity(0.65))
+                }
+                line([CGPoint(x: 6, y: 9), CGPoint(x: 17, y: 9)], ink)
+                line([CGPoint(x: 14.5, y: 6.5), CGPoint(x: 17, y: 9), CGPoint(x: 14.5, y: 11.5)], ink)
+                line([CGPoint(x: 18, y: 15), CGPoint(x: 7, y: 15)], ink)
+                line([CGPoint(x: 9.5, y: 12.5), CGPoint(x: 7, y: 15), CGPoint(x: 9.5, y: 17.5)], ink)
             case .settings:
                 for i in 0..<3 {
                     let y = CGFloat(5+i*7)
