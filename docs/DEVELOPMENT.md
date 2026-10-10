@@ -82,3 +82,15 @@ make package            # 正式版 DMG / zip / SHA-256 → .build/dist/
 脚本默认 `CLAUDEBAR_CHANNEL=dev`，只接受 `dev` / `release`；不再提供独立 test 应用或 `build-test` / `run-test` 命令。`CLAUDEBAR_SKIP_INSTALL=0` 显式安装；打包要求 release 且 skip-install=1。两个版本使用独立构建锁；遗留锁需先确认构建已结束再删除。
 
 CI 只编译两个版本，在 dev job 运行全部回归；发布前运行相同门禁。每次构建或复用时都会检查主应用／Widget 的身份、版本、URL scheme、App Group 与签名，不启动应用；DEV 图标的逐字节比对只在 dev 构建执行（release 图标位仍会随包校验签名，但没有「必须等于某个源文件」的断言）。
+
+## 会话界面离线验证
+
+「会话」包含会话总览与迁移会话两个子页面。可运行以下命令检查草稿状态并生成仅含合成数据的原生界面预览；不启动应用、不读取真实会话、不执行迁移。
+
+```bash
+make test TEST=session-migration-workspace
+python3 Tools/render-session-migration-preview.py
+python3 Tools/render-session-overview-preview.py
+```
+
+输出在 `.build/session-migration-preview/` 和 `.build/session-overview-preview/`，覆盖 900／1440pt 及明暗外观。迁移预览额外包含空状态，总览预览只包含普通卡片。原生滚动、键盘与 VoiceOver 仍需人工检查；真实客户端迁移仅在已授权的正式版流程中验证。界面结构与状态边界见 [会话页面说明](design/surfaces/sessions.md)。
