@@ -38,7 +38,11 @@ final class AppPreferences: ObservableObject, @unchecked Sendable {
 theme = read('Sources/ClaudeBar/Theme/Theme.swift')
 source += theme[theme.index('struct PanelCardModifier:'):theme.index('// MARK: - Hairline sectioning')]
 source += decl(theme, 'struct HairlineDivider: View {')
+source += '\n' + decl(read('Sources/ClaudeBar/Views/Shared/InstrumentControls.swift'), 'struct InstrumentMenuLabel: View {')
+source += '\n' + decl(read('Sources/ClaudeBar/Views/Shared/InstrumentControls.swift'), 'struct InstrumentChoiceControl<Value: Hashable>: View {')
 for path in ['Sources/ClaudeBar/Views/Shared/SettingsControls.swift',
+             'Sources/ClaudeBar/Views/Shared/GatewaySettingsControls.swift',
+             'Sources/ClaudeBar/Utils/GatewayProviderImport.swift',
              'Sources/ClaudeBar/Views/Shared/InstrumentSearchField.swift',
              'Sources/ClaudeBar/Views/Shared/CodeBlock.swift',
              'Sources/ClaudeBar/Models/FreeModelPool.swift',
@@ -66,6 +70,8 @@ enum PreviewCounts { static var rows = 0 }
     @Published var loading = false
     @Published var saving = false
     @Published var discovering = false
+    @Published var testingMemberID: String?
+    @Published var testResults: [String:String] = [:]
     @Published var error: String?
     @Published var snapshot = FreeModelGateway.Snapshot()
     var connections: [CodexProvider] = []
@@ -106,6 +112,8 @@ enum PreviewCounts { static var rows = 0 }
     func refreshStatus() async {}
     func observeStatus() async {}
     func resetHealth() {}
+    func test(_ member:FreeModelPool.Member) {}
+    func cancelTest() {}
 }
 '''
 for path in ['Sources/ClaudeBar/Views/Shared/GatewayTopologyView.swift',
@@ -132,8 +140,40 @@ source += "\n" + decl(catalog, 'enum ProviderClient:') + "\n" + decl(catalog, 's
 source += "\n" + read('Sources/ClaudeBar/Views/Shared/StandbyEmptyState.swift')
 source += "\n" + read('Sources/ClaudeBar/Views/Shared/ProviderControls.swift')
 directory = read('Sources/ClaudeBar/Views/Shared/ProviderDirectory.swift')
-for marker in ['private struct ProviderCardSurface<', 'private struct ProviderBalanceReadout:', 'private struct ProviderDirectoryCard:', 'private struct CustomProviderDirectoryCard:']:
+for marker in ['struct ProviderCategoryFilter:', 'struct ProviderDirectorySearch:', 'private struct ProviderCardSurface<', 'private struct ProviderBalanceReadout:', 'private struct ProviderDirectoryCard:', 'private struct CustomProviderDirectoryCard:']:
     source += "\n" + decl(directory, marker)
+providers_page = read('Sources/ClaudeBar/Views/Pages/ProvidersView.swift')
+source += r'''
+private struct FixtureImportSummary { var summary = "示例导入" }
+private struct FixtureProviderStore { func importFromCodex() -> FixtureImportSummary { .init() }; func importFromClaude() -> FixtureImportSummary { .init() } }
+private struct ProviderConnectionRoute { var id:UUID; var isNew:Bool }
+private struct ProviderHeadingPreview: View {
+    @State var surfaceRaw = "gateway"
+    @State private var clientRaw = "codex"
+    @State private var query = ""
+    @State private var category: ProviderCatalogEntry.Category?
+    @State private var configuredOnly = false
+    @State private var selectedID: UUID?
+    @State private var importNote: String?
+    @State private var connectionEdit: ProviderConnectionRoute?
+    private let reduceMotion = true
+    private var client: ProviderClient { ProviderClient(rawValue:clientRaw) ?? .codex }
+    private let providerStore = FixtureProviderStore(), codexStore = FixtureProviderStore()
+    private struct Facts { var providers:[Provider] = []; var activeID:UUID? }
+    private func currentModel(_ p:Provider,activeID:UUID?) -> String? { p.activeModel?.name }
+    var body: some View {
+        VStack(spacing:0) {
+            header
+            if surfaceRaw == "providers" {
+                VStack(spacing:12) { directoryToolbar; HairlineDivider(); connectionStrip(Facts()) }
+                    .padding(14).panelCard(radius:Theme.Radius.md).padding(.horizontal,24)
+            }
+        }
+    }
+'''
+for header_marker in ['private var header:', 'private var surfaceTabs:', 'private var providerActions:', 'private var clientSwitcher:', 'private var directoryToolbar:', 'private func connectionStrip(']:
+    source += '\n' + decl(providers_page, header_marker)
+source += '\n}\n'
 source += r'''
 // Synthetic occlusion for exercising compositor lifecycle without showing UI.
 private final class VisibleFixtureWindow: NSWindow {
@@ -170,9 +210,12 @@ private final class VisibleFixtureWindow: NSWindow {
         for (name,width,height,dark,count,live,long) in [
             ("editor",600.0,680.0,false,1,false,false),
             ("editor-dark",600.0,680.0,true,1,false,false),
-            ("settings",520.0,760.0,false,1,false,false),
-            ("admission",460.0,900.0,false,5,false,false),
-            ("admission-dark",460.0,900.0,true,5,false,false),
+            ("settings",520.0,1300.0,false,1,false,false),
+            ("settings-dark",520.0,1300.0,true,1,false,false),
+            ("header",900.0,240.0,false,0,false,false),
+            ("header-dark",900.0,240.0,true,0,false,false),
+            ("admission",500.0,1000.0,false,5,false,false),
+            ("admission-dark",500.0,1000.0,true,5,false,false),
             ("routes",900.0,1200.0,false,5,true,false),
             ("discovery",900.0,1250.0,false,0,false,false),
             ("discovery-compact",640.0,1250.0,false,0,false,false),
@@ -185,7 +228,7 @@ private final class VisibleFixtureWindow: NSWindow {
             ("empty",640.0,640.0,false,0,false,false),
             ("large",900.0,900.0,false,200,true,false)] {
             PreviewScreen.editor = name.hasPrefix("editor")
-            PreviewScreen.settings = name == "settings"
+            PreviewScreen.settings = name.hasPrefix("settings")
             PreviewScreen.admission = name.hasPrefix("admission")
             PreviewScreen.routes = name == "routes"
             PreviewScreen.discovery = name.hasPrefix("discovery")
@@ -201,12 +244,16 @@ private final class VisibleFixtureWindow: NSWindow {
             if PreviewScreen.discovery {
                 store.connections[0].baseURL = "https://openrouter.ai/api/v1"
                 store.pool.openRouterProviderID = store.first
+                store.pool.discoveredAt = Date()
                 store.pool.catalog = (0..<24).map { i in .init(id:"example/\(i)-free",name:i == 0 ? String(repeating:"多语言推理模型名称",count:8) : "Example Model \(i)",contextLength:128000,supportsTools:i%2==0,supportsImages:i%3==0,supportsJSON:true) }
             }
             PreviewCounts.rows = 0
             let view = VStack(spacing:12) {
                 Text("模型池布局预览 · 示例数据").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                FreeModelGatewayView(onAddOpenRouter:{})
+                if !PreviewScreen.editor && !PreviewScreen.settings && !PreviewScreen.admission {
+                    ProviderHeadingPreview(surfaceRaw:name.hasPrefix("header") ? "providers" : "gateway")
+                }
+                if !name.hasPrefix("header") { FreeModelGatewayView(onAddOpenRouter:{}) }
             }.padding(.top,16).background(Theme.bgPrimary)
              .environment(\.colorScheme,dark ? .dark : .light)
 
@@ -240,8 +287,9 @@ private final class VisibleFixtureWindow: NSWindow {
         PreviewScreen.discovery = false; PreviewScreen.editor = false; PreviewScreen.settings = false; PreviewScreen.routes = false; PreviewScreen.admission = false
         store.seed(count:1,live:false)
         store.connections[0].models = (0..<8).map { .init(name:"example/\($0)-free") }
-        for (name,dark,selection) in [("import",false,false),("import-selected",false,true),("import-dark",true,true)] {
+        for (name,dark,selection) in [("import",false,false),("import-selected",false,true),("import-dark",true,true),("import-blocked",false,true)] {
             AppPreferences.shared.isDark = dark; PreviewScreen.importSelected = selection
+            store.connections[0].baseURL = name == "import-blocked" ? "http://example.test/v1" : "https://example.test/v1"
             let importHost = NSHostingView(rootView:GatewayProviderImportView(providerIDs:[store.first]).environment(\.colorScheme,dark ? .dark : .light))
             importHost.appearance = NSAppearance(named:dark ? .darkAqua : .aqua)
             importHost.frame = CGRect(x:0,y:0,width:620,height:680)

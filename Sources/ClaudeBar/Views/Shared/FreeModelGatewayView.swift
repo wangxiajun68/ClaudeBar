@@ -13,6 +13,7 @@ struct FreeModelGatewayView: View {
     @ObservedObject private var gateway = FreeModelGatewayStore.shared
     @ObservedObject private var prefs = AppPreferences.shared
     var onAddOpenRouter: () -> Void
+    var onEditProvider: (UUID) -> Void = { _ in }
     private enum Workspace: String, CaseIterable { case pool = "模型池", discovery = "发现模型", routes = "最近路由" }
     @State private var workspace = Workspace.pool
     @State private var query = ""
@@ -22,6 +23,8 @@ struct FreeModelGatewayView: View {
     @State private var showSettings = false
     @State private var showConnection = false
     @State private var showAdd = false
+    @State private var showDiscoveryConnections = false
+    @State private var connectionQuery = ""
     @State private var submitted = false
     @State private var focusRequest = 0
     @State private var providerID: UUID?
@@ -61,9 +64,7 @@ struct FreeModelGatewayView: View {
         }
     }
     private func validEndpoint(_ base: String) -> Bool {
-        guard let url = URLComponents(string: base) else { return false }
-        return url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
-            && url.query == nil && url.fragment == nil && !LocalProxyAddress.isLoopback(base)
+        GatewayProviderImport.endpointIssue(base) == nil
     }
 
     var body: some View {
@@ -115,13 +116,13 @@ struct FreeModelGatewayView: View {
             VStack(alignment: .leading, spacing: 14) { gatewayIdentity; gatewayActions }
         }
         .padding(18)
-        .panelCard(tint: Theme.cursor)
+        .panelCard()
     }
     private var gatewayIdentity: some View {
         HStack(spacing: 12) {
             GlyphWell(name: "point.3.connected.trianglepath.dotted", tint: gateway.pool.enabled ? Theme.Ink.cursor : Theme.Ink.idle, size: 28)
             VStack(alignment: .leading, spacing: 5) {
-                Text("Auto 模型池").font(Theme.Font.brand).foregroundStyle(Theme.textPrimary)
+                Text("Auto 模型池").font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
                 Text(gateway.saving ? "正在保存…" : "\(gateway.pool.members.count) 个模型 · \(gateway.pool.strategy.title) · \(gateway.snapshot.active) 处理中 · \(gateway.snapshot.queued) 排队")
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
@@ -136,7 +137,7 @@ struct FreeModelGatewayView: View {
             ActionButton("设置", symbol: "gearshape") { showSettings.toggle() }
                 .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                     ScrollView { VStack(spacing: 16) { controls; admissionControls; discoveryControls }.padding(16) }
-                        .frame(width: 460, height: 610).background(Theme.bgPrimary)
+                        .frame(width: 500, height: 650).background(Theme.bgPrimary)
                 }
             ActionButton("接入", symbol: "link") { showConnection.toggle() }
                 .popover(isPresented: $showConnection, arrowEdge: .bottom) {
@@ -204,7 +205,12 @@ struct FreeModelGatewayView: View {
                         .textSelection(.enabled).lineLimit(2).truncationMode(.middle).help(item.member.model)
                 }
                 Spacer(minLength: 8)
+                testButton(item)
                 memberMenu(item.member)
+            }
+            if let result = gateway.testResults[item.id] {
+                Text(result).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 24) { inspectorFacts(item); Spacer(minLength: 8); tierAssignment(item.member) }
@@ -212,6 +218,14 @@ struct FreeModelGatewayView: View {
             }
         }
     }
+    private func testButton(_ item: GatewayMapMember) -> some View {
+        let testing = gateway.testingMemberID == item.id
+        return ActionButton(testing ? "取消测试" : "测试模型", symbol: testing ? "xmark" : "play") {
+            if testing { gateway.cancelTest() } else { gateway.test(item.member) }
+        }.disabled(!editable || (!testing && (gateway.testingMemberID != nil || ![GatewayMemberState.untested, .ready].contains(item.state))))
+            .help("向此模型发送一次小请求（最多 128 输出 tokens）。遵守并发和免费额度；不验证工具、图片或 JSON 能力。")
+    }
+
     private func inspectorFacts(_ item: GatewayMapMember) -> some View {
         let health = gateway.snapshot.health[item.id]
         return VStack(alignment: .leading, spacing: 8) {
@@ -223,6 +237,11 @@ struct FreeModelGatewayView: View {
                 Circle().fill(item.state.tint).frame(width: 6, height: 6)
                 Text("\(item.state.title) · 成功 \(health?.successes ?? 0) / 失败 \(health?.failures ?? 0)")
                     .font(Theme.Font.caption).foregroundStyle(item.state.ink)
+            }
+            if item.state == .credentials, let provider = gateway.connections.first(where: { $0.id == item.member.providerID }) {
+                Text(GatewayProviderImport.endpointIssue(provider.baseURL) ?? "请在供应商配置中保存有效 Key。")
+                    .font(Theme.Font.caption).foregroundStyle(Theme.Ink.warning).fixedSize(horizontal: false, vertical: true)
+                ActionButton("修改供应商配置", symbol: "slider.horizontal.3") { onEditProvider(provider.id) }
             }
             if let until = health?.cooldownUntil, until > Date() {
                 Text("冷却至 \(until.formatted(date: .omitted, time: .standard))").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
@@ -299,12 +318,14 @@ struct FreeModelGatewayView: View {
                             canMoveDown: gateway.pool.members.last?.id != item.id, onSelect: { selectedID = item.id; focusRequest += 1 },
                             onEnable: { enabled in setEnabled(item.member, enabled: enabled) },
                             onEdit: { edit(item.member) }, onMove: { move(item.member, by: $0) },
-                            onRemove: { gateway.change { $0.members.removeAll { $0.id == item.id } } })
+                            onRemove: { gateway.change { $0.members.removeAll { $0.id == item.id } } },
+                            testing: gateway.testingMemberID == item.id, canTest: gateway.testingMemberID == nil && [.untested, .ready].contains(item.state),
+                            onTest: { gateway.test(item.member) }, onCancelTest: { gateway.cancelTest() })
                             .equatable()
                     }
                 }
             }
-            Text("未测试表示尚无成功请求。只路由启用且能力匹配的免费模型；自动判断可升档，不会自动降档。")
+            Text("未测试表示尚无成功请求。点「测试模型」检查连接与文本输出；通过不代表已验证工具或图片能力。测试不会切换客户端配置。")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
         }.padding(18).panelCard()
     }
@@ -323,15 +344,12 @@ struct FreeModelGatewayView: View {
                 HStack(spacing: 12) { discoveryHeading; Spacer(minLength: 8); discoverButton }
                 VStack(alignment: .leading, spacing: 12) { discoveryHeading; discoverButton }
             }
-            HStack(spacing: 8) {
-                Picker("OpenRouter 凭据", selection: binding(\.openRouterProviderID)) {
-                    Text("选择 OpenRouter 供应商").tag(UUID?.none)
-                    ForEach(openRouter) { Text($0.name).tag(Optional($0.id)) }
-                }.labelsHidden().frame(maxWidth: 300).disabled(!editable)
-                ActionButton("添加供应商", action: onAddOpenRouter)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { discoveryCredentials; Spacer(minLength: 8); discoveryProviderAction }
+                VStack(alignment: .leading, spacing: 10) { discoveryCredentials; discoveryProviderAction }
             }
             if gateway.pool.openRouterProviderID == nil {
-                Text("目录可匿名发现；加入模型前请选择已保存的 OpenRouter 凭据。")
+                Text("目录可匿名发现。加入前，请选择或添加已保存的 OpenRouter 连接。")
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
             InstrumentSearchField(prompt: "搜索免费模型", text: $query)
@@ -345,13 +363,58 @@ struct FreeModelGatewayView: View {
                 ForEach(results) { model in
                     GatewayCatalogCard(model: model,
                         joined: gateway.pool.members.contains { $0.model == model.id && $0.providerID == gateway.pool.openRouterProviderID },
-                        canJoin: editable && gateway.pool.openRouterProviderID != nil) { gateway.add(model) }
+                        canJoin: editable && openRouter.contains { $0.id == gateway.pool.openRouterProviderID && !$0.apiKey.isEmpty }
+                            && Date().timeIntervalSince(gateway.pool.discoveredAt ?? .distantPast) < 48 * 3600) { gateway.add(model) }
                         .equatable()
                 }
             }
             Text("只接纳公布价格全为零的文本模型。收费变化、下架或目录过期后停止路由。定期发现与自动加入在「设置」调整。")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
         }.padding(18).panelCard()
+    }
+    private var discoveryCredentials: some View {
+        HStack(spacing: 10) {
+            AppGlyph(name: "key", size: 14).foregroundStyle(Theme.textSecondary)
+            Text("加入到").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+            Button { showDiscoveryConnections = true; connectionQuery = "" } label: {
+                InstrumentMenuLabel(title: openRouter.first { $0.id == gateway.pool.openRouterProviderID }?.name ?? "选择连接", tint: Theme.Ink.cursor)
+            }.buttonStyle(.plain).fixedSize().disabled(!editable)
+                .accessibilityLabel("选择发现模型使用的 OpenRouter 连接")
+                .popover(isPresented: $showDiscoveryConnections) { discoveryConnectionChoices }
+        }
+    }
+    private var discoveryConnectionChoices: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("OpenRouter 连接").font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
+            InstrumentSearchField(prompt: "搜索已保存连接", text: $connectionQuery)
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(openRouter.filter { connectionQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(connectionQuery) }) { provider in
+                        Button {
+                            gateway.change(completion: { saved in if saved { showDiscoveryConnections = false } }) { $0.openRouterProviderID = provider.id }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(provider.name).font(Theme.Font.bodySmall).lineLimit(2)
+                                Spacer(minLength: 8)
+                                if gateway.pool.openRouterProviderID == provider.id { AppGlyph(name: "checkmark", size: 12).foregroundStyle(Theme.Ink.cursor) }
+                            }.foregroundStyle(Theme.textPrimary).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(gateway.pool.openRouterProviderID == provider.id ? Theme.cursor.opacity(0.07) : Theme.fieldWell,
+                                            in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                        }.buttonStyle(GatewayNodeButtonStyle()).disabled(!editable)
+                    }
+                    if openRouter.isEmpty {
+                        Text("还没有已保存的 OpenRouter 连接。").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                    } else if !openRouter.contains(where: { connectionQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(connectionQuery) }) {
+                        Text("没有匹配的连接，请尝试其他关键词。").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            }.frame(maxHeight: 180)
+            HairlineDivider()
+            ActionButton("添加连接", symbol: "plus") { showDiscoveryConnections = false; onAddOpenRouter() }
+        }.padding(16).frame(width: 300).background(Theme.bgPrimary)
+    }
+    private var discoveryProviderAction: some View {
+        ActionButton("添加连接", symbol: "plus", action: onAddOpenRouter)
     }
     private var discoveryHeading: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -371,10 +434,8 @@ struct FreeModelGatewayView: View {
         SettingsGroup(title: "免费模型发现") {
             SettingsToggleRow(title: "定期发现免费模型", isOn: binding(\.discoveryEnabled))
             SettingsDivider()
-            SettingsRow(title: "发现间隔") {
-                Picker("发现间隔", selection: binding(\.refreshHours)) {
-                    ForEach([1, 6, 24], id: \.self) { Text("\($0) 小时").tag($0) }
-                }.labelsHidden().frame(width: 130)
+            GatewaySettingRow(title: "发现间隔") {
+                SegmentedCapsule(items: [1, 6, 24], selection: gateway.pool.refreshHours, title: { "\($0)h" }, tint: Theme.Ink.cursor) { hours in gateway.change { $0.refreshHours = hours } }
             }
             SettingsDivider()
             SettingsToggleRow(title: "自动加入新发现模型", caption: "默认关闭。开启后加入所选 OpenRouter 供应商，保留已有模型的档位设置。", isOn: binding(\.automaticallyJoin))
@@ -503,19 +564,18 @@ struct FreeModelGatewayView: View {
             SettingsToggleRow(title: "接管全部第三方请求", caption: "开启后，第三方客户端的显式模型名也会改由池内模型执行。",
                 isOn: binding(\.interceptAll))
             SettingsDivider()
-            SettingsRow(title: "路由策略") {
-                Picker("路由策略", selection: binding(\.strategy)) {
-                    ForEach(FreeModelPool.Strategy.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.labelsHidden().frame(width: 160)
+            GatewaySettingRow(title: "路由策略") {
+                InstrumentChoiceControl(label: "路由策略", items: FreeModelPool.Strategy.allCases,
+                    selection: gateway.pool.strategy, title: { $0.title }) { strategy in gateway.change { $0.strategy = strategy } }
             }
             SettingsDivider()
-            SettingsRow(title: "最多尝试", caption: "只在响应尚未开始时尝试备用模型。") {
-                Stepper("\(gateway.pool.maxAttempts) 个模型", value: binding(\.maxAttempts), in: 1...5)
+            GatewaySettingRow(title: "最多尝试", caption: "只在响应尚未开始时尝试备用模型。") {
+                GatewayNumberControl(title: "最多尝试", value: binding(\.maxAttempts), range: 1...5, unit: "个模型")
             }
 
             SettingsDivider()
-            SettingsRow(title: "每分钟上限", caption: "计入备用尝试，避免失败时连续消耗免费额度。") {
-                Stepper("\(gateway.pool.requestsPerMinute) 次", value: binding(\.requestsPerMinute), in: 1...60)
+            GatewaySettingRow(title: "每分钟上限", caption: "计入备用尝试，避免失败时连续消耗免费额度。") {
+                GatewayNumberControl(title: "每分钟上限", value: binding(\.requestsPerMinute), range: 1...60, unit: "次")
             }
         }.disabled(!editable)
     }
@@ -524,24 +584,24 @@ struct FreeModelGatewayView: View {
         VStack(spacing: 16) {
             SettingsGroup(title: "并发与队列", symbol: "line.3.horizontal.decrease",
                           caption: "同一供应商配置下的模型共享并发额度。队列按到达顺序安排可运行请求；繁忙供应商不会阻塞其他供应商。") {
-                SettingsRow(title: "全局并发", caption: "流式请求直到完成或断开才释放额度。") {
-                    Stepper("\(gateway.pool.maxConcurrent) 个", value: binding(\.maxConcurrent), in: 1...8)
+                GatewaySettingRow(title: "全局并发", caption: "流式请求直到完成或断开才释放额度。") {
+                    GatewayNumberControl(title: "全局并发", value: binding(\.maxConcurrent), range: 1...8, unit: "个")
                 }
                 SettingsDivider()
-                SettingsRow(title: "供应商默认并发", caption: "新加入的供应商沿用此值，可在下方单独覆盖。") {
-                    Stepper("\(gateway.pool.defaultProviderConcurrent) 个", value: binding(\.defaultProviderConcurrent), in: 1...8)
+                GatewaySettingRow(title: "供应商默认并发", caption: "新加入的供应商沿用此值，可在下方单独覆盖。") {
+                    GatewayNumberControl(title: "供应商默认并发", value: binding(\.defaultProviderConcurrent), range: 1...8, unit: "个")
                 }
                 SettingsDivider()
-                SettingsRow(title: "等待队列容量", caption: "含备用等待；正文合计最多 64 MiB。0 表示不排队。") {
-                    Stepper("\(gateway.pool.maxQueued) 个", value: binding(\.maxQueued), in: 0...128)
+                GatewaySettingRow(title: "等待队列容量", caption: "含备用等待；正文合计最多 64 MiB。0 表示不排队。") {
+                    GatewayNumberControl(title: "等待队列容量", value: binding(\.maxQueued), range: 0...128, unit: "个")
                 }
                 SettingsDivider()
-                SettingsRow(title: "每供应商队列", caption: "防止单一供应商占满全局等待队列。") {
-                    Stepper("\(gateway.pool.providerQueueCapacity) 个", value: binding(\.providerQueueCapacity), in: 1...128)
+                GatewaySettingRow(title: "每供应商队列", caption: "防止单一供应商占满全局等待队列。") {
+                    GatewayNumberControl(title: "每供应商队列", value: binding(\.providerQueueCapacity), range: 1...128, unit: "个")
                 }
                 SettingsDivider()
-                SettingsRow(title: "最长排队时间", caption: "队列满返回 429，等待超时返回 504；排队不消耗每分钟额度。") {
-                    Stepper("\(gateway.pool.queueTimeoutSeconds) 秒", value: binding(\.queueTimeoutSeconds), in: 1...120)
+                GatewaySettingRow(title: "最长排队时间", caption: "队列满返回 429，等待超时返回 504；排队不消耗每分钟额度。") {
+                    GatewayNumberControl(title: "最长排队时间", value: binding(\.queueTimeoutSeconds), range: 1...120, unit: "秒")
                 }
             }
             if !admissionProviders.isEmpty {
@@ -549,18 +609,14 @@ struct FreeModelGatewayView: View {
                     ForEach(Array(admissionProviders.enumerated()), id: \.element.id) { index, provider in
                         if index > 0 { SettingsDivider() }
                         let load = gateway.snapshot.providers[provider.id] ?? .init()
-                        SettingsRow(title: provider.name,
+                        GatewaySettingRow(title: provider.name,
                                     caption: "\(load.active) 处理中 · \(load.queued) 排队 · \(gateway.pool.providerConcurrent[provider.id.uuidString] == nil ? "默认" : "单独设置")") {
-                            Stepper("\(gateway.pool.concurrentLimit(for: provider.id)) 个", value: Binding(
+                            GatewayNumberControl(title: provider.name, value: Binding(
                                 get: { gateway.pool.concurrentLimit(for: provider.id) },
-                                set: { limit in gateway.change { $0.providerConcurrent[provider.id.uuidString] = limit } }), in: 1...8)
-                            if gateway.pool.providerConcurrent[provider.id.uuidString] != nil {
-                                ActionIcon(symbol: "arrow.counterclockwise", tint: Theme.textSecondary, size: 24) {
+                                set: { limit in gateway.change { $0.providerConcurrent[provider.id.uuidString] = limit } }),
+                                range: 1...8, unit: "个", onReset: gateway.pool.providerConcurrent[provider.id.uuidString] == nil ? nil : {
                                     gateway.change { $0.providerConcurrent[provider.id.uuidString] = nil }
-                                }.help("恢复默认并发").accessibilityLabel("\(provider.name) 恢复默认并发")
-                            } else {
-                                Color.clear.frame(width: 24, height: 24).accessibilityHidden(true)
-                            }
+                                })
                         }
                     }
                 }
@@ -656,6 +712,7 @@ struct FreeModelGatewayView: View {
     }
     private func addManual() {
         guard let provider = selected, let length = Int(context), length > 0 else { return }
+        if let issue = GatewayProviderImport.endpointIssue(provider.baseURL) { gateway.error = issue; return }
         let model = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty, model.utf8.count <= 200 else { gateway.error = "模型 ID 不能为空，且最多为 200 字节。"; return }
         if FreeModelPool.isOpenRouter(provider.baseURL) {

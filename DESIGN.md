@@ -95,6 +95,13 @@ of loose capsules" where a four-item filter drew four cards inside an outer one.
 It backs the connector type and platform filters, the provider client switcher
 and category filter, and the usage period tabs.
 
+The model workspace uses `InstrumentChoiceControl` for short option sets
+(routing strategy and compact provider category). Its `InstrumentMenuLabel`
+button opens a native popover of focusable options with a current-selection
+checkmark. The discovery connection chooser uses the same label and adds search
+for saved connections. This preserves the authored field surface when macOS
+would replace a `Menu` label with borderless native text.
+
 `OrbitGauge` is a trim-based arc with a body riding it (the quota gauges);
 `ConveyorBelt` is the travelling-tick strip used where a surface is *doing*
 something continuous, so liveness is drawn rather than pulsed.

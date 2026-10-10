@@ -8,6 +8,24 @@ enum GatewayProviderImport {
         var errorDescription: String? { message }
     }
 
+    /// Shared by import, runtime and recovery UI. Never echo credentials or a
+    /// URL's query/userinfo into an error message.
+    static func endpointIssue(_ base: String) -> String? {
+        guard let url = URLComponents(string: base), let host = url.host, !host.isEmpty else {
+            return "接口地址不完整。请填写供应商提供的 HTTPS OpenAI 兼容 Base URL。"
+        }
+        if LocalProxyAddress.isLoopback(base) {
+            return "当前配置指向本机接口。Auto 池使用远端上游，请填写供应商的 HTTPS 地址，避免请求回到本机代理。"
+        }
+        guard url.scheme?.lowercased() == "https" else {
+            return "当前接口未使用 HTTPS。请在供应商配置中填写平台提供的 HTTPS OpenAI 兼容地址。"
+        }
+        guard url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+            return "接口地址包含登录信息、查询参数或片段。请使用纯 Base URL，并将密钥填在 Key 字段。"
+        }
+        return nil
+    }
+
     static func merge(_ members: [FreeModelPool.Member], into pool: FreeModelPool,
                       providers: [CodexProvider], confirmedFree: Bool,
                       now: Date = Date()) throws -> FreeModelPool {
@@ -23,10 +41,8 @@ enum GatewayProviderImport {
                   !provider.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw Failure(message: "供应商或模型配置已变化，请重新选择已保存的模型。")
             }
-            guard let url = URLComponents(string: provider.baseURL), url.scheme == "https", url.host != nil,
-                  url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-                  !LocalProxyAddress.isLoopback(provider.baseURL) else {
-                throw Failure(message: "请先为供应商配置远端 HTTPS 兼容接口；不能导入本机代理自身。")
+            if let issue = endpointIssue(provider.baseURL) {
+                throw Failure(message: "\(provider.name)：\(issue)")
             }
             var member = draft
             member.discovered = false

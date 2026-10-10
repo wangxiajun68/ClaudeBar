@@ -13,11 +13,16 @@ struct GatewayInventoryRow: View, Equatable {
     var onEdit: () -> Void
     var onMove: (Int) -> Void
     var onRemove: () -> Void
+    var testing = false
+    var canTest = false
+    var onTest: () -> Void = {}
+    var onCancelTest: () -> Void = {}
     @State private var hovered = false
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.item == rhs.item && lhs.selected == rhs.selected && lhs.editable == rhs.editable
             && lhs.canMoveUp == rhs.canMoveUp && lhs.canMoveDown == rhs.canMoveDown
+            && lhs.testing == rhs.testing && lhs.canTest == rhs.canTest
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,6 +38,9 @@ struct GatewayInventoryRow: View, Equatable {
                             .lineLimit(1).truncationMode(.middle)
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).help("\(item.member.model)\n点击在拓扑中查看和分配任务")
+                ActionButton(testing ? "取消" : "测试", symbol: testing ? "xmark" : "play", action: testing ? onCancelTest : onTest)
+                    .disabled(!editable || (!testing && !canTest))
+                    .accessibilityLabel(testing ? "取消模型测试" : "测试 \(item.member.name)")
                 Menu {
                     Button("查看模型详情", action: onSelect)
                     Button("编辑模型能力", action: onEdit).disabled(item.member.discovered)

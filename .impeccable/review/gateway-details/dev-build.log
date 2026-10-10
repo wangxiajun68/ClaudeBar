@@ -1,0 +1,28 @@
+CLAUDEBAR_CHANNEL=dev CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+=== Building ClaudeBar Dev 1.16.0 [dev] (macOS 15.0+) ===
+Using existing identity ClaudeBar Dev (1490884595485DA312DA2062EF517F3E3E998448)
+Signing identity: 1490884595485DA312DA2062EF517F3E3E998448
+Icon copied to bundle
+Fan helper built: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Resources/claudebar-fanctl
+Bundled pinned mihomo archive (v1.19.31)
+Using SDK: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk
+ld: warning: duplicate -rpath '/usr/lib/swift' ignored
+swift-driver version: 1.168.6 /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Helpers/claudebar-dev.tmp.25531: replacing existing signature
+CLI ready: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Helpers/claudebar-dev (mtx-dev)
+Binary created: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/MacOS/ClaudeBarDev
+=== Building Widget ===
+ld: warning: duplicate -rpath '/usr/lib/swift' ignored
+Widget binary: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget
+=== Code-signing ===
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Helpers/claudebar-dev: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Resources/claudebar-batteryctl: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/Resources/claudebar-fanctl: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/PlugIns/ClaudeBarWidget.appex: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app/Contents/MacOS/ClaudeBarDev: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app: replacing existing signature
+PASS: dev bundle, widget, URL scheme, entitlements and signature (/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app)
+Signed OK (1490884595485DA312DA2062EF517F3E3E998448)
+Screen Recording TCC is bound to this certificate — rebuilds should not ask again.
+=== Skipping install (CLAUDEBAR_SKIP_INSTALL=1) ===
+Build cache: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/.build/dev/ClaudeBar Dev.app

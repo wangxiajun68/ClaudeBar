@@ -1,0 +1,29 @@
+{
+  "source_hashes": {
+    "Sources/ClaudeBar/Models/FreeModelGatewayStore.swift": "51b25246f65b1dc679db1a9f95736d72abdc819dc356c39ea1e4591979158f89",
+    "Sources/ClaudeBar/Utils/FreeModelGateway.swift": "643db83f70e8ca518bd6b0faa2099e3a4377222b1f0c223c928e88f0d64de433",
+    "Sources/ClaudeBar/Utils/GatewayProviderImport.swift": "de41c8c9f1aa1c442c7ba519ff338009331a2d5ec3fd5ca59da109692c83b724",
+    "Sources/ClaudeBar/Views/Pages/ProvidersView.swift": "0c92b103922831502f1027a2f54be4bf946f757852e54f17a0c5aed8d550e149",
+    "Sources/ClaudeBar/Views/Shared/FreeModelGatewayView.swift": "53d7c802aab801ba6f3a14af918660f2fdf8f5b56ab54a6b0bc4e013613e4bed",
+    "Sources/ClaudeBar/Views/Shared/GatewayInventoryRow.swift": "ba540279fb2f6aacc94c14e72f1a1399167d0da931fc7c4d40a7fd2d5dc0f5ad",
+    "Sources/ClaudeBar/Views/Shared/GatewayProviderImportView.swift": "498a77d60bf6acc56e687b7a3273584af7140c454544e2748f7cbcf5d5d5fd6a",
+    "Sources/ClaudeBar/Views/Shared/GatewaySettingsControls.swift": "e8afee924a0cf6f513c100ae8ee63f0e241c2fe27aab31e95de147c2e3efb1ca",
+    "Tests/free-model-gateway-regressions.py": "84a52543619ce6b34866d9852a4702d41c7f1f94db3ab92e45bba41c7f6d7c91",
+    "Tools/render-model-gateway-preview.py": "bbac2475373d22182e9cdc13a39781444528ccf69c12ef41253fd4873f3e6a10",
+    "Sources/ClaudeBar/Views/Shared/InstrumentControls.swift": "dcd32e023901935659bb4bb448839cf4033e8485ef9a947f38cd671a59b96f4d",
+    "Sources/ClaudeBar/Views/Shared/ProviderDirectory.swift": "287a04ff02fc5686ea381c33b0fd5082ceb9feb8ba46d73d435bbafcbf355cf1"
+  },
+  "validation_checkout": "/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000",
+  "captured": "native NSHostingView; fixture stores only; production views/header declarations; no app start",
+  "targeted": "final passed 126.94s; includes pre-header/body/queue probe cancellation and stale configuration rejection",
+  "native": "passed; 200-model list mounts 3 rows; 12 output pushes redraw 0 rows",
+  "detector": "no findings; Swift syntax coverage limited",
+  "dev": "passed with final source; bundle, Widget, URL scheme, entitlements and signature; no install/start",
+  "release": "passed with final source; bundle, Widget, URL scheme, entitlements and signature; no install/start",
+  "full": "100 baseline suites covered: 29 initial passed; audio-accessory OSLog test failed once then passed alone; 70 remaining passed. Separate checkout excludes concurrent VPN/session work.",
+  "native_final": "final production native source assembly compiled; no additional screenshot polish round",
+  "captures_note": "Two batched visual passes. Afterwards native Menu labels for compact categories/strategy were replaced with the already verified InstrumentMenuLabel button/popover form; final code compiled, captures retain the prior labels for those two controls.",
+  "ui_final": "3 suites passed in 31.86s",
+  "baseline": "1814c3e",
+  "result": "complete"
+}

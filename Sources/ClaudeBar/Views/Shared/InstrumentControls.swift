@@ -1313,3 +1313,40 @@ struct InstrumentMenuLabel: View {
         .animation(Theme.Motion.state, value: hovered)
     }
 }
+
+/// A native popover retains our shared field surface; macOS Menu can replace
+/// an authored label with its own borderless title. Short option sets keep
+/// normal focusable buttons and an explicit current selection.
+struct InstrumentChoiceControl<Value: Hashable>: View {
+    var label: String
+    var items: [Value]
+    var selection: Value
+    var title: (Value) -> String
+    var tint: Color = Theme.Ink.cursor
+    var onSelect: (Value) -> Void
+    @State private var presented = false
+    var body: some View {
+        Button { presented = true } label: {
+            InstrumentMenuLabel(title: title(selection), tint: tint)
+        }.buttonStyle(.plain).accessibilityLabel(label)
+            .accessibilityValue(title(selection))
+            .popover(isPresented: $presented) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(label).font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
+                        .padding(.bottom, 4)
+                    ForEach(items, id: \.self) { item in
+                        Button { presented = false; onSelect(item) } label: {
+                            HStack(spacing: 12) {
+                                Text(title(item)).font(Theme.Font.bodySmall).foregroundStyle(Theme.textPrimary)
+                                Spacer(minLength: 8)
+                                AppGlyph(name: "checkmark", size: 12).foregroundStyle(tint)
+                                    .opacity(item == selection ? 1 : 0).accessibilityHidden(true)
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(item == selection ? tint.opacity(0.08) : Theme.fieldWell,
+                                            in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                        }.buttonStyle(.plain).accessibilityAddTraits(item == selection ? [.isSelected] : [])
+                    }
+                }.padding(16).frame(width: 240).background(Theme.bgPrimary)
+            }
+    }
+}

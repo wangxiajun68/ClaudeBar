@@ -1,0 +1,181 @@
+.venv/bin/python Tests/run-tests.py
+RUN cli
+PASS: TUI input, stable viewport, pause, command quoting, Unicode clipping and incremental rendering
+PASS: renderer width, CJK, telemetry, injection defense and freshness
+PASS: bounded publisher retains latest tick, atomic JSON and owner-only mode
+PASS: CLI counts, filters, full inventory, JSON/NDJSON, terminal cleanup, channel and lifecycle gates
+RUN cli-control
+PASS: dev real router, grammar, privacy, isolation, mutation serialization, same-user transport and endpoint ownership
+PASS: release real router, grammar, privacy, isolation, mutation serialization, same-user transport and endpoint ownership
+RUN build-isolation
+PASS: dev identity, storage, system networking isolation
+PASS: release identity, storage, system networking isolation
+PASS: dev identity, storage, system networking isolation
+BuildChannel=dev integration=false prompts=false bundle=com.claudebar.app.dev support=ClaudeBar Dev group=com.claudebar.app.dev.widget claude=.claude
+BuildChannel=release integration=true prompts=true bundle=com.claudebar.app support=ClaudeBar group=com.claudebar.app.widget claude=.claude
+BuildChannel=dev integration=false prompts=false bundle=com.claudebar.app.dev support=ClaudeBar Dev group=com.claudebar.app.dev.widget claude=.claude
+PASS: cache invalidation by content/flags, generated-output exclusion, unique Swift object/dependency paths
+PASS: safe build defaults, channel validation, packaging constraints, VPN launch/hotkey guards, cancelable relaunch
+RUN ui
+PASS: unchanged/changed/pruned/empty heartbeat publications; 4/5-column layout, content invalidation and resize
+PASS: the model-price draft row is drawn only while an edit of a slug outside the table is in progress
+RUN core
+PASS: numeric bounds, private atomic writes, configuration preservation, Codex metadata, the shipped xz core, and completion behind a huge record
+RUN performance
+PASS: 100 concurrent streams batch at 10 Hz without starvation; stale flush suppressed; 101 usage requests coalesce to 2 serial passes
+RUN module-performance
+after: [{"canonical_ms": 30.103375, "checksum": 1365000, "log_burst_enqueue_ms": 2.721959, "log_burst_publishes": 1, "log_construct_ms": 1.272084, "log_continuous_ms": 412.574292, "log_continuous_publishes": 4, "log_load_ms": 150.00575, "rpc_batch_ms": 3.913708, "rpc_quiet_waits": 1, "rpc_timeout_ms": 40.025167, "table_html_ms": 9.678375, "table_init_ms": 11.434958, "table_layout_ms": 5.731083}]
+PASS: synthetic table, model identity, JSON-RPC framing and access-log lifecycle
+RUN backend-performance
+after: [{"mcp_cancel_slow-init_ms": 0.138709, "mcp_cancel_slow-page_ms": 0.130083, "peak_rss_mib": 9.984375}]
+after medians: {"mcp_cancel_slow-init_ms": 0.138709, "mcp_cancel_slow-page_ms": 0.130083, "peak_rss_mib": 9.984375}
+PASS: mock MCP pagination/cancellation/owned-child cleanup
+RUN measured-performance
+{
+  "workload": "Synthetic logs and providers; optimized production source slices; no app/system integration",
+  "samples": {
+    "current": [
+      {
+        "lookback_8x12MiB_ms": 43.1155,
+        "provider_groups_10x4000_configured_models_ms": 10.339292
+      }
+    ]
+  },
+  "medians_ms": {
+    "current": {
+      "lookback_8x12MiB_ms": 43.1155,
+      "provider_groups_10x4000_configured_models_ms": 10.339292
+    }
+  }
+}
+PASS: bounded lifecycle recovery, newest valid fields, malformed UTF-8, Unicode, CRLF, truncated records, ownership ambiguity, official clamping and token conservation
+RUN remaining-performance
+{
+  "baseline_ref": null,
+  "workload": "Synthetic 10000 palette items, real static manual paragraphs, synthetic Widget snapshot; optimized production slices; OS effects intercepted",
+  "samples": {
+    "current": [
+      {
+        "help_20_warm_redraws_ms": 3.102084,
+        "palette_3_preparations_and_180_selection_updates_ms": 19.243833,
+        "widget_1000_unchanged_submissions_ms": 11.091334,
+        "widget_unchanged_writes": 1
+      }
+    ]
+  },
+  "medians": {
+    "current": {
+      "help_20_warm_redraws_ms": 3.102084,
+      "palette_3_preparations_and_180_selection_updates_ms": 19.243833,
+      "widget_1000_unchanged_submissions_ms": 11.091334,
+      "widget_unchanged_writes": 1
+    }
+  }
+}
+PASS: stable ranking, full attributed text equality, concurrent cache reads, timestamp deduplication, nested change, forced publication, channel and permission gates, round trip
+RUN remaining-lifecycle
+PASS: cancelled request ownership, replacement overlap prevention, revocation/regrant, deferred traffic unmount/remount and unchanged batch
+RUN inventory-performance
+{
+  "workload": "4000 synthetic inventory models, 1001 Cursor models; 20 result reads; 4000 providers × 20 models, 20 queries; no app or system integration",
+  "baseline_ref": null,
+  "samples": {
+    "current": [
+      {
+        "directory_20_active_queries_ms": 747.939875,
+        "directory_20_empty_queries_ms": 0.00525,
+        "inventory_prepare_and_20_reads_ms": 12.328042,
+        "inventory_single_prepare_ms": 12.863416
+      }
+    ]
+  },
+  "medians_ms": {
+    "current": {
+      "directory_20_active_queries_ms": 747.939875,
+      "directory_20_empty_queries_ms": 0.00525,
+      "inventory_prepare_and_20_reads_ms": 12.328042,
+      "inventory_single_prepare_ms": 12.863416
+    }
+  }
+}
+PASS: exact inventory values, source/alias/cost preservation, stable custom search and cooperative cancellation
+RUN island-coalescing
+METRICS {"queries_before_release":1,"queries_for_101_refreshes":2,"maximum_concurrent_queries":1}
+PASS: single in-flight query, latest trailing pass, stale result rejection, Cursor-only clear and disabled wing timer
+RUN detail-performance
+current: METRICS {"document_20_serializations_ms":103.06107997894287,"document_100_html_ms":22.029995918273926,"editor_150_mounts_ms":64.677000045776367,"editor_initial_assignments":1,"quota_1000_updates_ms":13.571977615356445}
+PASS: production formatting, four time zones, Unicode/markup/links, mutable text storage, initial editor assignments and native edit publications
+RUN weather-card-performance
+PASS weather rendering switch: cached conditions, all manual modes, daylight layers and re-enable
+PASS disabled weather shader: no residual cloud layers
+SNAPSHOT_SHA256 6222f7284a3fdf44823149b5b187a505d703106fbf82c82d6e1304a07feabd50
+SYNC_SNAPSHOT_MEDIAN_MS 8.996874996228144
+PASS weather card draw lifecycle and production snapshot
+PASS production text raster supersession
+PASS production still worker background ownership, cancellation, cache and failure retry
+RUN dashboard-performance
+DASHBOARD_10000_MEDIAN_MS 0.048041343688964844 FORMATTED_PER_PASS 6
+PASS dashboard source ordering, full counts and bounded row formatting: 36 mixed cases
+RUN frame-work-performance
+METRICS {"heatmap":[{"day_keys":0,"days":366,"frames":120,"image_sha256":"0769482c23ff8e0a26db25dcac0becae7c19f2a32ca8c6996cd77bd0a4490014","median_ms":0.03474998811725527,"prepare_ms":0.95262500690296292},{"day_keys":0,"days":2557,"frames":120,"image_sha256":"8a2afcc77107b31df8d9a998694e6181c65fb9adce316987903cd892b619ee6f","median_ms":0.22808334324508905,"prepare_ms":6.8879583413945511}]}
+PASS production heatmap painting and hit testing
+METRICS {"traffic_stale_live_rows":0}
+PASS production traffic cache status, membership, selection and unmount
+METRICS {"density":[{"days":2000,"median_ms":41.995048522949219,"distinct_totals":3,"kde_median_ms":0.0029802322387695312,"density_max_absolute_error":1.1102230246251565e-15},{"distinct_totals":30,"kde_median_ms":0.015974044799804688,"median_ms":40.187954902648926,"days":2000,"density_max_absolute_error":1.2739375526704677e-17},{"distinct_totals":2000,"kde_median_ms":0.96392631530761719,"density_max_absolute_error":3.7269449679189215e-20,"days":2000,"median_ms":41.708946228027344}]}
+PASS production usage density against frozen observation-by-observation oracle
+RUN module-scheduling
+METRICS {"connector_burst_scans":2,"connector_loading_publications":2,"connector_peak_scans":1,"mid_cancel_manifest_reads":1,"pre_cancel_manifest_reads":0,"unchanged_history_publications":0}
+PASS production connector coalescing, CLI retention, migration publication and bounded cancellation
+RUN document-navigation
+METRICS {"document_navigation":[{"bytes":15390,"headings":100,"median_lookup_ms":0},{"bytes":154890,"headings":1000,"median_lookup_ms":0},{"bytes":466890,"headings":3000,"median_lookup_ms":0}],"parity_headings":16}
+PASS parser ranges, duplicate/protected Unicode headings and stale editor callback
+RUN core-algorithms
+METRICS {"claude_4000_paths_8_requested_ms":4.3760830000000004,"claude_4000_paths_64_requested_ms":5.3529999999999998,"claude_4000_paths_256_requested_ms":5.4126250000000002,"codex_4000_paths_8_requested_ms":6.4857079999999998,"codex_4000_paths_64_requested_ms":6.6025419999999997,"codex_4000_paths_256_requested_ms":7.1942089999999999,"codex_dense_12000_chain_ms":11.018333999999999,"process_peak_rss_bytes":17186816}
+PASS production family routing, random graphs/cycles/long chains
+RUN frontend-native
+DIAGNOSTICS ["native_outline_title_parses": 0, "native_table_body_updates": 30, "native_table_layout_computations": 0, "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b", "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d", "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820", "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e", "native_table_text_parses": 0, "native_outline_body_updates": 30, "native_outline_updates_ms": 251.818375, "unchanged_layout_computations": 0, "cached_layout_100_ms": 1.293458, "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d", "native_table_updates_ms": 954.503041, "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa"]
+METRICS {"cached_layout_100_ms":1.293458,"native_outline_body_updates":30,"native_outline_title_parses":0,"native_outline_updates_ms":251.818375,"native_table_body_updates":30,"native_table_layout_computations":0,"native_table_text_parses":0,"native_table_updates_ms":954.50304100000005,"outline_dark_sha256":"1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e","outline_image_sha256":"50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b","table_content_changed_sha256":"e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d","table_dark_sha256":"1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa","table_image_sha256":"59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d","table_styled_sha256":"aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820","unchanged_layout_computations":0}
+PASS real native surface updates, geometry/content/height/topology/undo invalidation and pixel stability
+RUN page-frontend
+METRICS {"connector_repeat_cli_checks":0,"connector_repeat_owner_visits":0,"connector_repeat_record_checks":0,"connector_repeated_filter_ms":0.0074590000000000004,"connector_repeated_owner_counts_ms":0.224333,"cycles":30,"live_initial_cards":4,"live_initial_ms":56.676957999999999,"live_middle_sha256":"f0303de649eb49a895779f652391f16d84306d886f11a886a8dd2851d4a03a6a","live_tail_sha256":"0d211629d6a15ae3463a7319b4a4feb3c7741056e82ac6b9e30bb50a5c17def0","live_top_sha256":"7727aa3d67b9ad64827a7610a1f629fc4a87bd270fa288757c17b440600c8e7e","mixed_initial_cards":10,"mixed_initial_ms":56.716959000000003,"mixed_middle_sha256":"4d26f2946ec04e7baa2e777c2c1756a6d24ba6130012aab32f13857f0f10a542","mixed_tail_sha256":"fcf8745c26f253a0be3aa7b1b00aafeb3ce81dfa7fb17a8e96e82abbc6799410","mixed_top_sha256":"5d4b9a60b8f46e1e9331845ef0554f2578c3ddb9b3fc1e824d09c49318d22590","provider_index_lookups_ms":3.6095000000000002,"provider_index_url_normalizations":2000,"provider_repeat_row_visits":0,"provider_repeat_url_normalizations":0,"provider_repeated_partition_ms":0.001041,"provider_url_parity_cases":369,"resting_initial_cards":12,"resting_initial_ms":96.753957999999997,"resting_middle_sha256":"19f994c560ed47581f9e2c5bfbd331b7bef7ceeafa5b21c8ba2a4cec978b6e54","resting_tail_sha256":"c9d5affbc106b7498cc230f4192894febe6f0ba0f8e3ca72b73caed9ce86e7e5","resting_top_sha256":"3edb30733662cf13ca39acf5c6f4a6a3d4c6764674adf5db336f5ab06f52bbef"}
+PASS production session containers, connector filters/counts and provider index/partition, scrolling, source changes and cache invalidation
+RUN vpn-probe-lifecycle
+METRICS {"cancelled_sleep_queries":0,"cancelled_sweep_queries":1,"overlap_fixture_total_queries":2,"pre_cancelled_sweep_queries":0}
+PASS: reset/replacement ownership, no duplicate query, parent cancellation, node-switch wait and cancelled endpoint sweep
+RUN vpn-system-proxy
+PASS: read-back covers every service, apply/clear serialize, failures back off, DNS never overrides without a kept snapshot
+RUN access-log-tail
+after: [{"large_read_off_main": 1, "log_construct_ms": 1.588709, "log_file_bytes": 25838905, "log_read_bytes": 262144, "log_read_work_ms": 53.183542, "peak_rss_mib": 12.953125}]
+after medians: {"large_read_off_main": 1, "log_construct_ms": 1.588709, "log_file_bytes": 25838905, "log_read_bytes": 262144, "log_read_work_ms": 53.183542, "peak_rss_mib": 12.953125}
+PASS: production tail reader, UTF8/CRLF/damage/id sequence and load/clear/request races
+RUN ui-animation-performance
+{
+  "working_tree": {
+    "unchanged": 0.1380443572998047,
+    "pace": 3.3910274505615234,
+    "path": 7.203102111816406,
+    "appearance": 16.574978828430176
+  }
+}
+PASS: Sankey palette/path/geometry/topology; stable layers, phase, occlusion and detach
+RUN interaction-performance
+PASS: hidden sampler suspension and fan timer lifecycle; independent scroll owners, burst coalescing, stale idle and deadline; bounded SSE order, JSON fallback and cancellation; native hide/detach/phase/stable layers
+RUN process-cpu
+PASS: busy 100.1%, idle 0.0%, 41.67 ns/tick; cwd keys canonical
+RUN process-argv
+PASS: argv-only Codex detection (env ignored, argv matched, absent pid false)
+RUN audio-accessory
+FAIL: a window inside the store's lifetime must reuse it
+Traceback (most recent call last):
+  File "/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/Tests/audio-accessory-regressions.py", line 324, in <module>
+    subprocess.run([str(binary)], check=True)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 528, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-audio-probe-ory79a34/probe']' returned non-zero exit status 1.
+Traceback (most recent call last):
+  File "/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/Tests/run-tests.py", line 20, in <module>
+    subprocess.run([sys.executable, str(root / 'Tests' / (suite + '-regressions.py'))], cwd=root, check=True)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 528, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/Users/wangxiajun/Project/ClaudeBar/.venv/bin/python', '/Users/wangxiajun/Project/ClaudeBar/.build/gateway-detail-validation/1791649691323793000/Tests/audio-accessory-regressions.py']' returned non-zero exit status 1.
+make: *** [test] Error 1

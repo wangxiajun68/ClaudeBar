@@ -9,6 +9,7 @@ struct GatewayProviderImportRoute: Identifiable {
 /// store's durable-save result, and credentials stay in the provider stores.
 struct GatewayProviderImportView: View {
     var providerIDs: [UUID]
+    var onEditProvider: (UUID) -> Void = { _ in }
     @ObservedObject private var gateway = FreeModelGatewayStore.shared
     @Environment(\.dismiss) private var dismiss
     private struct Entry: Identifiable {
@@ -28,10 +29,11 @@ struct GatewayProviderImportView: View {
     @State private var json = false
     @State private var tiers = GatewayTaskDifficulty.allCases
     @State private var submitted = false
+    @State private var importError: String?
     @State private var showSettings = false
     @FocusState private var contextFocus: String?
     private var joined: Set<String> { Set(gateway.pool.members.map(\.id)) }
-    private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) } }
+    private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) && issue(for: $0.providerID) == nil } }
     private var validSelection: Bool {
         !selectedEntries.isEmpty && selectedEntries.allSatisfy { (Int($0.context) ?? 0) > 0 }
     }
@@ -51,19 +53,31 @@ struct GatewayProviderImportView: View {
             HairlineDivider()
             HStack(spacing: 8) {
                 InstrumentSearchField(prompt: "搜索已保存模型或配置", text: $query)
-                ActionButton("全选") { selected = Set(entries.filter { !joined.contains($0.id) }.map(\.id)) }
+                ActionButton("全选") { selected = Set(entries.filter { !joined.contains($0.id) && issue(for: $0.providerID) == nil }.map(\.id)) }
                     .disabled(!gateway.canEdit || submitted || entries.isEmpty)
                 ActionButton("清空") { selected.removeAll() }
                     .disabled(!gateway.canEdit || submitted || selected.isEmpty)
             }.padding(.horizontal, 20).padding(.vertical, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let error = gateway.error {
+                    if let error = importError {
                         Label(error, systemImage: "exclamationmark.circle")
                             .font(Theme.Font.bodySmall).foregroundStyle(Theme.Ink.error)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("网关使用远端 OpenAI 兼容 Chat 接口。仅加入你已确认免费的模型；OpenRouter 仍按有效免费目录校验。")
+                    ForEach(gateway.connections.filter { providerIDs.contains($0.id) && issue(for: $0.id) != nil }) { provider in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(provider.name + " · 需要完善接口", systemImage: "exclamationmark.circle")
+                                .font(Theme.Font.chromeEmph).foregroundStyle(Theme.Ink.warning)
+                            Text(issue(for: provider.id) ?? "").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ActionButton("修改供应商配置", symbol: "slider.horizontal.3") {
+                                onEditProvider(provider.id); dismiss()
+                            }
+                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.fieldWell, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    }
+                    Text("仅加入已确认免费的模型。复用供应商的 HTTPS Chat 接口与 Key；OpenRouter 按免费目录校验。")
                         .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
@@ -146,6 +160,7 @@ struct GatewayProviderImportView: View {
         let exists = joined.contains(item.id)
         let picked = selected.contains(item.id) && !exists
         let catalog = gateway.connections.contains { $0.id == item.providerID && FreeModelPool.isOpenRouter($0.baseURL) }
+        let blocked = issue(for: item.providerID) != nil
         let invalid = (Int(item.context) ?? 0) <= 0
         return HStack(spacing: 12) {
             if exists {
@@ -154,11 +169,11 @@ struct GatewayProviderImportView: View {
             } else {
                 Toggle("选择 \(item.model)", isOn: Binding(get: { selected.contains(item.id) }, set: { value in
                     if value { selected.insert(item.id) } else { selected.remove(item.id) }
-                })).toggleStyle(GatewaySelectionStyle(label: "选择 \(item.model)")).disabled(!gateway.canEdit || submitted)
+                })).toggleStyle(GatewaySelectionStyle(label: "选择 \(item.model)")).disabled(!gateway.canEdit || submitted || blocked)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.model).font(Theme.Font.chromeEmph).lineLimit(1).truncationMode(.middle).help(item.model)
-                Text(item.providerName + (exists ? " · 已在池内" : ""))
+                Text(item.providerName + (exists ? " · 已在池内" : (blocked ? " · 请先完善接口" : "")))
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).lineLimit(1).help(item.providerName)
             }
             Spacer(minLength: 8)
@@ -167,7 +182,7 @@ struct GatewayProviderImportView: View {
                     .font(Theme.Font.captionMono).multilineTextAlignment(.trailing)
                     .focused($contextFocus, equals: item.id)
                     .textFieldStyle(InstrumentFieldStyle(focused: contextFocus == item.id, onCard: false)).frame(width: 94)
-                    .disabled(exists || catalog || !gateway.canEdit || submitted)
+                    .disabled(exists || catalog || blocked || !gateway.canEdit || submitted)
                     .accessibilityLabel("\(item.model) 的上下文长度")
                     .help(catalog ? "OpenRouter 使用免费目录中的上下文长度" : "填写大于零的 token 数量")
                 Text(catalog ? "以免费目录为准" : (invalid ? "请输入正整数" : (item.assumedContext ? "未配置 · 请核对" : "已配置")))
@@ -180,6 +195,12 @@ struct GatewayProviderImportView: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .strokeBorder(picked ? Theme.cursor.opacity(0.45) : Theme.hairline)
             }
+    }
+
+    private func issue(for id: UUID) -> String? {
+        guard let provider = gateway.connections.first(where: { $0.id == id }) else { return "供应商已删除，请重新选择。" }
+        if provider.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "尚未保存 Key。请先在供应商配置中填写密钥。" }
+        return GatewayProviderImport.endpointIssue(provider.baseURL)
     }
 
     private func syncEntries() {
@@ -197,7 +218,7 @@ struct GatewayProviderImportView: View {
                 return entry
             }
         }
-        selected.formIntersection(seen)
+        selected.formIntersection(Set(entries.filter { issue(for: $0.providerID) == nil }.map(\.id)))
     }
 
     private func submit() {
@@ -206,10 +227,10 @@ struct GatewayProviderImportView: View {
                 contextLength: Int(entry.context) ?? 0, supportsTools: tools, supportsImages: images,
                 supportsJSON: json, difficulties: tiers)
         }
-        submitted = true
+        submitted = true; importError = nil
         gateway.importModels(members, confirmedFree: confirmedFree) { succeeded in
             submitted = false
-            if succeeded { dismiss() }
+            if succeeded { dismiss() } else { importError = gateway.error }
         }
     }
 }

@@ -1,0 +1,11 @@
+.venv/bin/python Tests/run-tests.py
+RUN free-model-gateway
+PASS: phase push, bounded output pulses, short completion/failover, cancellation/revision cleanup, nonoverlapping topology
+PASS: saved-provider batch import, dedup/preserved assignments, atomic validation, free catalog guard and credential privacy
+PASS: zero-price discovery, automatic task classification/continuation/upward selection, explicit tiers/validation/migration, capabilities, cooldown, admission, privacy and private storage
+PASS: per-provider shared permits, free-provider selection, FIFO/global/byte bounds, cancellation, timeout, fallback transfer, live reconfiguration, shutdown, burst isolation and legacy migration
+PASS: pinned manual probe with Auto disabled, actual valid/invalid/401/redirect responses, pre-header/body/queue cancellation, stale config rejection and permit/health cleanup
+PASS: production store import completion follows durable save without UI-frame observation; rejection and write failure retain state
+PASS: real HTTP provider isolation, bounded queue/Retry-After, queue timeout without upstream debit, queued socket withdrawal, pre-header and streaming-disconnect permit release
+PASS: real auth, credential injection, three-protocol automatic and explicit difficulty routing, strict tier failover, 429/401 fallback, first-frame fallback and no midstream retry
+PASS: 1 suites in 126.94s

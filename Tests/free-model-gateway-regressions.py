@@ -276,6 +276,10 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         for base in ["http://example.test/v1","https://127.0.0.1/v1","https://user@example.test/v1"] {
             var invalid = configured; invalid.baseURL = base; rejectImport([manualA],FreeModelPool(),[invalid])
         }
+        check(GatewayProviderImport.endpointIssue("https://example.test/v1") == nil)
+        check(GatewayProviderImport.endpointIssue("http://example.test/v1")!.contains("HTTPS"))
+        check(GatewayProviderImport.endpointIssue("http://127.0.0.1:15721/v1")!.contains("本机"))
+        check(!GatewayProviderImport.endpointIssue("https://secret@example.test/v1?token=secret")!.contains("secret"))
         var noKey = configured; noKey.apiKey = ""; rejectImport([manualA],FreeModelPool(),[noKey])
         var invalidLength = manualA; invalidLength.contextLength = 0; rejectImport([invalidLength])
         var full = FreeModelPool(); full.members = (0..<200).map { i in var m=manualA;m.model="existing-\(i)";return m }
@@ -521,6 +525,68 @@ func cancelled<T>(_ task: Task<T, Error>) async {
 }
 '''
 
+probe_policy = r'''
+import Foundation
+@main struct ProbePolicy {
+    static func main() async throws {
+        let id = UUID(), gateway = FreeModelGateway()
+        let endpoint = FreeModelGateway.Endpoint(id:id,name:"Fixture",baseURL:"https://example.test/v1",apiKey:"fixture-probe")
+        var pool = FreeModelPool(); pool.enabled = false; pool.requestsPerMinute = 60; pool.maxConcurrent = 1
+        let names = ["probe-good","probe-invalid","probe-401","probe-redirect","probe-wait","probe-body-wait"]
+        pool.members = names.map { .init(providerID:id,model:$0,name:$0,contextLength:32000,supportsTools:false,supportsImages:false,supportsJSON:false,difficulties:[.medium]) }
+        await gateway.configure(pool,endpoints:[endpoint])
+        let req = try GatewayRequirements(chat:["messages":[["role":"user","content":"OK"]],"task_difficulty":"medium","max_tokens":128])
+        await expect(.disabled) { _ = try await gateway.begin(req) }
+        let url = URL(string:CommandLine.arguments[1])!
+        for (i,member) in pool.members.enumerated() {
+            // Account cooldown must not leak into subsequent fixture cases.
+            await gateway.resetHealth()
+            let plan = try await gateway.begin(req,testingMemberID:member.id)
+            precondition(plan.candidates.count == 1 && plan.candidates[0].member.id == member.id && plan.selection.contains("手动测试"))
+            try await gateway.started(plan.candidates[0],plan:plan)
+            let task = Task { try await GatewayNetwork.shared.probe(plan.candidates[0],url:url,plan:plan,gateway:gateway) }
+            if i >= 4 { try await Task.sleep(for:.milliseconds(100)); task.cancel() }
+            let cancelledAt = Date()
+            do {
+                _ = try await task.value
+                precondition(i == 0)
+            } catch {
+                if i >= 4 { precondition(error is CancellationError && Date().timeIntervalSince(cancelledAt) < 3) }
+                else { precondition((error as? GatewayNetwork.ProbeFailure)?.status == [0,502,401,307][i]) }
+            }
+            await gateway.finish(plan)
+            let snapshot = await gateway.snapshot()
+            precondition(snapshot.active == 0 && snapshot.queued == 0)
+            let h = snapshot.health[member.id]
+            precondition((h?.successes ?? 0) == (i == 0 ? 1 : 0))
+            precondition((h?.failures ?? 0) == ((1...3).contains(i) ? 1 : 0))
+            precondition(snapshot.flights.first?.phase == (i == 0 ? .succeeded : (i >= 4 ? .cancelled : .failed)))
+        }
+        // A pinned test waits for its supplier, never switches to another model.
+        await gateway.resetHealth()
+        let first = try await gateway.begin(req,testingMemberID:pool.members[0].id)
+        let waiting = Task { try await gateway.begin(req,testingMemberID:pool.members[1].id) }
+        for _ in 0..<100 where (await gateway.snapshot()).queued == 0 { try await Task.sleep(for:.milliseconds(5)) }
+        precondition((await gateway.snapshot()).queued == 1)
+        waiting.cancel()
+        do { _ = try await waiting.value; fatalError("cancelled queued probe") } catch { precondition(error is CancellationError) }
+        await gateway.finish(first)
+        let final = await gateway.snapshot()
+        precondition(final.active == 0 && final.queued == 0)
+        let old = try await gateway.begin(req,testingMemberID:pool.members[0].id)
+        try await gateway.started(old.candidates[0],plan:old)
+        pool.maxQueued += 1
+        await gateway.configure(pool,endpoints:[endpoint])
+        precondition(!(await gateway.isCurrent(old)))
+        do { _ = try await GatewayNetwork.shared.probe(old.candidates[0],url:url,plan:old,gateway:gateway); fatalError("stale probe must not pass") }
+        catch { precondition(error as? GatewayFailure == .interrupted) }
+        await gateway.finish(old)
+        precondition((await gateway.snapshot()).health[pool.members[0].id]?.successes ?? 0 == 0)
+        print("PASS: pinned manual probe with Auto disabled, actual valid/invalid/401/redirect responses, pre-header/body/queue cancellation, stale config rejection and permit/health cleanup")
+    }
+}
+'''
+
 store_completion = r'''
 import Foundation
 import Combine
@@ -753,6 +819,35 @@ class Upstream(BaseHTTPRequestHandler):
         self.wfile.write(b'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n\n')
         self.wfile.write(b'data: [DONE]\n\n')
 
+class ProbeUpstream(BaseHTTPRequestHandler):
+    calls = []
+    def log_message(self, *args):
+        pass
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        self.calls.append(body['model'])
+        assert self.headers.get('Authorization') == 'Bearer fixture-probe'
+        assert body['max_tokens'] == 128 and body['stream'] is False
+        model = body['model']
+        if model == 'probe-wait':
+            time.sleep(5)
+        status = 401 if model == 'probe-401' else (307 if model == 'probe-redirect' else 200)
+        data = json.dumps({'choices':[{'message':{'content':'OK'}}]} if model != 'probe-invalid' else {'choices':[]}).encode()
+        self.send_response(status)
+        if status == 307:
+            self.send_header('Location', '/must-not-follow')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        if model == 'probe-body-wait':
+            self.wfile.write(data[:1]); self.wfile.flush(); time.sleep(5); self.wfile.write(data[1:])
+        else:
+            self.wfile.write(data)
+
 with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
     folder = Path(temporary)
     types = folder/'Catalog.swift'
@@ -771,9 +866,21 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
     queue_binary = folder/'queue-policy'
     subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(queue_file),'-o',str(queue_binary)],check=True)
     subprocess.run([str(queue_binary)],check=True,timeout=30)
+    probe_file = folder/'ProbePolicy.swift'
+    probe_file.write_text('func expect(_ failure:GatewayFailure,_ op:() async throws -> Void) async { do { try await op(); fatalError("expected failure") } catch { precondition(error as? GatewayFailure == failure) } }\n'+probe_policy.replace('precondition(', 'check(').replace('import Foundation\n', 'import Foundation\nfunc check(_ value:Bool,_ message:String = "") { if !value { fatalError(message) } }\n'))
+    probe_binary = folder/'probe-policy'
+    subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(probe_file),'-o',str(probe_binary)],check=True)
+    probe_server = ThreadingHTTPServer(('127.0.0.1',0),ProbeUpstream)
+    threading.Thread(target=probe_server.serve_forever,daemon=True).start()
+    try:
+        subprocess.run([str(probe_binary),f'http://127.0.0.1:{probe_server.server_address[1]}/v1/chat/completions'],check=True,timeout=20)
+        assert ProbeUpstream.calls == ['probe-good','probe-invalid','probe-401','probe-redirect','probe-wait','probe-body-wait','probe-good']
+    finally:
+        probe_server.shutdown(); probe_server.server_close()
+    extra = [utils/'MigrationBridgeConfiguration.swift', models/'SessionMigration.swift', root/'Sources/Shared/BuildChannel.swift']
     store_file = folder/'StoreCompletion.swift'; store_file.write_text(store_completion)
     store_binary = folder/'store-completion'
-    subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(models/'FreeModelGatewayStore.swift'),str(store_file),'-o',str(store_binary)],check=True)
+    subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common+extra),str(models/'FreeModelGatewayStore.swift'),str(store_file),'-o',str(store_binary)],check=True)
     subprocess.run([str(store_binary),temporary],check=True,timeout=20)
     transport_file = folder/'Transport.swift'; transport_file.write_text(transport)
     bridge_config = utils/'MigrationBridgeConfiguration.swift'

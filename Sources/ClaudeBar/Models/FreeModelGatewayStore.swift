@@ -11,6 +11,8 @@ final class FreeModelGatewayStore: ObservableObject {
     @Published private(set) var snapshot = FreeModelGateway.Snapshot()
     @Published private(set) var connections: [CodexProvider] = []
     @Published var error: String?
+    @Published private(set) var testingMemberID: String?
+    @Published private(set) var testResults: [String: String] = [:]
     private let storage = FreeModelPoolStorage(url: FilePaths.freeModelPoolFile)
     private weak var providers: CodexProviderStore?
     private weak var claude: ProviderStore?
@@ -19,6 +21,7 @@ final class FreeModelGatewayStore: ObservableObject {
     private var schedule: Task<Void, Never>?
     private var discovery: Task<Void, Never>?
     private var startup: Task<Void, Never>?
+    private var testing: Task<Void, Never>?
     private var stopped = false
     private var loadedSuccessfully = false
 
@@ -71,6 +74,7 @@ final class FreeModelGatewayStore: ObservableObject {
 
     func stop() {
         stopped = true
+        testing?.cancel()
         Task { await FreeModelGateway.shared.shutdown() }
         startup?.cancel(); discovery?.cancel(); schedule?.cancel()
         providerObserver?.cancel()
@@ -114,11 +118,7 @@ final class FreeModelGatewayStore: ObservableObject {
         }
         if connections != available { connections = available }
         let endpoints = available.compactMap { provider -> FreeModelGateway.Endpoint? in
-            // Remote credentials only travel over TLS. Do not create a route
-            // back into the local proxy, or use an Anthropic-only connection.
-            guard let url = URLComponents(string: provider.baseURL), url.scheme == "https",
-                  url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-                  !LocalProxyAddress.isLoopback(provider.baseURL) else { return nil }
+            guard GatewayProviderImport.endpointIssue(provider.baseURL) == nil else { return nil }
             return .init(id: provider.id, name: provider.name, baseURL: provider.baseURL, apiKey: provider.apiKey)
         }
         await FreeModelGateway.shared.configure(pool, endpoints: endpoints)
@@ -192,7 +192,12 @@ final class FreeModelGatewayStore: ObservableObject {
     }
 
     func add(_ model: FreeModelPool.CatalogModel) {
-        guard let id = pool.openRouterProviderID else { error = "请先选择 OpenRouter 凭据。"; return }
+        guard let id = pool.openRouterProviderID,
+              let provider = connections.first(where: { $0.id == id && FreeModelPool.isOpenRouter($0.baseURL) }),
+              !provider.apiKey.isEmpty else { error = "请先选择已保存 Key 的 OpenRouter 连接。"; return }
+        guard GatewayProviderImport.endpointIssue(provider.baseURL) == nil else { error = "请完善 OpenRouter 的 HTTPS 接口地址。"; return }
+        guard Date().timeIntervalSince(pool.discoveredAt ?? .distantPast) < 48 * 3600,
+              pool.catalog.contains(model) else { error = "免费目录已过期，请先点击「立即发现」刷新。"; return }
         change { value in
             let member = model.member(providerID: id)
             if !value.members.contains(where: { $0.id == member.id }) { value.members.append(member) }
@@ -215,4 +220,33 @@ final class FreeModelGatewayStore: ObservableObject {
     func resetHealth() {
         Task { await FreeModelGateway.shared.resetHealth(); await refreshStatus() }
     }
+
+    func test(_ member: FreeModelPool.Member) {
+        guard canEdit, testing == nil, member.enabled, let tier = member.difficulties.first else { return }
+        testingMemberID = member.id
+        testResults[member.id] = nil
+        testing = Task { [weak self] in
+            guard let self else { return }
+            defer { testingMemberID = nil; testing = nil }
+            var plan: FreeModelGateway.Plan?
+            do {
+                let requirements = try GatewayRequirements(chat: ["messages": [["role": "user", "content": "Reply with OK."]],
+                    "max_tokens": 128, "task_difficulty": tier.rawValue])
+                let admitted = try await FreeModelGateway.shared.begin(requirements, testingMemberID: member.id)
+                plan = admitted
+                guard let candidate = try await FreeModelGateway.shared.acquireAttempt(admitted.candidates, plan: admitted),
+                      let url = MigrationBridgeConfiguration.chatCompletionsURL(candidate.endpoint.baseURL) else {
+                    throw GatewayFailure.noCompatibleModel
+                }
+                let latency = try await GatewayNetwork.shared.probe(candidate, url: url, plan: admitted, gateway: .shared)
+                testResults[member.id] = "测试通过 · 响应头 \(String(format: "%.2f", latency)) 秒"
+            } catch {
+                testResults[member.id] = Task.isCancelled ? "测试已取消" : error.localizedDescription
+            }
+            if let plan { await FreeModelGateway.shared.finish(plan) }
+            await refreshStatus()
+        }
+    }
+
+    func cancelTest() { testing?.cancel() }
 }

@@ -1,0 +1,4 @@
+.venv/bin/python Tests/run-tests.py
+RUN audio-accessory
+PASS: log store rebuilds at the window edge (4 → 1 with a held-store control of 4); keyboard / mouse / watch / Mac battery rejected on all three sources; headset, bud and case records scoped
+PASS: 1 suites in 8.57s

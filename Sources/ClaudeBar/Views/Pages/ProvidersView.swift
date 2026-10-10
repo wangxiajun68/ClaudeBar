@@ -14,6 +14,7 @@ struct ProvidersView: View {
     @State private var connectionEdit: ProviderConnectionRoute?
     @State private var setupEntry: ProviderCatalogEntry?
     @State private var gatewayImport: GatewayProviderImportRoute?
+    @State private var pendingGatewayEdit: UUID?
     /// What the last 导入 said. The store's `importSummary` is the same string,
     /// but the page cannot read it: the band is redrawn from `Facts`, which
     /// deliberately does not observe it, so a one-off outcome is local state
@@ -88,8 +89,10 @@ struct ProvidersView: View {
                                          onDelete: route.isNew ? nil : { deleteConnection(route.id) })
             }
         }
-        .sheet(item: $gatewayImport) { route in
-            GatewayProviderImportView(providerIDs: route.providerIDs)
+        .sheet(item: $gatewayImport, onDismiss: {
+            if let id = pendingGatewayEdit { pendingGatewayEdit = nil; editGatewayProvider(id) }
+        }) { route in
+            GatewayProviderImportView(providerIDs: route.providerIDs, onEditProvider: { pendingGatewayEdit = $0 })
         }
         .sheet(item: $setupEntry) { entry in
             ProviderQuickSetup(draft: .init(entry: entry, client: client), onSave: saveSetup)
@@ -115,10 +118,6 @@ struct ProvidersView: View {
     private func workspace(_ f: Facts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            SegmentedCapsule(items: ["providers", "gateway"], selection: surfaceRaw,
-                title: { $0 == "providers" ? "供应商" : "自动网关" }, tint: Theme.Ink.cursor) { surfaceRaw = $0 }
-            .padding(.horizontal, Theme.Space.s24)
-            .padding(.bottom, Theme.Space.s16)
             if let error = f.error {
                 // A raw red `Label` was the one error in the app with no band
                 // behind it; every other page states a failure on a surface.
@@ -134,13 +133,17 @@ struct ProvidersView: View {
                               tint: Theme.Ink.success) { self.importNote = nil }
             }
             if surfaceRaw == "gateway" {
-                FreeModelGatewayView {
+                FreeModelGatewayView(onAddOpenRouter: {
                     clientRaw = "codex"
                     setupEntry = ProviderCatalogEntry.all.first { $0.id == "openrouter" }
-                }
+                }, onEditProvider: editGatewayProvider)
             } else {
-                directoryToolbar
-                connectionStrip(f)
+                VStack(spacing: 12) {
+                    directoryToolbar
+                    HairlineDivider()
+                    connectionStrip(f)
+                }.padding(14).panelCard(radius: Theme.Radius.md)
+                    .padding(.horizontal, Theme.Space.s24).padding(.bottom, Theme.Space.s16)
                 directory(f)
             }
         }
@@ -179,64 +182,41 @@ struct ProvidersView: View {
         }
     }
 
-    /// The page band. It was a hand-typed 26pt bold title with no page mark
-    /// (`Text("供应商").font(.system(size: 26, weight: .bold, design: .rounded))`)
-    /// — a *third* title scale in a file whose neighbour page uses
-    /// `PageTitle` — over a subtitle and a bordered button. It is now the same
-    /// `PageHeaderCard` the connectors page opens with: the page mark in a
-    /// well, the destination's own hue as a wash, and the frame ring the grid
-    /// below carries.
+    /// One page heading owns workspace navigation. Supplier actions only
+    /// appear in their workspace, rather than becoming a second gateway bar.
     private var header: some View {
-        // The band's anatomy matches 连接器 and 概览: `PageTitle` + its subtitle
-        // on the leading side, the band's own control on the trailing side,
-        // both top-aligned.
-        //
-        // It used to stack the subtitle **above** the button in one trailing
-        // column, which made this the tallest band in the app (74pt against
-        // 68pt) and pushed the button's bottom edge down into the frame ring —
-        // the "错乱/重叠" this page showed. A subtitle belongs under its title,
-        // never stacked over a control that then has to fight it for the same
-        // corner.
-        PageHeaderCard(tint: Theme.Ink.cursor, faceTint: Theme.cursor) { engaged in
-            HStack(alignment: .top, spacing: Theme.Space.s12) {
-                VStack(alignment: .leading, spacing: 3) {
+        PageHeaderCard(tint: Theme.textSecondary) { engaged in
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 20) {
                     PageTitle(title: "模型", engaged: engaged)
-                    Text("发现模型平台，为你的编程工具接入新能力。")
-                        .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
+                    surfaceTabs
+                    Spacer(minLength: 12)
+                    if surfaceRaw == "providers" { providerActions }
                 }
-                Spacer(minLength: Theme.Space.s12)
-                // The other runtime's providers, converted: name, key, models
-                // and auto-compact come across, the Base URL stays each
-                // client's own. `ProviderBridge` has carried the conversion all
-                // along; until now nothing on screen could start it, because
-                // the button lived in the editor that `ProviderConnectionEditor`
-                // replaced.
-                Button {
-                    let result = client == .claude
-                        ? providerStore.importFromCodex()
-                        : codexStore.importFromClaude()
-                    importNote = result.summary
-                } label: {
-                    Label(client == .claude ? "导入 Codex" : "导入 Claude",
-                          systemImage: "arrow.left.arrow.right")
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack { PageTitle(title: "模型", engaged: engaged); Spacer(); surfaceTabs }
+                    if surfaceRaw == "providers" { providerActions }
                 }
-                .buttonStyle(.plain)
-                .headerControl()
-                .help(client == .claude
-                      ? "把 Codex 侧的供应商配置转换过来（Base URL 仍是本客户端自己的）"
-                      : "把 Claude 侧的供应商配置转换过来（Base URL 仍是本客户端自己的）")
-                Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
-                    Label("自定义", systemImage: "plus")
-                }
-                .buttonStyle(.plain)
-                .headerControl()
             }
+        }.foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, Theme.Space.s24).padding(.top, Theme.Space.s8).padding(.bottom, Theme.Space.s16)
+    }
+    private var surfaceTabs: some View {
+        SegmentedCapsule(items: ["providers", "gateway"], selection: surfaceRaw,
+            title: { $0 == "providers" ? "供应商" : "自动网关" }, tint: Theme.Ink.cursor) { surfaceRaw = $0 }
+    }
+    private var providerActions: some View {
+        HStack(spacing: 8) {
+            ActionButton(client == .claude ? "导入 Codex" : "导入 Claude", symbol: "arrow.left.arrow.right") {
+                let result = client == .claude ? providerStore.importFromCodex() : codexStore.importFromClaude()
+                importNote = result.summary
+            }.help("转换另一客户端已保存的供应商配置")
+            ActionButton("自定义", symbol: "plus") { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) }
         }
-        .foregroundStyle(Theme.textPrimary)
-        .padding(.horizontal, Theme.Space.s24)
-        .padding(.top, Theme.Space.s8)
-        .padding(.bottom, Theme.Space.s16)
+    }
+    private func editGatewayProvider(_ id: UUID) {
+        clientRaw = codexStore.providers.contains { $0.id == id } ? "codex" : "claude"
+        connectionEdit = ProviderConnectionRoute(id: id, isNew: false)
     }
 
     /// Dismiss the error the current client's store is showing.
@@ -298,7 +278,6 @@ struct ProvidersView: View {
                 ProviderDirectorySearch(query: $query).frame(minWidth: 130, maxWidth: 190)
             }
         }
-        .padding(.horizontal, 24)
     }
 
     /// The live connection strip. It used to be a bare dot and a line of text
@@ -334,11 +313,6 @@ struct ProvidersView: View {
                 .foregroundStyle(Theme.textSecondary).fixedSize()
         }
         .font(Theme.Font.caption).foregroundStyle(Theme.textPrimary)
-        .padding(.horizontal, Theme.Space.s14)
-        .padding(.vertical, Theme.Space.s10)
-        .panelCard(radius: Theme.Radius.md, tint: live ? Theme.statusSuccess : nil)
-        .padding(.horizontal, Theme.Space.s24)
-        .padding(.bottom, Theme.Space.s12)
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: f.activeID)
     }
 

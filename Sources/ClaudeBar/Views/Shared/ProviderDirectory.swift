@@ -318,10 +318,8 @@ struct ProviderCategoryFilter: View {
     var body: some View {
         Group {
             if compact {
-                Picker("分类", selection: $category) {
-                    Text("全部").tag(Optional<ProviderCatalogEntry.Category>.none)
-                    ForEach(ProviderCatalogEntry.Category.allCases) { Text($0.rawValue).tag(Optional($0)) }
-                }.pickerStyle(.menu)
+                InstrumentChoiceControl(label: "供应商分类", items: items, selection: category,
+                    title: { $0?.rawValue ?? "全部" }, tint: Theme.Ink.claude) { category = $0 }
             } else {
                 SegmentedCapsule(items: items,
                                  selection: category,

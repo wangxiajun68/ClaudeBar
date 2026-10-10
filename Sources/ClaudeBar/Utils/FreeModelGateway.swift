@@ -18,6 +18,7 @@ actor FreeModelGateway {
         var id: UUID
         var revision: UInt
         var requestBytes = 0
+        var testingMemberID: String? = nil
         var candidates: [Candidate]
         var routing: GatewayTaskRouting
         var difficulty: GatewayTaskDifficulty { routing.difficulty }
@@ -100,7 +101,7 @@ actor FreeModelGateway {
     }
     private struct Waiter {
         enum Work {
-            case request(GatewayRequirements, CheckedContinuation<Plan, Error>)
+            case request(GatewayRequirements, String?, CheckedContinuation<Plan, Error>)
             case attempt([Candidate], Plan, CheckedContinuation<Candidate, Error>)
         }
         var id: UUID
@@ -110,7 +111,7 @@ actor FreeModelGateway {
         var timeout: Task<Void, Never>?
         func fail(_ error: Error) {
             switch work {
-            case .request(_, let c): c.resume(throwing: error)
+            case .request(_, _, let c): c.resume(throwing: error)
             case .attempt(_, _, let c): c.resume(throwing: error)
             }
         }
@@ -147,11 +148,11 @@ actor FreeModelGateway {
         thirdParty && (["auto", "claudebar/auto"].contains(model.lowercased()) || (pool.enabled && pool.interceptAll))
     }
 
-    func begin(_ requirements: GatewayRequirements, requestBytes: Int = 0, now: Date = Date()) async throws -> Plan {
+    func begin(_ requirements: GatewayRequirements, requestBytes: Int = 0, now: Date = Date(), testingMemberID: String? = nil) async throws -> Plan {
         try Task.checkCancellation()
         guard (0...64 * 1024 * 1024).contains(requestBytes) else { throw GatewayFailure.invalidRequest }
         drain(now: now)
-        let plan = try prepare(requirements, requestBytes: requestBytes, now: now)
+        let plan = try prepare(requirements, requestBytes: requestBytes, now: now, testingMemberID: testingMemberID)
         try checkRate(now: now)
         if let admitted = admit(plan, now: now) {
             if Task.isCancelled { finish(admitted); throw CancellationError() }
@@ -164,15 +165,15 @@ actor FreeModelGateway {
             try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
                 enqueue(.init(id: id, providerID: queuedFor,
-                              requestBytes: requestBytes, work: .request(requirements, continuation)))
+                              requestBytes: requestBytes, work: .request(requirements, testingMemberID, continuation)))
             }
         } onCancel: { Task { await self.cancelWaiter(id) } }
         if Task.isCancelled { finish(result); throw CancellationError() }
         return result
     }
 
-    private func prepare(_ requirements: GatewayRequirements, requestBytes: Int, now: Date) throws -> Plan {
-        guard pool.enabled else { throw GatewayFailure.disabled }
+    private func prepare(_ requirements: GatewayRequirements, requestBytes: Int, now: Date, testingMemberID: String? = nil) throws -> Plan {
+        guard pool.enabled || testingMemberID != nil else { throw GatewayFailure.disabled }
         var routing = requirements.routing
         let levels = routing.source == .explicit ? [routing.difficulty]
             : Array(GatewayTaskDifficulty.allCases.drop { $0 != routing.difficulty })
@@ -182,7 +183,8 @@ actor FreeModelGateway {
         // retry stay in the selected tier; never lower the quality estimate.
         for level in levels {
             free = pool.members.enumerated().compactMap { index, member -> (Int, Candidate)? in
-                guard member.enabled, let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return nil }
+                guard testingMemberID == nil || member.id == testingMemberID,
+                      member.enabled, let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return nil }
                 if FreeModelPool.isOpenRouter(endpoint.baseURL) {
                     guard let discovered = pool.discoveredAt, now.timeIntervalSince(discovered) < 48 * 3600,
                           let catalog = pool.catalog.first(where: { $0.id == member.model }),
@@ -230,17 +232,20 @@ actor FreeModelGateway {
         case .balanced: selection = "同档位 · 故障与使用频率"
         case .latency: selection = "同档位 · 观测响应延迟"
         }
-        return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, candidates: ready.map(\.1), routing: routing, selection: selection)
+        return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, testingMemberID: testingMemberID,
+                    candidates: ready.map(\.1), routing: routing, selection: testingMemberID == nil ? selection : "手动测试 · 指定模型")
     }
 
     /// A concurrent request may have put the next model/account into cooldown
     /// since the plan was frozen. Revalidate before spending another request.
     func canAttempt(_ candidate: Candidate, plan: Plan, now: Date = Date()) -> Bool {
-        guard active.contains(plan.id), plan.revision == revision, pool.enabled,
+        guard active.contains(plan.id), plan.revision == revision, (pool.enabled || plan.testingMemberID != nil),
               (attempts[plan.id] ?? 0) < pool.maxAttempts else { return false }
         return (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
             && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
     }
+
+    func isCurrent(_ plan: Plan) -> Bool { active.contains(plan.id) && plan.revision == revision }
 
     /// Prefer a free compatible provider over waiting behind a saturated one.
     /// Actual attempt admission remains atomic inside `started`.
@@ -269,7 +274,7 @@ actor FreeModelGateway {
     func acquireAttempt(_ candidates: [Candidate], plan: Plan, now: Date = Date(),
                         waitTimeout: TimeInterval? = nil) async throws -> Candidate? {
         try Task.checkCancellation()
-        guard pool.enabled else { throw GatewayFailure.disabled }
+        guard pool.enabled || plan.testingMemberID != nil else { throw GatewayFailure.disabled }
         guard active.contains(plan.id), plan.revision == revision else { throw GatewayFailure.interrupted }
         if let waitTimeout, waitTimeout <= 0 { throw GatewayFailure.queueTimedOut }
         drain(now: now)
@@ -382,8 +387,8 @@ actor FreeModelGateway {
             let waiter = waiters[i]
             do {
                 switch waiter.work {
-                case .request(let requirements, let continuation):
-                    let plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now)
+                case .request(let requirements, let testingMemberID, let continuation):
+                    let plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now, testingMemberID: testingMemberID)
                     try checkRate(now: now)
                     guard let admitted = admit(plan, now: now) else { i += 1; continue }
                     changed = true
@@ -547,6 +552,19 @@ actor FreeModelGateway {
 
 /// Refuse redirects so a provider cannot transfer a credential to another host.
 final class GatewayNetwork: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    struct ProbeFailure: LocalizedError {
+        var status: Int
+        var errorDescription: String? {
+            switch status {
+            case 401, 403: return "HTTP \(status)：鉴权失败，请检查供应商 Key 或模型权限。"
+            case 402: return "HTTP 402：免费额度不足，请检查账户额度。"
+            case 404, 410: return "HTTP \(status)：找不到模型或兼容接口，请核对模型 ID 与 Base URL。"
+            case 429: return "HTTP 429：供应商限流，稍后重试。"
+            case 502: return "未收到有效模型输出，请检查接口是否支持 Chat Completions。"
+            default: return "HTTP \(status)：供应商未完成测试，请稍后重试。"
+            }
+        }
+    }
     static let shared = GatewayNetwork()
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -558,6 +576,69 @@ final class GatewayNetwork: NSObject, URLSessionTaskDelegate, @unchecked Sendabl
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+
+    /// Explicit user action; one pinned candidate, zero-price constraints and
+    /// the same admission/health telemetry as normal traffic. No prompt/output
+    /// or upstream error body is retained by the UI.
+    func probe(_ candidate: FreeModelGateway.Candidate, url: URL,
+               plan: FreeModelGateway.Plan, gateway: FreeModelGateway) async throws -> TimeInterval {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(candidate.endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: FreeModelGateway.outbound(
+            ["messages": [["role": "user", "content": "Reply with OK."]], "max_tokens": 128],
+            candidate: candidate, stream: false))
+        let started = Date()
+        var status = 0
+        var latency: TimeInterval = 0
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            let deadline = Task {
+                do { try await Task.sleep(for: .seconds(max(0.01, 20 - Date().timeIntervalSince(started)))) }
+                catch { return }
+                bytes.task.cancel()
+            }
+            defer { deadline.cancel() }
+            latency = Date().timeIntervalSince(started)
+            await gateway.receivedHeaders(candidate, plan: plan)
+            guard let http = response as? HTTPURLResponse else { throw ProbeFailure(status: 502) }
+            status = http.statusCode
+            guard (200..<300).contains(status) else { throw ProbeFailure(status: status) }
+            let data: Data = try await withTaskCancellationHandler {
+                var data = Data()
+                for try await byte in bytes {
+                    try Task.checkCancellation()
+                    guard data.count < 64 * 1024 else { throw ProbeFailure(status: 502) }
+                    data.append(byte)
+                }
+                return data
+            } onCancel: { bytes.task.cancel() }
+            guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = body["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  let content = message["content"] as? String,
+                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ProbeFailure(status: 502)
+            }
+            try Task.checkCancellation()
+            guard await gateway.isCurrent(plan) else { throw GatewayFailure.interrupted }
+            await gateway.receivedOutput(candidate, plan: plan)
+            bytes.task.cancel()
+            await gateway.report(candidate, plan: plan, status: status, latency: latency)
+            return latency
+        } catch {
+            let cancelled = Task.isCancelled
+            let failureStatus = (error as? ProbeFailure)?.status ??
+                ((error as? URLError)?.code == .timedOut || Date().timeIntervalSince(started) >= 20 ? 504 : 502)
+            await gateway.report(candidate, plan: plan, status: cancelled || error as? GatewayFailure == .interrupted ? 0 : failureStatus,
+                                 latency: latency > 0 ? latency : Date().timeIntervalSince(started))
+            if cancelled { throw CancellationError() }
+            throw error
+        }
     }
 
     func catalog(apiKey: String) async throws -> [FreeModelPool.CatalogModel] {
