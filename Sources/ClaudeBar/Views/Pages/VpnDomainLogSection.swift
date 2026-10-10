@@ -45,13 +45,14 @@ struct VpnDomainLogSection: View {
     private static let tailTolerance: CGFloat = 24
 
     enum Mode: String, CaseIterable, Identifiable {
-        case detail, summary, connections
+        case detail, summary, connections, analytics
         var id: String { rawValue }
         var label: String {
             switch self {
             case .detail: return "明细"
             case .summary: return "汇总"
             case .connections: return "实时连接"
+            case .analytics: return "流量分析"
             }
         }
     }
@@ -81,41 +82,23 @@ struct VpnDomainLogSection: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             toolbar
             HairlineDivider()
-            VpnRouteTrafficSummary(proxied: proxiedTraffic, direct: directTraffic,
-                                   proxiedCount: routeCounts[.proxied, default: 0],
-                                   directCount: routeCounts[.direct, default: 0])
-            HStack {
-                Text("采样累计 · 仅统计经内核的连接")
-                Spacer()
-                if routeCounts[.reject, default: 0] > 0 {
-                    Text("拒绝 \(routeCounts[.reject, default: 0]) 次").foregroundColor(Theme.Ink.error)
-                }
-            }
-            .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-            HairlineDivider()
             content
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            pageControls
+            if mode != .analytics { pageControls }
         }
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .vpnSurface()
         .foregroundColor(Theme.textPrimary)
         .task(id: requestKey) { await recompute() }
-        // All modes mirror route totals. Only summary/connection queries
-        // follow live row ticks; hidden workspaces mirror neither.
+        // Historical analytics owns its subscriptions; diagnostic views only
+        // follow the revision for the rows they actually display.
         .onReceive(log.$revision) { value in
-            if isVisible && mode != .connections { historyRevision = value }
+            if isVisible && (mode == .detail || mode == .summary) { historyRevision = value }
         }
         .onReceive(log.$connectionRevision) { value in
-            if isVisible && mode != .detail { connectionRevision = value }
-        }
-        .onReceive(log.$proxiedTraffic) { value in
-            if isVisible { proxiedTraffic = value }
-        }
-        .onReceive(log.$directTraffic) { value in
-            if isVisible { directTraffic = value }
+            if isVisible && mode == .connections { connectionRevision = value }
         }
         .onChange(of: isVisible) { _, visible in
             if visible { syncRevision() }
@@ -148,36 +131,30 @@ struct VpnDomainLogSection: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("将清空当前保留的 \(log.entries.count) 条记录与汇总，无法恢复。"
-                 + "磁盘上的 core.log 不受影响。")
+                 + "流量历史和磁盘上的 core.log 不受影响。")
                 .rollingNumber("将清空当前保留的 \(log.entries.count) 条记录与汇总，无法恢复。"
-                 + "磁盘上的 core.log 不受影响。")
+                 + "流量历史和磁盘上的 core.log 不受影响。")
         }
     }
 
     // MARK: Toolbar
 
     private var toolbar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
                 toolbarMark
-                modePicker(compact: false)
-                InstrumentSearchField(prompt: "搜索域名、出口、规则", text: $query)
-                    .frame(minWidth: 160, maxWidth: .infinity)
-                routePicker
-                logActions
-            }
-            .frame(height: 36)
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    toolbarMark
+                ViewThatFits(in: .horizontal) {
+                    modePicker(compact: false)
                     modePicker(compact: true)
-                    Spacer(minLength: 0)
-                    logActions
                 }
+                Spacer(minLength: 0)
+            }
+            if mode != .analytics {
                 HStack(spacing: 8) {
                     InstrumentSearchField(prompt: "搜索域名、出口、规则", text: $query)
                         .frame(minWidth: 100, maxWidth: .infinity)
                     routePicker
+                    logActions
                 }
             }
         }
@@ -207,6 +184,7 @@ struct VpnDomainLogSection: View {
         case .detail: return "list.bullet.rectangle"
         case .summary: return "chart.bar.xaxis"
         case .connections: return "arrow.triangle.branch"
+        case .analytics: return "chart.xyaxis.line"
         }
     }
 
@@ -266,7 +244,9 @@ struct VpnDomainLogSection: View {
     }
 
     @ViewBuilder private var content: some View {
-        if mode == .connections {
+        if mode == .analytics {
+            VpnTrafficAnalyticsView(isVisible: isVisible)
+        } else if mode == .connections {
             connectionList
         } else if log.entries.isEmpty {
             StandbyEmptyState(
@@ -294,6 +274,7 @@ struct VpnDomainLogSection: View {
         case .detail: return visibleRows.count
         case .summary: return visibleStats.count
         case .connections: return visibleConnections.count
+        case .analytics: return 0
         }
     }
 
@@ -483,7 +464,7 @@ struct VpnDomainLogSection: View {
         GeometryReader { geometry in
             ScrollView([.horizontal, .vertical]) {
                 summaryTableContent
-                    .frame(width: max(940, geometry.size.width), alignment: .leading)
+                    .frame(width: max(780, geometry.size.width), alignment: .leading)
                     .frame(minHeight: geometry.size.height, alignment: .topLeading)
             }
         }
@@ -536,8 +517,6 @@ struct VpnDomainLogSection: View {
             Text("域名").frame(maxWidth: .infinity, alignment: .leading)
             Text("次数").frame(width: 44, alignment: .trailing)
             Text("路由").frame(width: 76, alignment: .leading)
-            Text("代理流量 · ↑ / ↓").frame(width: 148, alignment: .trailing)
-            Text("直连流量 · ↑ / ↓").frame(width: 148, alignment: .trailing)
             Text("最近").frame(width: 72, alignment: .trailing)
             Text("出口").frame(width: 180, alignment: .leading)
             Text("失败").frame(width: 44, alignment: .trailing)
@@ -545,7 +524,7 @@ struct VpnDomainLogSection: View {
         .font(Theme.Font.microMono)
         .foregroundColor(Theme.textSecondary)
         .padding(.horizontal, Theme.Space.s6)
-        .padding(.vertical, 3)
+        .frame(height: 28)
     }
 
     private func summaryRow(_ stat: VpnDomainLogStat) -> some View {
@@ -565,8 +544,6 @@ struct VpnDomainLogSection: View {
                 .frame(width: 44, alignment: .trailing)
             routeChip(stat)
                 .frame(width: 76, alignment: .leading)
-            trafficCell(stat.traffic, route: .proxied)
-            trafficCell(stat.directTraffic, route: .direct)
             Text(stat.lastTimeText.isEmpty ? "—" : stat.lastTimeText)
                 .font(Theme.Font.console)
                 .foregroundColor(Theme.textSecondary)
@@ -586,9 +563,9 @@ struct VpnDomainLogSection: View {
                 .frame(width: 44, alignment: .trailing)
         }
         .padding(.horizontal, Theme.Space.s6)
-        .padding(.vertical, 3)
+        .frame(height: 48)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.bgSecondary.opacity(0.5))
+        .background(Theme.bgSecondary.opacity(0.25))
         .textSelection(.enabled)
         .contextMenu {
             Button("复制域名") {
@@ -600,23 +577,6 @@ struct VpnDomainLogSection: View {
                 NSPasteboard.general.setString(stat.lastOutbound, forType: .string)
             }
         }
-    }
-
-    private func trafficCell(_ traffic: VpnDomainTraffic?, route: VpnDomainRoute) -> some View {
-        VStack(alignment: .trailing, spacing: 3) {
-            Text(traffic.map { VpnFormat.bytes($0.total) } ?? "—")
-                .font(Theme.Font.captionMono.weight(.medium))
-                .foregroundColor(traffic == nil ? Theme.textTertiary() : routeInk(route))
-            if let traffic {
-                Text("↑ \(VpnFormat.bytes(traffic.upload))")
-                    .font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
-                Text("↓ \(VpnFormat.bytes(traffic.download))")
-                    .font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
-            }
-        }
-        .monospacedDigit()
-        .frame(width: 148, alignment: .trailing)
-        .help("该域名的" + (route == .proxied ? "代理" : "直连") + "采样累计，不随筛选变化；— 表示尚未采样到该流向。")
     }
 
     /// One micro-bar of the host's route split. A host commonly appears under
@@ -685,7 +645,7 @@ struct VpnDomainLogSection: View {
 
     private var requestKey: RequestKey {
         RequestKey(revision: mode == .connections ? connectionRevision : historyRevision,
-                   trafficRevision: mode == .summary ? connectionRevision : 0,
+                   trafficRevision: 0,
                    isVisible: isVisible, mode: mode, route: routeFilter, query: query, failedOnly: failedOnly, followTail: followTail)
     }
 
@@ -705,7 +665,7 @@ struct VpnDomainLogSection: View {
     }
 
     private func recompute() async {
-        guard isVisible else { return }
+        guard isVisible && mode != .analytics else { return }
         let key = requestKey
         // Debounce typing; task identity cancels obsolete searches and page work.
         if !key.query.isEmpty {
@@ -779,9 +739,11 @@ struct VpnDomainLogSection: View {
             text = visibleConnections.map {
                 "\($0.endpoint)\t\($0.process)\t↑ \(VpnFormat.bytes($0.upload))\t↓ \(VpnFormat.bytes($0.download))\t\($0.route.label)\t\($0.outbound)"
             }.joined(separator: "\n")
+        case .analytics:
+            return
         case .summary:
             text = visibleStats.map {
-                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)\t代理 ↑ \($0.traffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.traffic.map { VpnFormat.bytes($0.download) } ?? "—")\t代理合计 \($0.traffic.map { VpnFormat.bytes($0.total) } ?? "—")\t直连 ↑ \($0.directTraffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.directTraffic.map { VpnFormat.bytes($0.download) } ?? "—")\t直连合计 \($0.directTraffic.map { VpnFormat.bytes($0.total) } ?? "—")"
+                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)"
             }.joined(separator: "\n")
         }
         guard !text.isEmpty else { return }

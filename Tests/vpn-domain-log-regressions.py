@@ -184,6 +184,7 @@ async_harness = r"""
         case .detail: return visibleRows.count
         case .summary: return visibleStats.count
         case .connections: return visibleConnections.count
+        case .analytics: return 0
         }
     }
     MODE_ENUM
@@ -737,7 +738,7 @@ ASYNC_HARNESS
                      "unsampled hosts must not invent a zero reading")
         let beforeTraffic = cache.requestKey
         cache.connectionRevision += 1
-        precondition(cache.requestKey != beforeTraffic, "live bytes refresh the summary without new log entries")
+        precondition(cache.requestKey == beforeTraffic, "diagnostic summary ignores bytes now owned by historical analytics")
         cache.mode = .connections
         cache.log.connections = connections
         await cache.recompute()

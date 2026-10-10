@@ -50,6 +50,8 @@ for path in ['Sources/ClaudeBar/Utils/VpnDomainRules.swift', 'Sources/ClaudeBar/
              'Sources/ClaudeBar/Utils/VpnDomainQuery.swift', 'Sources/ClaudeBar/Views/Shared/VPNSurface.swift',
              'Sources/ClaudeBar/Views/Shared/StandbyEmptyState.swift',
              'Sources/ClaudeBar/Views/Pages/VpnDomainRulesView.swift',
+             'Sources/ClaudeBar/Utils/VpnTrafficHistory.swift',
+             'Sources/ClaudeBar/Views/Pages/VpnTrafficAnalyticsView.swift',
              'Sources/ClaudeBar/Views/Shared/VpnRouteTrafficSummary.swift',
              'Sources/ClaudeBar/Views/Pages/VpnDomainLogSection.swift']:
     source += (root / path).read_text() + '\n'
@@ -71,10 +73,12 @@ extension VpnDomainLogSection {
         _visibleStats = State(initialValue: stats)
         _routeCounts = State(initialValue: [.proxied: 31, .direct: 18, .reject: 1])
         _matchedCount = State(initialValue: entries.count)
+        _tallyProxied = State(initialValue: entries.filter { $0.route == .proxied }.count)
+        _tallyDirect = State(initialValue: entries.filter { $0.route == .direct }.count)
     }
 }
 @main struct VPNPreview {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let out = FilePaths.vpnDir
         let rules = [
@@ -101,6 +105,45 @@ extension VpnDomainLogSection {
                              "api.example.com": .init(upload: 140_000, download: 3_900_000)]
         log.directTrafficByHost = ["example.com": .init(upload: 90_000, download: 3_100_000),
                                    "github.com": .init(upload: 100_000, download: 4_000_000)]
+        var ledger = VpnTrafficLedger()
+        let calendar = Calendar.current
+        let now = Date()
+        for offset in (0..<30).reversed() {
+            let day = calendar.date(byAdding: .day, value: -offset, to: calendar.startOfDay(for: now))!
+            let up = Int64(24_000_000 + (offset * 37 % 113) * 1_000_000)
+            let down = Int64(190_000_000 + (offset * 71 % 397) * 2_000_000)
+            let proxy = VpnTrafficAmounts(upload: up, download: down)
+            let direct = VpnTrafficAmounts(upload: up / 3, download: down / 2)
+            let traffic = VpnTrafficSplit(core: .init(upload: up + direct.upload + 8_000_000,
+                                                    download: down + direct.download + 21_000_000),
+                                          proxied: proxy, direct: direct)
+            for hour in 0..<24 {
+                let timestamp = day.addingTimeInterval(Double(hour) * 3600)
+                guard timestamp <= now else { continue }
+                let factor = (0.22 + exp(-pow((Double(hour) - 10) / 3, 2)) + 0.7 * exp(-pow((Double(hour) - 20) / 2.5, 2))) / 12
+                let sample = VpnTrafficSplit(
+                    core: .init(upload: Int64(Double(traffic.core.upload) * factor), download: Int64(Double(traffic.core.download) * factor)),
+                    proxied: .init(upload: Int64(Double(proxy.upload) * factor), download: Int64(Double(proxy.download) * factor)),
+                    direct: .init(upload: Int64(Double(direct.upload) * factor), download: Int64(Double(direct.download) * factor)))
+                ledger.record(sample, hosts: [
+                    "github.com": .init(proxied: .init(upload: sample.proxied.upload / 2, download: sample.proxied.download / 2)),
+                    "example.com": .init(direct: sample.direct),
+                    "api.example.com": .init(proxied: .init(upload: sample.proxied.upload / 3, download: sample.proxied.download / 3)),
+                    "very-long-service-name.staging.example.org": .init(proxied: .init(upload: sample.proxied.upload / 6, download: sample.proxied.download / 6))
+                ], at: timestamp)
+            }
+        }
+        let archive = out.appendingPathComponent("traffic-history", isDirectory: true)
+        try? FileManager.default.removeItem(at: archive)
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        for (day, totals) in ledger.days {
+            let date = VpnTrafficLedger.dayDate(day)!
+            let record = VpnTrafficArchiveDay(day: day, totals: totals,
+                hours: ledger.hours.filter { key, _ in VpnTrafficLedger.dayKey(Date(timeIntervalSince1970: Double(key)!)) == day },
+                domains: ledger.domains[day] ?? [:], firstRecord: date, lastRecord: date)
+            try PrivateFileWriter.write(JSONEncoder().encode(record), to: archive.appendingPathComponent(day + ".json"))
+        }
+        _ = await VpnTrafficHistory.shared.report(period: .week)
         for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             let views: [(String, AnyView, CGFloat, CGFloat)] = [
@@ -108,7 +151,9 @@ extension VpnDomainLogSection {
                 ("rules-empty", AnyView(VpnDomainRulesView(fixture: [])), 760, 650),
                 ("detail", AnyView(VpnDomainLogSection(fixtureMode: .detail, entries: entries)), 900, 600),
                 ("detail-compact", AnyView(VpnDomainLogSection(fixtureMode: .detail, entries: entries)), 560, 600),
-                ("summary", AnyView(VpnDomainLogSection(fixtureMode: .summary, entries: entries)), 1100, 600)
+                ("summary", AnyView(VpnDomainLogSection(fixtureMode: .summary, entries: entries)), 1100, 600),
+                ("analytics", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 900, 1500),
+                ("analytics-compact", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 560, 1500)
             ]
             for (name, view, width, height) in views {
                 let content = view.frame(width: width, height: height)
@@ -123,7 +168,7 @@ extension VpnDomainLogSection {
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
                 window.orderBack(nil)
-                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                try await Task.sleep(nanoseconds: 450_000_000)
                 host.layoutSubtreeIfNeeded()
                 guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("VPN bitmap failed") }
                 host.cacheDisplay(in: host.bounds, to: bitmap)

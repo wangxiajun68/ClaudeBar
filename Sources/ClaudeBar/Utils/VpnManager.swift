@@ -579,7 +579,10 @@ final class VpnManager: ObservableObject {
             // domain log is still carrying can never be completed. Only the
             // carry goes — the parsed table survives a port / TUN /
             // subscription restart.
-            await MainActor.run { VpnDomainLog.shared.resetCarry() }
+            await MainActor.run {
+                VpnDomainLog.shared.resetCarry()
+                VpnTrafficHistory.shared.beginCoreSession()
+            }
             guard FileManager.default.fileExists(atPath: dest.path) else {
                 await MainActor.run { [weak self] in
                     self?.fail(.coreMissing)
@@ -1552,6 +1555,8 @@ extension VpnManager {
         }
         VpnLiveRates.shared.applyTotals(
             totalUp: totalUp, totalDown: totalDown, connections: activeConnections)
+        await VpnTrafficHistory.shared.record(prepared, root: hasRootTotals
+            ? VpnTrafficAmounts(upload: totalUp, download: totalDown) : nil)
 
         // Fallback rate if the stream has gone silent (core without /traffic).
         let streamStale = Date().timeIntervalSince(lastTrafficSampleAt ?? .distantPast) > 3

@@ -57,8 +57,8 @@ persistence is distinct from applying rules to the running VPN.
 ## Traffic
 
 Shared icon-bearing `SegmentedCapsule`: detail, retained-domain summary, live
-connections. Its sliding selected pill matches the app's other filters. Search and
-route filters, follow, copy and clear share one top toolbar (two rows when narrow); failure filtering is available for history. Detail
+connections and historical analytics. Its sliding selected pill matches the app's other filters. Search and
+route filters, follow, copy and clear occupy a separate aligned toolbar row; failure filtering is available for retained logs. Detail
 uses a fixed header and 30pt rows. Text is neutral; only route and failure signals
 carry color. Record text supports system text selection. The row is not a button: only its
 trailing detail control opens complete endpoint/rule/outbound information, so
@@ -70,20 +70,42 @@ history. Following is explicit and pauses on user scroll or older-page navigatio
 new matching record count and a return-to-latest action. Incoming logs do not
 change subscriptions, drawer geometry or the page's layout.
 
-Proxy and direct flow lanes stay visible in all three modes. Each reports its own
-sampled upload, download and total, plus the observed route path. These totals
-are session samples and do not follow filters; counts follow search and failure
-filtering. Domain summary separates proxy and direct bytes into fixed columns,
-with full upload/download values on separate lines. Historical records carry
-routes and exits, not invented per-connection byte counts. System-proxy bypass
-and traffic outside the kernel are explicitly outside this sampling scope.
+The retained-domain summary has one 48pt row height regardless of data. Domain,
+count, route, latest time, exit and failure columns share header geometry. Byte
+statistics live in historical analytics, avoiding mixed single-line/three-line cells.
+
+## Historical analytics
+
+A dedicated fourth tab, with today / 7 days / 30 days / all. A neutral typographic
+reading strip gives the selected period's total, upload/download, and lifetime total
+with its recording start date. A full-width 200pt trend chart uses a quiet total
+line with a restrained area fill, a blue proxy curve and a green direct curve.
+Hover or select reveals the nearest bucket; scales carry byte units and calendar
+dates. Rounded SF readings, neutral surfaces and native capsule controls match
+the rest of the workspace; this is product UI, not a research-figure layout.
+
+A second section compares observed proxy and direct routes, with full numeric
+upload/download, paths, a shared proportion track and compact paired horizontal
+bars. The unclassified gap between root totals and route samples is explicit.
+A simple 24-hour bar chart combines the selected period's latest seven days;
+its native selection exposes exact byte values. There is no heatmap or separate
+ratio facet. Domain rankings use aligned 52pt rows, proportional bars, full
+values, route sorting and long-name tooltips. Top 20 is a display limit;
+it never limits storage or totals.
+Spacing and hairlines separate sections, without a grid of decorative metric cards.
+All controls and values fit 560pt, and the analysis scrolls within the workspace.
+
+Statistics use a private daily archive rather than the diagnostic FIFO. Log clear
+and history clear are separate confirmed actions. Empty, loading and storage-error
+states are explicit. The page states that kernel-bypassing traffic is out of scope,
+route/domain sampling may miss short connections, and old logs cannot be backfilled.
 
 ## Performance
 
 2,000 retained connection records in a fixed-capacity FIFO, with at most 200
 rows handed to SwiftUI in each mode. Background parsing remains; history publishes
 at most once per second. The section subscribes to revisions for its active mode,
-so byte totals update the visible flow strip without rerunning history queries; hidden workspaces do not mirror updates. Ring wraparound
+and the analytics page owns its own archive revision; live byte ticks do not rerun diagnostic history queries. Hidden workspaces do not mirror updates. Ring wraparound
 replaces slots instead of shifting the head of an Array. Each publish produces an
 immutable bounded snapshot for readers. Historical and live-connection search/counting execute off-main;
 query task identity cancels stale publication and work on disappearance or
@@ -105,6 +127,6 @@ volume; runtime node switching, real network startup, native text selection and
 hover remain outside preview coverage.
 
 `Tools/render-vpn-preview.py` additionally renders production rule, empty-list,
-detail and summary views through offscreen NSHostingView in both themes, with
+detail, summary and historical Charts views through offscreen NSHostingView in both themes, with
 synthetic stores and private files under `.build/vpn-preview`. A 560pt traffic
 capture checks the narrow toolbar. It does not test real routing or system settings.
