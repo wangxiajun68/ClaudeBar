@@ -1,0 +1,50 @@
+{
+  "kind": "native macOS SwiftUI/AppKit offscreen fixtures",
+  "detector": "not applicable: native UI has no HTML or CSS",
+  "capture_count": 19,
+  "synthetic_data": true,
+  "real_inference_exercised": false,
+  "keyboard_runtime_exercised": false,
+  "source_sha256": {
+    "Sources/ClaudeBar/Views/Shared/GatewayTopologyView.swift": "e1afc0edb7e7f1f9b0b64680d6698567b45a4c98df2d8200c241b7c6c3202e2f",
+    "Sources/ClaudeBar/Views/Shared/GatewayCatalogCard.swift": "3df724c3b03c8bc3d891d14fe930ca9ec837f321a5c9ee73b33b850d4e65ac1e",
+    "Sources/ClaudeBar/Views/Shared/GatewayInventoryRow.swift": "5ed66c1d9317781b4a88ae85b0afec36ea5d10c0302c89463973be804a553741",
+    "Sources/ClaudeBar/Views/Shared/FreeModelGatewayView.swift": "7208da4fc1a6bd948fdb257f95d8662e33b47adb29033a7f8789d5912337cba6",
+    "Sources/ClaudeBar/Views/Shared/GatewayProviderImportView.swift": "ead1a20048ee72c8ecb29987d9956544b8b263bcca598fb87df3a591e9645d8c",
+    "Sources/ClaudeBar/Views/Shared/ProviderDirectory.swift": "184798b9865e7d264777581ab770915110dc6311695357c83861058c8f1da5af",
+    "Sources/ClaudeBar/Views/Shared/ProviderControls.swift": "18c5b88023301f095056f23b19cc7a2d63c100815685e78b1ca48fabb7ca3fb1",
+    "Tools/render-model-gateway-preview.py": "57f5b9cbd93485c55ad334f18f8b124d3bf3dcf9efbd6b68b25084b3338bc32b"
+  },
+  "validation_snapshot": "/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000",
+  "builds": {
+    "dev": "passed; bundle/widget/scheme/entitlements/signature checked, no install",
+    "release": "passed; bundle/widget/scheme/entitlements/signature checked, no install"
+  },
+  "full_regression": {
+    "suites": 100,
+    "seconds": 770.31,
+    "result": "passed",
+    "method": "make test in isolated snapshot; temp dirs and loopback fixtures, no user configuration or live inference"
+  },
+  "material_fix": {
+    "metadata_ink": "Theme.textPrimary.opacity(0.72)",
+    "unsupported_semantics": "icon/label strike; help; accessibilityLabel",
+    "calculated_srgb_contrast": {
+      "light well": 6.16,
+      "light card": 6.72,
+      "dark well": 9.19,
+      "dark card": 7.61
+    },
+    "recaptured_count": 19,
+    "dev_build": "passed",
+    "release_build": "passed; bundle/widget/scheme/entitlements/signature checked, no install",
+    "gateway_regression": "passed; make test TEST=free-model-gateway, 71.33s",
+    "full_regression_note": "100 suites passed before the isolated contrast correction; rerunning relevant gateway suite and native lifecycle/performance probes on final source"
+  },
+  "final_review": {
+    "disposition": "ship",
+    "material_fix": "resolved",
+    "report": "docs/reviews/model-gateway-craft.md"
+  },
+  "documentation": "ordinary incumbent extension verified; only local provider brief clarified; global DESIGN and preexisting absent sidecar preserved"
+}

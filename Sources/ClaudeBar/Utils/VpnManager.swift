@@ -270,7 +270,7 @@ final class VpnManager: ObservableObject {
 
     /// Groups that actually take MATCH / default traffic. Airport profiles
     /// (mitce) use `主代理`; clash-verge's template uses GLOBAL.
-    static let primaryGroupNames = [
+    nonisolated static let primaryGroupNames = [
         "主代理", "GLOBAL", "PROXY", "Proxy", "代理", "节点选择", "🚀 节点选择",
     ]
 
@@ -605,8 +605,9 @@ final class VpnManager: ObservableObject {
                 return
             }
             let t0 = Date()
-            let text = VpnConfigBuilder.build(profileText: profile, prefs: AppPreferences.shared)
+            let text: String
             do {
+                text = try VpnConfigBuilder.build(profileText: profile, prefs: AppPreferences.shared)
                 try text.write(to: configURL, atomically: true, encoding: .utf8)
             } catch {
                 await MainActor.run { [weak self] in

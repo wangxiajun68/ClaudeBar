@@ -22,6 +22,7 @@ struct VPNView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var portDraft = ""
     @State private var logsOpen = false
+    @State private var rulesOpen = false
     @State private var nodesOpen = false
     @FocusState private var portFocused: Bool
 
@@ -32,6 +33,12 @@ struct VPNView: View {
                     HStack {
                         PageTitle(title: "VPN")
                         Spacer()
+                        Button { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { rulesOpen = true } } label: {
+                            Label("域名规则", systemImage: "arrow.triangle.branch")
+                                .font(Theme.Font.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(Theme.textSecondary)
                         Button { logsOpen.toggle() } label: {
                             AppGlyph(name: "text.alignleft", size: 16)
                         }
@@ -92,9 +99,19 @@ struct VPNView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(!nodesOpen)
-                .accessibilityHidden(nodesOpen)
+                .allowsHitTesting(!nodesOpen && !rulesOpen)
+                .accessibilityHidden(nodesOpen || rulesOpen)
 
+                if rulesOpen {
+                    Button { closeRules() } label: { Color.black.opacity(0.14) }
+                        .buttonStyle(.plain).accessibilityLabel("关闭域名规则面板")
+                    VpnDomainRulesView(onClose: closeRules)
+                        .frame(width: min(760, max(560, geometry.size.width - 32)))
+                        .frame(maxHeight: .infinity)
+                        .vpnSurface()
+                        .padding(12)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
                 if nodesOpen {
                     Button { closeNodes() } label: { Color.black.opacity(0.14) }
                         .buttonStyle(.plain)
@@ -523,6 +540,10 @@ struct VPNView: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func closeRules() {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { rulesOpen = false }
     }
 
     private func closeNodes() {

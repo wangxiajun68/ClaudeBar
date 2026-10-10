@@ -22,6 +22,26 @@ final class FreeModelGatewayStore: ObservableObject {
     private var stopped = false
     private var loadedSuccessfully = false
 
+    var canEdit: Bool { !loading && !saving && loadedSuccessfully && !stopped }
+
+    @discardableResult
+    func importModels(_ members: [FreeModelPool.Member], confirmedFree: Bool, completion: ((Bool) -> Void)? = nil) -> Bool {
+        guard canEdit else {
+            error = "网关配置暂不可编辑，请等待加载／保存完成。"
+            completion?(false)
+            return false
+        }
+        do {
+            let next = try GatewayProviderImport.merge(members, into: pool, providers: connections, confirmedFree: confirmedFree)
+            change(completion: completion) { $0 = next }
+            return saving
+        } catch {
+            self.error = error.localizedDescription
+            completion?(false)
+            return false
+        }
+    }
+
     func start(providers: CodexProviderStore, claude: ProviderStore) {
         guard startup == nil else { return }
         self.providers = providers
@@ -51,6 +71,7 @@ final class FreeModelGatewayStore: ObservableObject {
 
     func stop() {
         stopped = true
+        Task { await FreeModelGateway.shared.shutdown() }
         startup?.cancel(); discovery?.cancel(); schedule?.cancel()
         providerObserver?.cancel()
         claudeObserver?.cancel()
@@ -58,26 +79,29 @@ final class FreeModelGatewayStore: ObservableObject {
         schedule = nil; discovery = nil
     }
 
-    func change(_ edit: (inout FreeModelPool) -> Void) {
-        guard !loading, !saving, loadedSuccessfully, !stopped else { return }
+    func change(completion: ((Bool) -> Void)? = nil, _ edit: (inout FreeModelPool) -> Void) {
+        guard !loading, !saving, loadedSuccessfully, !stopped else { completion?(false); return }
         var next = pool
         edit(&next)
         guard let message = next.validationError else {
             saving = true
             Task { [weak self] in
-                guard let self else { return }
+                guard let self else { completion?(false); return }
+                var succeeded = false
+                defer { saving = false; completion?(succeeded) }
                 do {
                     try await storage.save(next)
-                    guard !stopped else { saving = false; return }
+                    guard !stopped else { return }
                     pool = next; error = nil
                     await syncRuntime()
                     reschedule()
+                    succeeded = !stopped
                 } catch { self.error = "保存网关配置失败，修改未生效。" }
-                saving = false
             }
             return
         }
         error = message
+        completion?(false)
     }
 
     private func syncRuntime() async {

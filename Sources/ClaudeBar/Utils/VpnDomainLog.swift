@@ -68,7 +68,7 @@ struct VpnDomainConnection: Identifiable, Equatable {
     var host: String { VpnDomainFeed.splitHostPort(endpoint).host }
 }
 
-/// Bytes observed on proxied connections since launch or the last clear.
+/// Bytes observed on one route since launch or the last clear.
 struct VpnDomainTraffic: Equatable {
     var upload: Int64 = 0
     var download: Int64 = 0
@@ -86,6 +86,8 @@ struct VpnDomainTrafficAccumulator {
     private var previous: [String: VpnDomainConnection] = [:]
     private(set) var totals = VpnDomainTraffic()
     private(set) var byHost: [String: VpnDomainTraffic] = [:]
+    private(set) var directTotals = VpnDomainTraffic()
+    private(set) var directByHost: [String: VpnDomainTraffic] = [:]
 
     mutating func sample(_ connections: [VpnDomainConnection]) {
         var next: [String: VpnDomainConnection] = [:]
@@ -97,13 +99,18 @@ struct VpnDomainTrafficAccumulator {
                 route: connection.route, rule: connection.rule, outbound: connection.outbound,
                 upload: max(connection.upload, old?.upload ?? 0),
                 download: max(connection.download, old?.download ?? 0))
-            guard connection.route == .proxied else { continue }
+            guard connection.route != .reject else { continue }
             let upload = max(0, connection.upload)
             let download = max(0, connection.download)
             let deltaUp = max(0, upload - max(0, old?.upload ?? 0))
             let deltaDown = max(0, download - max(0, old?.download ?? 0))
-            totals.add(upload: deltaUp, download: deltaDown)
-            byHost[connection.host, default: VpnDomainTraffic()].add(upload: deltaUp, download: deltaDown)
+            if connection.route == .proxied {
+                totals.add(upload: deltaUp, download: deltaDown)
+                byHost[connection.host, default: VpnDomainTraffic()].add(upload: deltaUp, download: deltaDown)
+            } else {
+                directTotals.add(upload: deltaUp, download: deltaDown)
+                directByHost[connection.host, default: VpnDomainTraffic()].add(upload: deltaUp, download: deltaDown)
+            }
         }
         previous = next
     }
@@ -111,11 +118,14 @@ struct VpnDomainTrafficAccumulator {
     mutating func retainHosts(_ hosts: Set<String>) {
         let liveHosts = Set(previous.values.map(\.host))
         byHost = byHost.filter { hosts.contains($0.key) || liveHosts.contains($0.key) }
+        directByHost = directByHost.filter { hosts.contains($0.key) || liveHosts.contains($0.key) }
     }
 
     mutating func clear() {
         totals = VpnDomainTraffic()
         byHost.removeAll(keepingCapacity: true)
+        directTotals = VpnDomainTraffic()
+        directByHost.removeAll(keepingCapacity: true)
         // Retain live baselines so clearing does not recount existing bytes.
     }
 }
@@ -134,6 +144,7 @@ struct VpnDomainLogStat: Identifiable, Equatable {
     var lastOutbound: String
     var lastRoute: VpnDomainRoute
     var traffic: VpnDomainTraffic?
+    var directTraffic: VpnDomainTraffic?
 }
 
 /// Off-main half of the domain log: line buffering + parsing.
@@ -498,6 +509,8 @@ final class VpnDomainLog: ObservableObject {
     @Published private(set) var connectionRevision = 0
     @Published private(set) var proxiedTraffic = VpnDomainTraffic()
     private(set) var trafficByHost: [String: VpnDomainTraffic] = [:]
+    @Published private(set) var directTraffic = VpnDomainTraffic()
+    private(set) var directTrafficByHost: [String: VpnDomainTraffic] = [:]
     private var trafficAccumulator = VpnDomainTrafficAccumulator()
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
@@ -599,6 +612,10 @@ final class VpnDomainLog: ObservableObject {
         if totals != proxiedTraffic { proxiedTraffic = totals }
         let byHost = trafficAccumulator.byHost
         if byHost != trafficByHost { trafficByHost = byHost }
+        let direct = trafficAccumulator.directTotals
+        if direct != directTraffic { directTraffic = direct }
+        let directByHost = trafficAccumulator.directByHost
+        if directByHost != directTrafficByHost { directTrafficByHost = directByHost }
         if connections != next {
             connections = next
             connectionRevision &+= 1
@@ -616,6 +633,8 @@ final class VpnDomainLog: ObservableObject {
         trafficAccumulator.clear()
         proxiedTraffic = trafficAccumulator.totals
         trafficByHost = trafficAccumulator.byHost
+        directTraffic = trafficAccumulator.directTotals
+        directTrafficByHost = trafficAccumulator.directByHost
         revision &+= 1
     }
 
@@ -708,6 +727,7 @@ final class VpnDomainLog: ObservableObject {
         entries = ring.snapshot()
         trafficAccumulator.retainHosts(Set(entries.map(\.host)))
         trafficByHost = trafficAccumulator.byHost
+        directTrafficByHost = trafficAccumulator.directByHost
         received += batch.count
         revision &+= 1
     }

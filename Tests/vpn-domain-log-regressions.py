@@ -64,6 +64,10 @@ apply = apply.replace('if totals != proxiedTraffic { proxiedTraffic = totals }',
                       'if totals != proxiedTraffic { published.append("totals"); proxiedTraffic = totals }')
 apply = apply.replace('if byHost != trafficByHost { trafficByHost = byHost }',
                       'if byHost != trafficByHost { published.append("byHost"); trafficByHost = byHost }')
+apply = apply.replace('if direct != directTraffic { directTraffic = direct }',
+                      'if direct != directTraffic { published.append("directTotals"); directTraffic = direct }')
+apply = apply.replace('if directByHost != directTrafficByHost { directTrafficByHost = directByHost }',
+                      'if directByHost != directTrafficByHost { published.append("directByHost"); directTrafficByHost = directByHost }')
 apply = apply.replace('connections = next',
                       '{ published.append("connections"); connections = next }()')
 assert 'published.append("totals")' in apply and 'published.append("byHost")' in apply, \
@@ -147,11 +151,14 @@ async_harness = r"""
         var revision = 0
         var connectionRevision = 0
         var proxiedTraffic = VpnDomainTraffic()
+        var directTraffic = VpnDomainTraffic()
         var trafficByHost: [String: VpnDomainTraffic] = [:]
+        var directTrafficByHost: [String: VpnDomainTraffic] = [:]
     }
     let log = Store()
     var isVisible = true
     var proxiedTraffic = VpnDomainTraffic()
+    var directTraffic = VpnDomainTraffic()
     var historyRevision = 0
     var connectionRevision = 0
     var mode: Mode = .detail
@@ -206,7 +213,9 @@ enum DomainStat { STAT_FUNC }
     var connections: [VpnDomainConnection] = []
     var connectionRevision = 0
     var proxiedTraffic = VpnDomainTraffic()
+    var directTraffic = VpnDomainTraffic()
     var trafficByHost: [String: VpnDomainTraffic] = [:]
+    var directTrafficByHost: [String: VpnDomainTraffic] = [:]
     private var trafficAccumulator = VpnDomainTrafficAccumulator()
 
     APPLY
@@ -514,10 +523,15 @@ ASYNC_HARNESS
 
         var traffic = VpnDomainTrafficAccumulator()
         traffic.sample(connections)
+        precondition(traffic.directTotals.upload == 3 && traffic.directTotals.download == 4,
+                     "direct traffic has its own cumulative counters")
+        precondition(traffic.directByHost["example.com"]?.total == 7,
+                     "same-domain proxy and direct bytes remain separate")
         precondition(traffic.totals.upload == 1 && traffic.totals.download == 2,
                      "direct connections must not count as VPN traffic")
         traffic.sample(connections + connections)
         precondition(traffic.totals.total == 3, "repeated IDs and snapshots must not double count")
+        precondition(traffic.directTotals.total == 7, "duplicate direct samples do not double count")
         let increased = VpnDomainConnection(id: "1", endpoint: "example.com:443", process: "Browser",
             route: .proxied, rule: "Match", outbound: "Node A", upload: 10, download: 20)
         traffic.sample([increased])
@@ -541,6 +555,23 @@ ASYNC_HARNESS
         precondition(traffic.totals.total == 30, "closed sampled connections retain their traffic")
         traffic.retainHosts([])
         precondition(traffic.byHost.isEmpty && traffic.totals.total == 30)
+        precondition(traffic.directByHost.isEmpty && traffic.directTotals.total == 0)
+        var directOnly = VpnDomainTrafficAccumulator()
+        directOnly.sample([connections[1]])
+        directOnly.clear()
+        directOnly.sample([connections[1]])
+        precondition(directOnly.directTotals.total == 0, "clear retains direct baselines")
+        let directIncreased = VpnDomainConnection(id: "2", endpoint: "example.com:80", process: "Terminal",
+             route: .direct, rule: "Domain", outbound: "DIRECT", upload: 53, download: 54)
+        directOnly.sample([directIncreased])
+        directOnly.sample([connections[1]])
+        directOnly.sample([directIncreased])
+        precondition(directOnly.directTotals.total == 100 && directOnly.totals.total == 0,
+                     "direct regressions do not recount or leak into proxy totals")
+        directOnly.sample([])
+        precondition(directOnly.directTotals.total == 100, "closed direct traffic retained")
+        directOnly.retainHosts([])
+        precondition(directOnly.directByHost.isEmpty, "direct host retention follows log/live ownership")
         var extreme = VpnDomainTraffic(upload: .max, download: .max)
         extreme.add(upload: 1, download: 1)
         precondition(extreme.total == .max, "totals saturate without overflowing")
@@ -585,7 +616,7 @@ ASYNC_HARNESS
         // snapshots must not republish the two accumulator readings.
         let fixture = ConnectionsFixture()
         fixture.applyConnections(prepared)
-        precondition(fixture.published == ["totals", "byHost", "connections"], "first sample publishes all: \(fixture.published)")
+        precondition(fixture.published == ["totals", "byHost", "directByHost", "connections"], "first sample publishes all: \(fixture.published)")
         precondition(fixture.connectionRevision == 1)
         precondition(fixture.proxiedTraffic.total == 3 && fixture.trafficByHost["api2.cursor.sh"]?.total == 3)
         fixture.applyConnections(prepared)
@@ -615,6 +646,16 @@ ASYNC_HARNESS
                      "closing connections must not republish unchanged totals: \(fixture.published)")
         precondition(fixture.connectionRevision == 4)
         precondition(fixture.proxiedTraffic.total == 37, "closed connections retain their traffic")
+
+        let directFixture = ConnectionsFixture()
+        directFixture.applyConnections([connections[1]])
+        precondition(directFixture.directTraffic.total == 7 && directFixture.proxiedTraffic.total == 0)
+        precondition(directFixture.directTrafficByHost["example.com"]?.total == 7)
+        precondition(directFixture.published == ["directTotals", "directByHost", "connections"])
+        directFixture.applyConnections([connections[1]])
+        precondition(directFixture.published.isEmpty, "unchanged direct sample must not republish")
+        directFixture.applyConnections([])
+        precondition(directFixture.directTraffic.total == 7 && directFixture.published == ["connections"])
 
         // Capacity, order, eviction, wraparound, and reuse after clear.
         var ring = VpnDomainRing(capacity: 2_000)
@@ -686,9 +727,12 @@ ASYNC_HARNESS
         cache.mode = .summary
         cache.log.entries = entries
         cache.log.trafficByHost = ["api2.cursor.sh": VpnDomainTraffic(upload: 100, download: 200)]
+        cache.log.directTrafficByHost = ["www.apple.com": VpnDomainTraffic(upload: 50, download: 70)]
         await cache.recompute()
         precondition(cache.visibleStats.first?.traffic?.total == 300,
                      "summary attaches only sampled VPN traffic to the matching host")
+        precondition(cache.visibleStats.last?.directTraffic?.total == 120,
+                     "summary attaches direct bytes independently")
         precondition(cache.visibleStats.last?.traffic == nil,
                      "unsampled hosts must not invent a zero reading")
         let beforeTraffic = cache.requestKey

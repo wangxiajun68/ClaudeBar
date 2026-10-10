@@ -114,7 +114,7 @@ struct ProviderActionStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         ActionPlateButtonStyle(tone: prominent ? .accent : .neutral, tint: tint,
-                               ink: nil, metrics: .regular,
+                               ink: prominent && Theme.isDark ? Theme.fieldWell : nil, metrics: .regular,
                                emphasis: prominent ? .primary : .standard)
             .makeBody(configuration: configuration)
     }

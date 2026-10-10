@@ -39,6 +39,7 @@ struct AppPreferences {
     func log(_ text: String) {}
 }
 enum VpnProviderDirect { static func hosts() -> [String] { [] } }
+enum VpnDomainRules { static func load() -> [String] { [] }; static func providerBypass(_ hosts: [String], rules: [String]) -> [String] { hosts } }
 extension Process {
     struct RunResult { let status: Int32; let output: String }
     nonisolated(unsafe) static var calls = 0

@@ -538,6 +538,7 @@ struct VpnProfilePreview: Equatable {
         var id: String { name }
         var name: String
         var nodes: [String]
+        var type = ""
     }
 
     var groups: [Group] = []
@@ -594,7 +595,10 @@ struct VpnProfilePreview: Equatable {
                     closeGroup()
                     current = Group(name: Self.scalar(trimmed), nodes: [])
                 } else if current != nil {
-                    if trimmed == "proxies:" || trimmed.hasPrefix("proxies:") {
+                    if trimmed.hasPrefix("type:") {
+                        current?.type = Self.scalar(trimmed)
+                        listingMembers = false
+                    } else if trimmed == "proxies:" || trimmed.hasPrefix("proxies:") {
                         let rest = trimmed.dropFirst("proxies:".count)
                             .trimmingCharacters(in: .whitespaces)
                         if rest.hasPrefix("[") {
@@ -638,6 +642,24 @@ struct VpnProfilePreview: Equatable {
 
     private static func unquote(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("\""), s.hasSuffix("\"") {
+            if let data = s.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode(String.self, from: data) { return decoded }
+            // YAML additionally supports eight-digit Unicode escapes, commonly
+            // used for emoji group names. Generated rules need the decoded name.
+            let regex = try! NSRegularExpression(pattern: #"\\U([0-9a-fA-F]{8})"#)
+            for match in regex.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed() {
+                guard let digits = Range(match.range(at: 1), in: s),
+                      let value = UInt32(s[digits], radix: 16), let scalar = UnicodeScalar(value),
+                      let range = Range(match.range, in: s) else { continue }
+                s.replaceSubrange(range, with: String(scalar))
+            }
+            if let data = s.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode(String.self, from: data) { return decoded }
+        }
+        if s.hasPrefix("'"), s.hasSuffix("'"), s.count >= 2 {
+            return String(s.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
+        }
         if s.hasPrefix("\"") || s.hasPrefix("'") { s.removeFirst() }
         if s.hasSuffix("\"") || s.hasSuffix("'") { s.removeLast() }
         return s.trimmingCharacters(in: .whitespaces)
@@ -658,7 +680,7 @@ struct VpnProfilePreview: Equatable {
 /// sanitized (external-controller/ports forced to ours) and merged with the
 /// settings-derived base keys.
 enum VpnConfigBuilder {
-    static func build(profileText: String?, prefs: AppPreferences) -> String {
+    static func build(profileText: String?, prefs: AppPreferences) throws -> String {
         var yaml = ""
 
         if let text = profileText {
@@ -743,7 +765,17 @@ enum VpnConfigBuilder {
         // Before `tuneForStability`, which rewrites rule *bodies* (bootstrap
         // DNS, url-test intervals) and must see the profile's own rules — not
         // after, so a pin we add is never a needle it could have matched.
-        var out = header + "\n" + Self.tuneForStability(VpnProviderDirect.inject(into: yaml)) + footer
+        let domainRules = VpnDomainRules.load()
+        let preview = VpnProfilePreview.parse(yaml)
+        let groupNames = preview.groups.map(\.name)
+        // Follow the same primary group as the node picker. With no usable
+        // outbound, explicit proxy rules fail closed rather than leaking direct.
+        let proxyTarget = VpnManager.primaryGroupNames.first(where: { groupNames.contains($0) })
+            ?? preview.groups.first(where: { $0.type.lowercased() == "select" })?.name
+            ?? preview.proxyNames.first ?? "REJECT"
+        let automaticPins = VpnProviderDirect.inject(into: yaml)
+        let routed = try VpnDomainRules.inject(into: automaticPins, rules: domainRules, proxyTarget: proxyTarget)
+        var out = header + "\n" + Self.tuneForStability(routed) + footer
         if !prefs.vpnTunEnabled || !BuildChannel.allowsSystemIntegration {
             // Airports often set dns.listen: :53 which needs root and breaks
             // the resolver when the bind fails.

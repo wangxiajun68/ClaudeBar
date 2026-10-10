@@ -6,7 +6,7 @@ SF typography and semantic ink colors. This page uses stationary neutral surface
 
 ## Structure
 
-A page-header row (VPN title and core-log button) sits above a viewport-sized
+A page-header row (VPN title, domain rules and core-log button) sits above a viewport-sized
 workspace. At widths of 900pt and above, the leading column (340–380pt, 28% of
 the workspace) holds the runtime overview and the subscriptions, and traffic
 takes the remainder. Each column scrolls independently. Narrow windows
@@ -43,11 +43,22 @@ switching and testing are available only for the running subscription. Node
 switches show progress, suppress overlapping switches, and surface failures.
 Long names remain available in tooltips. Preview and live lists share geometry.
 
+## Domain rules
+
+The title-bar action opens a trailing panel, at most 760pt wide, with a dismissible
+scrim and Escape. A fixed title, composer and footer frame a scrolling rule list.
+The composer combines a domain field, shared route capsule and one add action;
+subdomain matching is explicit. Search and route filtering sit above columns for
+domain, match scope and route. Rows edit scope and route directly, with a separate
+delete button. Blue identifies proxy routing; green identifies direct routing.
+The footer reports save state and explicitly names restart-and-apply; automatic
+persistence is distinct from applying rules to the running VPN.
+
 ## Traffic
 
 Shared icon-bearing `SegmentedCapsule`: detail, retained-domain summary, live
 connections. Its sliding selected pill matches the app's other filters. Search and
-route filters, follow, copy and clear share one top toolbar; failure filtering is available for history. Detail
+route filters, follow, copy and clear share one top toolbar (two rows when narrow); failure filtering is available for history. Detail
 uses a fixed header and 30pt rows. Text is neutral; only route and failure signals
 carry color. Record text supports system text selection. The row is not a button: only its
 trailing detail control opens complete endpoint/rule/outbound information, so
@@ -59,12 +70,20 @@ history. Following is explicit and pauses on user scroll or older-page navigatio
 new matching record count and a return-to-latest action. Incoming logs do not
 change subscriptions, drawer geometry or the page's layout.
 
+Proxy and direct flow lanes stay visible in all three modes. Each reports its own
+sampled upload, download and total, plus the observed route path. These totals
+are session samples and do not follow filters; counts follow search and failure
+filtering. Domain summary separates proxy and direct bytes into fixed columns,
+with full upload/download values on separate lines. Historical records carry
+routes and exits, not invented per-connection byte counts. System-proxy bypass
+and traffic outside the kernel are explicitly outside this sampling scope.
+
 ## Performance
 
 2,000 retained connection records in a fixed-capacity FIFO, with at most 200
 rows handed to SwiftUI in each mode. Background parsing remains; history publishes
 at most once per second. The section subscribes to revisions for its active mode,
-so connection byte counters do not invalidate history or hidden workspaces. Ring wraparound
+so byte totals update the visible flow strip without rerunning history queries; hidden workspaces do not mirror updates. Ring wraparound
 replaces slots instead of shifting the head of an Array. Each publish produces an
 immutable bounded snapshot for readers. Historical and live-connection search/counting execute off-main;
 query task identity cancels stale publication and work on disappearance or
@@ -84,3 +103,8 @@ launching the app. The synthetic preview (`Tools/render-mainwindow-preview.py`)
 seeds 12 node names and no domain-log records, so it exercises layout, not
 volume; runtime node switching, real network startup, native text selection and
 hover remain outside preview coverage.
+
+`Tools/render-vpn-preview.py` additionally renders production rule, empty-list,
+detail and summary views through offscreen NSHostingView in both themes, with
+synthetic stores and private files under `.build/vpn-preview`. A 560pt traffic
+capture checks the narrow toolbar. It does not test real routing or system settings.

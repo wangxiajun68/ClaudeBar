@@ -17,6 +17,7 @@ actor FreeModelGateway {
     struct Plan: Sendable {
         var id: UUID
         var revision: UInt
+        var requestBytes = 0
         var candidates: [Candidate]
         var routing: GatewayTaskRouting
         var difficulty: GatewayTaskDifficulty { routing.difficulty }
@@ -70,10 +71,19 @@ actor FreeModelGateway {
         var updatedAt: Date
         var outputPulses = 0
     }
+    struct ProviderLoad: Equatable, Sendable {
+        var active = 0
+        /// Waiters assigned to this configuration; dispatch may use another compatible provider.
+        var queued = 0
+        var limit = 2
+    }
     struct Snapshot: Equatable, Sendable {
         var health: [String: Health] = [:]
         var active = 0
         var requests = 0
+        var queued = 0
+        var queuedBytes = 0
+        var providers: [UUID: ProviderLoad] = [:]
         var routes: [Route] = []
         var flights: [Flight] = []
     }
@@ -84,6 +94,29 @@ actor FreeModelGateway {
     private var providerCooldown: [UUID: Date] = [:]
     private var admitted: [Date] = []
     private var active = Set<UUID>()
+    private struct Reservation {
+        var providerID: UUID
+        var memberID: String
+    }
+    private struct Waiter {
+        enum Work {
+            case request(GatewayRequirements, CheckedContinuation<Plan, Error>)
+            case attempt([Candidate], Plan, CheckedContinuation<Candidate, Error>)
+        }
+        var id: UUID
+        var providerID: UUID
+        var requestBytes = 0
+        var work: Work
+        var timeout: Task<Void, Never>?
+        func fail(_ error: Error) {
+            switch work {
+            case .request(_, let c): c.resume(throwing: error)
+            case .attempt(_, _, let c): c.resume(throwing: error)
+            }
+        }
+    }
+    private var reservations: [UUID: Reservation] = [:]
+    private var waiters: [Waiter] = []
     private var attempts: [UUID: Int] = [:]
     private var requestCount = 0
     private var routes: [Route] = []
@@ -103,6 +136,8 @@ actor FreeModelGateway {
         self.pool = pool
         self.endpoints = next
         revision &+= 1
+        failWaiters(pool.enabled ? GatewayFailure.interrupted : GatewayFailure.disabled)
+        // In-flight transports still own their slots until report/finish.
         publish()
     }
 
@@ -112,9 +147,32 @@ actor FreeModelGateway {
         thirdParty && (["auto", "claudebar/auto"].contains(model.lowercased()) || (pool.enabled && pool.interceptAll))
     }
 
-    func begin(_ requirements: GatewayRequirements, now: Date = Date()) throws -> Plan {
+    func begin(_ requirements: GatewayRequirements, requestBytes: Int = 0, now: Date = Date()) async throws -> Plan {
+        try Task.checkCancellation()
+        guard (0...64 * 1024 * 1024).contains(requestBytes) else { throw GatewayFailure.invalidRequest }
+        drain(now: now)
+        let plan = try prepare(requirements, requestBytes: requestBytes, now: now)
+        try checkRate(now: now)
+        if let admitted = admit(plan, now: now) {
+            if Task.isCancelled { finish(admitted); throw CancellationError() }
+            publish()
+            return admitted
+        }
+        let queuedFor = try checkQueue(requestBytes: requestBytes, providers: plan.candidates.map { $0.endpoint.id })
+        let id = UUID()
+        let result: Plan = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+                enqueue(.init(id: id, providerID: queuedFor,
+                              requestBytes: requestBytes, work: .request(requirements, continuation)))
+            }
+        } onCancel: { Task { await self.cancelWaiter(id) } }
+        if Task.isCancelled { finish(result); throw CancellationError() }
+        return result
+    }
+
+    private func prepare(_ requirements: GatewayRequirements, requestBytes: Int, now: Date) throws -> Plan {
         guard pool.enabled else { throw GatewayFailure.disabled }
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("BEGIN \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
         var routing = requirements.routing
         let levels = routing.source == .explicit ? [routing.difficulty]
             : Array(GatewayTaskDifficulty.allCases.drop { $0 != routing.difficulty })
@@ -166,37 +224,116 @@ actor FreeModelGateway {
             }
         }
         guard !ready.isEmpty else { throw GatewayFailure.coolingDown }
-        guard active.count < pool.maxConcurrent else { throw GatewayFailure.busy }
-        admitted.removeAll { now.timeIntervalSince($0) >= 60 }
-        guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
-        let id = UUID()
-        admitted.append(now); active.insert(id); requestCount += 1
-        publish()
         let selection: String
         switch pool.strategy {
         case .priority: selection = "同档位 · 池内优先级"
         case .balanced: selection = "同档位 · 故障与使用频率"
         case .latency: selection = "同档位 · 观测响应延迟"
         }
-        return Plan(id: id, revision: revision, candidates: Array(ready.prefix(pool.maxAttempts).map(\.1)), routing: routing, selection: selection)
+        return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, candidates: ready.map(\.1), routing: routing, selection: selection)
     }
 
     /// A concurrent request may have put the next model/account into cooldown
     /// since the plan was frozen. Revalidate before spending another request.
     func canAttempt(_ candidate: Candidate, plan: Plan, now: Date = Date()) -> Bool {
-        guard active.contains(plan.id), plan.revision == revision, pool.enabled else { return false }
+        guard active.contains(plan.id), plan.revision == revision, pool.enabled,
+              (attempts[plan.id] ?? 0) < pool.maxAttempts else { return false }
         return (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
             && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
     }
 
-    func started(_ candidate: Candidate, plan: Plan, now: Date = Date()) throws {
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("BEGIN \(Date().timeIntervalSince1970) \(plan.id)\n".utf8));h.closeFile()}
-        guard active.contains(plan.id), plan.revision == revision else { throw GatewayFailure.interrupted }
-        admitted.removeAll { now.timeIntervalSince($0) >= 60 }
-        if (attempts[plan.id] ?? 0) > 0 {
-            guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
-            admitted.append(now)
+    /// Prefer a free compatible provider over waiting behind a saturated one.
+    /// Actual attempt admission remains atomic inside `started`.
+    func preferredAttempt(_ candidates: [Candidate], plan: Plan, now: Date = Date()) -> Candidate? {
+        let ready = candidates.filter { canAttempt($0, plan: plan, now: now) }
+        if let held = reservations[plan.id], !ready.contains(where: { $0.member.id == held.memberID }),
+           !flights.contains(where: { $0.requestID == plan.id && $0.phase.isActive }) {
+            // Another call can cool the account before this call starts.
+            // Drop its unused reservation before selecting a different account.
+            reservations[plan.id] = nil
+            drain(now: now); publish()
         }
+        return ready.first { reservations[plan.id]?.memberID == $0.member.id || hasCapacity($0.endpoint.id) }
+            ?? ready.first
+    }
+
+    func started(_ candidate: Candidate, plan: Plan, now: Date = Date(),
+                 waitTimeout: TimeInterval? = nil) async throws {
+        guard try await acquireAttempt([candidate], plan: plan, now: now, waitTimeout: waitTimeout) != nil else {
+            throw GatewayFailure.coolingDown
+        }
+    }
+
+    /// Reserve the next actual attempt, reconsidering all remaining compatible
+    /// providers when a slot opens rather than pinning a retry to a busy one.
+    func acquireAttempt(_ candidates: [Candidate], plan: Plan, now: Date = Date(),
+                        waitTimeout: TimeInterval? = nil) async throws -> Candidate? {
+        try Task.checkCancellation()
+        guard pool.enabled else { throw GatewayFailure.disabled }
+        guard active.contains(plan.id), plan.revision == revision else { throw GatewayFailure.interrupted }
+        if let waitTimeout, waitTimeout <= 0 { throw GatewayFailure.queueTimedOut }
+        drain(now: now)
+        guard let candidate = preferredAttempt(candidates, plan: plan, now: now) else { return nil }
+        if try startAttempt(candidate, plan: plan, now: now) {
+            if Task.isCancelled { finish(plan); throw CancellationError() }
+            publish(); return candidate
+        }
+        let ready = candidates.filter { canAttempt($0, plan: plan, now: now) }
+        let queuedFor = try checkQueue(requestBytes: plan.requestBytes, providers: ready.map { $0.endpoint.id })
+        let id = UUID()
+        let result: Candidate = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+                enqueue(.init(id: id, providerID: queuedFor, requestBytes: plan.requestBytes,
+                              work: .attempt(ready, plan, continuation)), timeout: waitTimeout)
+            }
+        } onCancel: { Task { await self.cancelWaiter(id) } }
+        if Task.isCancelled { finish(plan); throw CancellationError() }
+        return result
+    }
+
+    private func hasCapacity(_ providerID: UUID) -> Bool {
+        reservations.count < pool.maxConcurrent
+            && reservations.values.filter { $0.providerID == providerID }.count < pool.concurrentLimit(for: providerID)
+    }
+    private func checkRate(now: Date) throws {
+        admitted.removeAll { now.timeIntervalSince($0) >= 60 }
+        guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
+    }
+    private func checkQueue(requestBytes: Int, providers: [UUID]) throws -> UUID {
+        guard pool.maxQueued > 0 else { throw GatewayFailure.busy }
+        guard waiters.count < pool.maxQueued, requestBytes >= 0,
+              requestBytes <= 64 * 1024 * 1024 - waiters.reduce(0, { $0 + $1.requestBytes }) else {
+            throw GatewayFailure.queueFull
+        }
+        guard let provider = providers.first(where: { id in
+            waiters.filter { $0.providerID == id }.count < pool.providerQueueCapacity
+        }) else { throw GatewayFailure.queueFull }
+        return provider
+    }
+    private func admit(_ plan: Plan, now: Date) -> Plan? {
+        guard reservations.count < pool.maxConcurrent,
+              let index = plan.candidates.firstIndex(where: { hasCapacity($0.endpoint.id) }) else { return nil }
+        var result = plan
+        let selected = result.candidates.remove(at: index)
+        result.candidates.insert(selected, at: 0)
+        reservations[result.id] = .init(providerID: selected.endpoint.id, memberID: selected.member.id)
+        admitted.append(now); active.insert(result.id); requestCount += 1
+        return result
+    }
+    private func startAttempt(_ candidate: Candidate, plan: Plan, now: Date) throws -> Bool {
+        guard canAttempt(candidate, plan: plan, now: now),
+              plan.candidates.contains(where: { $0.member.id == candidate.member.id }),
+              !flights.contains(where: { $0.requestID == plan.id && $0.phase.isActive }) else {
+            throw plan.revision == revision && active.contains(plan.id) ? GatewayFailure.coolingDown : .interrupted
+        }
+        if let held = reservations[plan.id] {
+            guard held.memberID == candidate.member.id else { throw GatewayFailure.interrupted }
+        } else {
+            guard hasCapacity(candidate.endpoint.id) else { return false }
+        }
+        if (attempts[plan.id] ?? 0) > 0 { try checkRate(now: now); admitted.append(now) }
+        reservations[plan.id] = .init(providerID: candidate.endpoint.id, memberID: candidate.member.id)
         attempts[plan.id, default: 0] += 1
         var value = health[candidate.member.id] ?? Health()
         value.lastUsed = now
@@ -204,21 +341,81 @@ actor FreeModelGateway {
         flights.insert(.init(requestID: plan.id, memberID: candidate.member.id,
             routing: plan.routing, phase: .connecting, attempt: attempts[plan.id] ?? 1,
             startedAt: now, updatedAt: now), at: 0)
-        // Keep all admitted attempts and a short history for fast requests.
         let live = flights.filter { $0.phase.isActive }
         flights = live + Array(flights.filter { !$0.phase.isActive }.prefix(16))
+        return true
+    }
+    private func enqueue(_ waiter: Waiter, timeout: TimeInterval? = nil) {
+        var waiter = waiter
+        let seconds = min(Double(pool.queueTimeoutSeconds), max(0, timeout ?? Double(pool.queueTimeoutSeconds)))
+        let id = waiter.id
+        waiter.timeout = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            await self?.expireWaiter(id)
+        }
+        waiters.append(waiter)
+        publish()
+    }
+    private func cancelWaiter(_ id: UUID) {
+        guard let i = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: i)
+        waiter.timeout?.cancel(); waiter.fail(CancellationError())
+        drain(); publish()
+    }
+    private func expireWaiter(_ id: UUID) {
+        guard let i = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: i)
+        waiter.fail(GatewayFailure.queueTimedOut)
+        drain(); publish()
+    }
+    private func failWaiters(_ error: Error) {
+        let pending = waiters; waiters.removeAll()
+        for waiter in pending { waiter.timeout?.cancel(); waiter.fail(error) }
+    }
+    /// Oldest runnable request wins. A blocked provider never stops another
+    /// provider's independent work. No waiter owns a provider slot or RPM debit.
+    private func drain(now: Date = Date()) {
+        var i = 0
+        var changed = false
+        defer { if changed { publish() } }
+        while i < waiters.count {
+            let waiter = waiters[i]
+            do {
+                switch waiter.work {
+                case .request(let requirements, let continuation):
+                    let plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now)
+                    try checkRate(now: now)
+                    guard let admitted = admit(plan, now: now) else { i += 1; continue }
+                    changed = true
+                    waiters.remove(at: i); waiter.timeout?.cancel(); continuation.resume(returning: admitted)
+                case .attempt(let candidates, let plan, let continuation):
+                    let ready = candidates.filter { canAttempt($0, plan: plan, now: now) }
+                    guard let candidate = ready.first(where: { hasCapacity($0.endpoint.id) }) ?? ready.first else {
+                        throw plan.revision == revision ? GatewayFailure.coolingDown : .interrupted
+                    }
+                    guard try startAttempt(candidate, plan: plan, now: now) else { i += 1; continue }
+                    changed = true
+                    waiters.remove(at: i); waiter.timeout?.cancel(); continuation.resume(returning: candidate)
+                }
+            } catch {
+                changed = true
+                waiters.remove(at: i); waiter.timeout?.cancel(); waiter.fail(error)
+            }
+        }
+    }
+    func shutdown() {
+        pool.enabled = false; revision &+= 1
+        failWaiters(GatewayFailure.disabled)
         publish()
     }
 
     func receivedHeaders(_ candidate: Candidate, plan: Plan, now: Date = Date()) {
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("H \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()} else {FileManager.default.createFile(atPath:"/tmp/gwdbg.txt",contents:Data("H \(Date().timeIntervalSince1970)\n".utf8))}
         updateFlight(candidate, plan: plan, phase: .waiting, now: now)
     }
 
     /// Called at the first valid frame, then at most eight times per second by
     /// the wire loop. A paused upstream does not manufacture output pulses.
     func receivedOutput(_ candidate: Candidate, plan: Plan, now: Date = Date()) {
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("O \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
         updateFlight(candidate, plan: plan, phase: .streaming, now: now, output: true)
     }
 
@@ -240,8 +437,9 @@ actor FreeModelGateway {
         }
         // Configuration changes invalidate health writes, but must still end
         // the actual in-flight visualization; otherwise a line would glow forever.
-        defer { publish() }
-        guard plan.revision == revision else { return }
+        defer { drain(now: now); publish() }
+        if reservations[plan.id]?.memberID == candidate.member.id { reservations[plan.id] = nil }
+        guard plan.revision == revision, active.contains(plan.id) else { return }
         var value = health[candidate.member.id] ?? Health()
         value.lastStatus = status
         if (200..<300).contains(status) {
@@ -267,15 +465,19 @@ actor FreeModelGateway {
     }
 
     func finish(_ plan: Plan) {
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("FINISH \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
-        active.remove(plan.id); attempts[plan.id] = nil
+        active.remove(plan.id); attempts[plan.id] = nil; reservations[plan.id] = nil
+        let owned = waiters.filter {
+            if case .attempt(_, let owner, _) = $0.work { return owner.id == plan.id }
+            return false
+        }
+        waiters.removeAll { waiter in owned.contains(where: { $0.id == waiter.id }) }
+        for waiter in owned { waiter.timeout?.cancel(); waiter.fail(GatewayFailure.interrupted) }
         for i in flights.indices where flights[i].requestID == plan.id && flights[i].phase.isActive {
             flights[i].phase = .cancelled; flights[i].updatedAt = Date()
         }
-        publish()
+        drain(); publish()
     }
     func snapshot(now: Date = Date()) -> Snapshot {
-        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("SNAP \(Date().timeIntervalSince1970) \(flights.map{$0.phase.rawValue})\n".utf8));h.closeFile()}
         for key in health.keys where (health[key]?.cooldownUntil ?? .distantFuture) <= now { health[key]?.cooldownUntil = nil }
         var displayed = health
         for member in pool.members {
@@ -285,9 +487,16 @@ actor FreeModelGateway {
                 displayed[member.id] = value
             }
         }
-        return .init(health: displayed, active: active.count, requests: requestCount, routes: routes, flights: flights)
+        var loads: [UUID: ProviderLoad] = [:]
+        for id in Set(pool.members.map(\.providerID)).union(reservations.values.map(\.providerID)) {
+            loads[id] = .init(active: reservations.values.filter { $0.providerID == id }.count,
+                              queued: waiters.filter { $0.providerID == id }.count,
+                              limit: pool.concurrentLimit(for: id))
+        }
+        return .init(health: displayed, active: reservations.count, requests: requestCount, queued: waiters.count, queuedBytes: waiters.reduce(0, { $0 + $1.requestBytes }),
+                     providers: loads, routes: routes, flights: flights)
     }
-    func resetHealth() { health.removeAll(); providerCooldown.removeAll(); publish() }
+    func resetHealth() { health.removeAll(); providerCooldown.removeAll(); drain(); publish() }
 
     /// Backpressure is bounded: a slow/hidden UI can retain only the newest
     /// snapshot. Finished flights remain in it, so sub-second requests survive.

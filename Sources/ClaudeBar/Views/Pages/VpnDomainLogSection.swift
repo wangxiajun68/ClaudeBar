@@ -11,6 +11,7 @@ struct VpnDomainLogSection: View {
     @State private var historyRevision = 0
     @State private var connectionRevision = 0
     @State private var proxiedTraffic = VpnDomainTraffic()
+    @State private var directTraffic = VpnDomainTraffic()
     @State private var page = 0
     @State private var visibleConnections: [VpnDomainConnection] = []
     /// Mirrored, not observed wholesale: `VpnManager` also publishes
@@ -80,6 +81,18 @@ struct VpnDomainLogSection: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             toolbar
             HairlineDivider()
+            VpnRouteTrafficSummary(proxied: proxiedTraffic, direct: directTraffic,
+                                   proxiedCount: routeCounts[.proxied, default: 0],
+                                   directCount: routeCounts[.direct, default: 0])
+            HStack {
+                Text("采样累计 · 仅统计经内核的连接")
+                Spacer()
+                if routeCounts[.reject, default: 0] > 0 {
+                    Text("拒绝 \(routeCounts[.reject, default: 0]) 次").foregroundColor(Theme.Ink.error)
+                }
+            }
+            .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+            HairlineDivider()
             content
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -90,8 +103,8 @@ struct VpnDomainLogSection: View {
         .vpnSurface()
         .foregroundColor(Theme.textPrimary)
         .task(id: requestKey) { await recompute() }
-        // Summary also follows sampled bytes; detail ignores connection ticks,
-        // and hidden workspaces must not render either.
+        // All modes mirror route totals. Only summary/connection queries
+        // follow live row ticks; hidden workspaces mirror neither.
         .onReceive(log.$revision) { value in
             if isVisible && mode != .connections { historyRevision = value }
         }
@@ -99,7 +112,10 @@ struct VpnDomainLogSection: View {
             if isVisible && mode != .detail { connectionRevision = value }
         }
         .onReceive(log.$proxiedTraffic) { value in
-            if isVisible && mode == .summary { proxiedTraffic = value }
+            if isVisible { proxiedTraffic = value }
+        }
+        .onReceive(log.$directTraffic) { value in
+            if isVisible { directTraffic = value }
         }
         .onChange(of: isVisible) { _, visible in
             if visible { syncRevision() }
@@ -115,6 +131,7 @@ struct VpnDomainLogSection: View {
                 Text(entry.endpoint).font(Theme.Font.body).textSelection(.enabled)
                 LabeledContent("时间", value: entry.timeText)
                 LabeledContent("路由", value: entry.route.label)
+                LabeledContent("流向", value: entry.route == .proxied ? "本机 → 代理节点 → 目标" : entry.route == .direct ? "本机 → 目标" : "本机 → 拒绝")
                 LabeledContent("规则", value: entry.rule)
                 LabeledContent("出口", value: entry.outbound)
                 LabeledContent("结果", value: entry.failed ? "失败" : "已记录")
@@ -140,28 +157,39 @@ struct VpnDomainLogSection: View {
     // MARK: Toolbar
 
     private var toolbar: some View {
-        GeometryReader { geometry in
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    AppGlyph(name: "globe.asia.australia", size: 16)
-                        .foregroundColor(Theme.Ink.claude)
-                    if geometry.size.width >= 1000 {
-                        Text("流量日志").font(Theme.Font.body).fixedSize()
-                    }
-                }
-                .accessibilityLabel("流量日志")
-                .help(mode == .connections
-                      ? "当前活动连接的累计流量；短连接可能在采样间隔内结束。"
-                      : "保留 \(log.entries.count.formatted()) / \(VpnDomainLog.limit.formatted()) 条；每条记录是一条新建连接。")
-                modePicker(compact: geometry.size.width < 720)
+                toolbarMark
+                modePicker(compact: false)
                 InstrumentSearchField(prompt: "搜索域名、出口、规则", text: $query)
-                    .frame(minWidth: 100, maxWidth: .infinity)
+                    .frame(minWidth: 160, maxWidth: .infinity)
                 routePicker
                 logActions
             }
             .frame(height: 36)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    toolbarMark
+                    modePicker(compact: true)
+                    Spacer(minLength: 0)
+                    logActions
+                }
+                HStack(spacing: 8) {
+                    InstrumentSearchField(prompt: "搜索域名、出口、规则", text: $query)
+                        .frame(minWidth: 100, maxWidth: .infinity)
+                    routePicker
+                }
+            }
         }
-        .frame(height: 36)
+    }
+
+    private var toolbarMark: some View {
+        AppGlyph(name: "globe.asia.australia", size: 16)
+            .foregroundColor(Theme.Ink.claude)
+            .accessibilityLabel("流量日志")
+            .help(mode == .connections
+                  ? "当前活动连接的累计流量；短连接可能在采样间隔内结束。"
+                  : "保留 \(log.entries.count.formatted()) / \(VpnDomainLog.limit.formatted()) 条；每条记录是一条新建连接。")
     }
 
     private func modePicker(compact: Bool) -> some View {
@@ -400,7 +428,7 @@ struct VpnDomainLogSection: View {
             Text("时间").frame(width: 64, alignment: .leading)
             Text("域名").frame(maxWidth: .infinity, alignment: .leading)
             Text("路由").frame(width: 52, alignment: .leading)
-            Text("出口").frame(width: 160, alignment: .leading)
+            Text("流向 / 出口").frame(width: 160, alignment: .leading)
             Text("结果").frame(width: 42, alignment: .trailing)
         }
         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -418,7 +446,7 @@ struct VpnDomainLogSection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(row.route.label).foregroundColor(routeInk(row.route))
                 .frame(width: 52, alignment: .leading)
-            Text(row.outbound).foregroundColor(Theme.textSecondary)
+            Text("→ " + row.outbound).foregroundColor(Theme.textSecondary)
                 .lineLimit(1).truncationMode(.middle)
                 .frame(width: 160, alignment: .leading)
             Button { selectedEntry = row } label: {
@@ -467,21 +495,11 @@ struct VpnDomainLogSection: View {
                 tally("筛选结果", "\(visibleRows.count) 次")
                 tally("域名", "\(visibleStats.count)")
                 tally("已代理", "\(tallyProxied)", tint: Theme.Ink.claude)
-                tally("直连", "\(tallyDirect)", tint: Theme.Ink.warning)
+                tally("直连", "\(tallyDirect)", tint: Theme.Ink.success)
                 tally("拒绝", "\(tallyReject)", tint: Theme.Ink.error)
                 Spacer(minLength: 0)
             }
             .font(Theme.Font.caption)
-
-            HStack(spacing: Theme.Space.s16) {
-                tally("VPN 上传", VpnFormat.bytes(proxiedTraffic.upload), tint: Theme.Ink.claude)
-                tally("下载", VpnFormat.bytes(proxiedTraffic.download), tint: Theme.Ink.success)
-                tally("合计", VpnFormat.bytes(proxiedTraffic.total))
-                Text("采样累计").foregroundColor(Theme.textSecondary)
-                Spacer(minLength: 0)
-            }
-            .font(Theme.Font.caption)
-            .help("自应用启动或清空以来，仅累计已代理连接；不随筛选变化。短连接及最后一次采样后产生的流量可能漏计。域名流量保留至该域名的日志与活动连接均被移除。")
 
             if !visibleLeaks.isEmpty {
                 directLeakLine(visibleLeaks)
@@ -518,9 +536,8 @@ struct VpnDomainLogSection: View {
             Text("域名").frame(maxWidth: .infinity, alignment: .leading)
             Text("次数").frame(width: 44, alignment: .trailing)
             Text("路由").frame(width: 76, alignment: .leading)
-            Text("上传").frame(width: 82, alignment: .trailing)
-            Text("下载").frame(width: 82, alignment: .trailing)
-            Text("合计").frame(width: 82, alignment: .trailing)
+            Text("代理流量 · ↑ / ↓").frame(width: 148, alignment: .trailing)
+            Text("直连流量 · ↑ / ↓").frame(width: 148, alignment: .trailing)
             Text("最近").frame(width: 72, alignment: .trailing)
             Text("出口").frame(width: 180, alignment: .leading)
             Text("失败").frame(width: 44, alignment: .trailing)
@@ -548,9 +565,8 @@ struct VpnDomainLogSection: View {
                 .frame(width: 44, alignment: .trailing)
             routeChip(stat)
                 .frame(width: 76, alignment: .leading)
-            trafficCell(stat.traffic?.upload)
-            trafficCell(stat.traffic?.download)
-            trafficCell(stat.traffic?.total)
+            trafficCell(stat.traffic, route: .proxied)
+            trafficCell(stat.directTraffic, route: .direct)
             Text(stat.lastTimeText.isEmpty ? "—" : stat.lastTimeText)
                 .font(Theme.Font.console)
                 .foregroundColor(Theme.textSecondary)
@@ -586,13 +602,21 @@ struct VpnDomainLogSection: View {
         }
     }
 
-    private func trafficCell(_ bytes: Int64?) -> some View {
-        Text(bytes.map(VpnFormat.bytes) ?? "—")
-            .font(Theme.Font.captionMono)
-            .foregroundColor(Theme.textPrimary)
-            .monospacedDigit()
-            .frame(width: 82, alignment: .trailing)
-            .help("该域名走 VPN 的采样累计流量，不含直连；不随路由或失败筛选变化。")
+    private func trafficCell(_ traffic: VpnDomainTraffic?, route: VpnDomainRoute) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            Text(traffic.map { VpnFormat.bytes($0.total) } ?? "—")
+                .font(Theme.Font.captionMono.weight(.medium))
+                .foregroundColor(traffic == nil ? Theme.textTertiary() : routeInk(route))
+            if let traffic {
+                Text("↑ \(VpnFormat.bytes(traffic.upload))")
+                    .font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
+                Text("↓ \(VpnFormat.bytes(traffic.download))")
+                    .font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
+            }
+        }
+        .monospacedDigit()
+        .frame(width: 148, alignment: .trailing)
+        .help("该域名的" + (route == .proxied ? "代理" : "直连") + "采样累计，不随筛选变化；— 表示尚未采样到该流向。")
     }
 
     /// One micro-bar of the host's route split. A host commonly appears under
@@ -628,7 +652,7 @@ struct VpnDomainLogSection: View {
     private func routeInk(_ route: VpnDomainRoute) -> Color {
         switch route {
         case .proxied: return Theme.Ink.claude
-        case .direct: return Theme.Ink.warning
+        case .direct: return Theme.Ink.success
         case .reject: return Theme.Ink.error
         }
     }
@@ -669,6 +693,7 @@ struct VpnDomainLogSection: View {
         historyRevision = log.revision
         connectionRevision = log.connectionRevision
         proxiedTraffic = log.proxiedTraffic
+        directTraffic = log.directTraffic
     }
 
     private func resetFollow() {
@@ -705,6 +730,7 @@ struct VpnDomainLogSection: View {
         }
         let entries = log.entries
         let trafficByHost = log.trafficByHost
+        let directTrafficByHost = log.directTrafficByHost
         let worker = Task.detached(priority: .userInitiated) {
             VpnDomainQuery.run(entries: entries, query: key.query,
                                route: key.route.route, failedOnly: key.failedOnly,
@@ -732,6 +758,7 @@ struct VpnDomainLogSection: View {
         visibleStats = result.stats.map { stat in
             var stat = stat
             stat.traffic = trafficByHost[stat.host]
+            stat.directTraffic = directTrafficByHost[stat.host]
             return stat
         }
         visibleLeaks = result.leaks
@@ -754,7 +781,7 @@ struct VpnDomainLogSection: View {
             }.joined(separator: "\n")
         case .summary:
             text = visibleStats.map {
-                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)\t↑ \($0.traffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.traffic.map { VpnFormat.bytes($0.download) } ?? "—")\t合计 \($0.traffic.map { VpnFormat.bytes($0.total) } ?? "—")"
+                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)\t代理 ↑ \($0.traffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.traffic.map { VpnFormat.bytes($0.download) } ?? "—")\t代理合计 \($0.traffic.map { VpnFormat.bytes($0.total) } ?? "—")\t直连 ↑ \($0.directTraffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.directTraffic.map { VpnFormat.bytes($0.download) } ?? "—")\t直连合计 \($0.directTraffic.map { VpnFormat.bytes($0.total) } ?? "—")"
             }.joined(separator: "\n")
         }
         guard !text.isEmpty else { return }

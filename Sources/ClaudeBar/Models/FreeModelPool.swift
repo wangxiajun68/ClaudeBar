@@ -19,6 +19,11 @@ struct FreeModelPool: Codable, Equatable, Sendable {
     var strategy = Strategy.balanced
     var maxAttempts = 3
     var maxConcurrent = 4
+    var defaultProviderConcurrent = 2
+    var providerConcurrent: [String: Int] = [:]
+    var maxQueued = 32
+    var providerQueueCapacity = 8
+    var queueTimeoutSeconds = 30
     var requestsPerMinute = 20
     var openRouterProviderID: UUID?
     var members: [Member] = []
@@ -66,7 +71,11 @@ struct FreeModelPool: Codable, Equatable, Sendable {
     var validationError: String? {
         guard version == 1 else { return "网关配置版本不受支持，原文件已保留。" }
         guard [1, 6, 24].contains(refreshHours), (1...5).contains(maxAttempts),
-              (1...8).contains(maxConcurrent), (1...60).contains(requestsPerMinute),
+              (1...8).contains(maxConcurrent), (1...8).contains(defaultProviderConcurrent),
+              providerConcurrent.count <= 200,
+              providerConcurrent.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...8).contains($0.value) }),
+              (0...128).contains(maxQueued), (1...128).contains(providerQueueCapacity), (1...120).contains(queueTimeoutSeconds),
+              (1...60).contains(requestsPerMinute),
               members.count <= 200, catalog.count <= 1000,
               Set(members.map(\.id)).count == members.count else { return "网关配置超出允许范围。" }
         guard members.allSatisfy({ !$0.model.isEmpty && $0.model.utf8.count <= 200 && $0.contextLength > 0
@@ -74,6 +83,10 @@ struct FreeModelPool: Codable, Equatable, Sendable {
             return "模型 ID 或上下文长度无效。"
         }
         return nil
+    }
+
+    func concurrentLimit(for providerID: UUID) -> Int {
+        providerConcurrent[providerID.uuidString] ?? defaultProviderConcurrent
     }
 
     static func isOpenRouter(_ base: String) -> Bool {
@@ -121,7 +134,7 @@ struct FreeModelPool: Codable, Equatable, Sendable {
 }
 
 enum GatewayFailure: Error, LocalizedError, Equatable {
-    case disabled, emptyPool, noCompatibleModel, coolingDown, busy, rateLimited
+    case disabled, emptyPool, noCompatibleModel, coolingDown, busy, rateLimited, queueFull, queueTimedOut
     case invalidCatalog, discoveryFailed(Int), upstream(Int), interrupted, incomplete, invalidRequest, invalidDifficulty
     var errorDescription: String? {
         switch self {
@@ -130,6 +143,8 @@ enum GatewayFailure: Error, LocalizedError, Equatable {
         case .noCompatibleModel: return "模型池中没有符合任务难度、工具、图片或上下文要求的模型。"
         case .coolingDown: return "候选模型正在冷却，稍后重试或调整模型池。"
         case .busy: return "网关并发已满，请稍后重试。"
+        case .queueFull: return "网关等待队列已满，请稍后重试。"
+        case .queueTimedOut: return "网关排队等待超时，请稍后重试。"
         case .rateLimited: return "网关每分钟请求额度已用完，请稍后重试。"
         case .invalidCatalog: return "免费模型目录无效，已保留上次成功发现的结果。"
         case .discoveryFailed(let code): return "OpenRouter 模型发现失败（HTTP \(code)），请检查网络和凭据。"
@@ -140,9 +155,26 @@ enum GatewayFailure: Error, LocalizedError, Equatable {
         case .invalidDifficulty: return "task_difficulty 必须为 low、medium 或 high。"
         }
     }
+    var code: String {
+        switch self {
+        case .queueFull: return "gateway_queue_full"
+        case .queueTimedOut: return "gateway_queue_timeout"
+        case .busy: return "gateway_busy"
+        case .rateLimited: return "gateway_rate_limited"
+        default: return "gateway_error"
+        }
+    }
+    var retryAfter: Int? {
+        switch self {
+        case .busy, .queueFull, .queueTimedOut: return 1
+        case .rateLimited, .coolingDown: return 60
+        default: return nil
+        }
+    }
     var status: Int {
         switch self {
-        case .rateLimited, .busy: return 429
+        case .rateLimited, .busy, .queueFull: return 429
+        case .queueTimedOut: return 504
         case .invalidRequest, .invalidDifficulty, .noCompatibleModel: return 400
         case .disabled, .emptyPool, .coolingDown: return 503
         case .upstream(let code): return code
@@ -219,5 +251,36 @@ extension FreeModelPool.Member {
                   supportsJSON: try container.decode(Bool.self, forKey: .supportsJSON),
                   discovered: try container.decodeIfPresent(Bool.self, forKey: .discovered) ?? false,
                   difficulties: try container.decodeIfPresent([GatewayTaskDifficulty].self, forKey: .difficulties) ?? GatewayTaskDifficulty.allCases)
+    }
+}
+
+/// Existing version-one pools keep their settings and gain bounded admission defaults.
+extension FreeModelPool {
+    private enum CodingKeys: String, CodingKey {
+        case version, enabled, interceptAll, discoveryEnabled, automaticallyJoin, refreshHours, strategy
+        case maxAttempts, maxConcurrent, requestsPerMinute, openRouterProviderID, members, catalog, discoveredAt
+        case defaultProviderConcurrent, providerConcurrent, maxQueued, providerQueueCapacity, queueTimeoutSeconds
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        interceptAll = try c.decode(Bool.self, forKey: .interceptAll)
+        discoveryEnabled = try c.decode(Bool.self, forKey: .discoveryEnabled)
+        automaticallyJoin = try c.decode(Bool.self, forKey: .automaticallyJoin)
+        refreshHours = try c.decode(Int.self, forKey: .refreshHours)
+        strategy = try c.decode(Strategy.self, forKey: .strategy)
+        maxAttempts = try c.decode(Int.self, forKey: .maxAttempts)
+        maxConcurrent = try c.decode(Int.self, forKey: .maxConcurrent)
+        requestsPerMinute = try c.decode(Int.self, forKey: .requestsPerMinute)
+        openRouterProviderID = try c.decodeIfPresent(UUID.self, forKey: .openRouterProviderID)
+        members = try c.decode([Member].self, forKey: .members)
+        catalog = try c.decode([CatalogModel].self, forKey: .catalog)
+        discoveredAt = try c.decodeIfPresent(Date.self, forKey: .discoveredAt)
+        defaultProviderConcurrent = try c.decodeIfPresent(Int.self, forKey: .defaultProviderConcurrent) ?? 2
+        providerConcurrent = try c.decodeIfPresent([String: Int].self, forKey: .providerConcurrent) ?? [:]
+        maxQueued = try c.decodeIfPresent(Int.self, forKey: .maxQueued) ?? 32
+        providerQueueCapacity = try c.decodeIfPresent(Int.self, forKey: .providerQueueCapacity) ?? 8
+        queueTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .queueTimeoutSeconds) ?? 30
     }
 }

@@ -6,7 +6,7 @@ import AppKit
 /// STORY: add a free endpoint, assign tasks, watch real attempts, inspect a model.
 /// FIRST VIEWPORT: gateway controls above a bounded native route map; inspector
 /// and a searchable lazy inventory follow. Discovery/settings stay secondary.
-/// FORM: user-approved C topology; .impeccable/mocks/gateway/map.png.
+/// FORM: user-approved C topology overrides concept seed 3de6ff09; .impeccable/mocks/gateway/map.png.
 /// FINISH: unreviewed and undocumented is unfinished; this build ends with
 /// the finish review, the verdict, and DESIGN.md.
 struct FreeModelGatewayView: View {
@@ -33,10 +33,11 @@ struct FreeModelGatewayView: View {
     @State private var difficulties = GatewayTaskDifficulty.allCases
     @State private var confirmedFree = false
     @State private var editingMember: String?
+    @FocusState private var editorFocus: String?
 
     private var openRouter: [CodexProvider] { gateway.connections.filter { FreeModelPool.isOpenRouter($0.baseURL) } }
     private var selected: CodexProvider? { gateway.connections.first { $0.id == providerID } }
-    private var editable: Bool { !gateway.loading && !gateway.saving }
+    private var editable: Bool { gateway.canEdit }
     private var results: [FreeModelPool.CatalogModel] {
         gateway.pool.catalog.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.id.localizedCaseInsensitiveContains(query) }
     }
@@ -104,15 +105,6 @@ struct FreeModelGatewayView: View {
             modelID = selected?.activeModel?.name ?? selected?.models.first?.name ?? ""
             confirmedFree = false
         }
-        .onChange(of: gateway.saving) { wasSaving, saving in
-            if wasSaving, !saving, submitted {
-                submitted = false
-                if gateway.error == nil {
-                    selectedID = providerID.map { $0.uuidString + ":" + modelID.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    confirmedFree = false; showAdd = false; workspace = .pool; focusRequest += 1
-                }
-            }
-        }
         .onChange(of: showAdd) { _, shown in if !shown { submitted = false } }
         .sheet(isPresented: $showAdd) { modelEditor }
     }
@@ -127,10 +119,10 @@ struct FreeModelGatewayView: View {
     }
     private var gatewayIdentity: some View {
         HStack(spacing: 12) {
-            GlyphWell(name: "point.3.connected.trianglepath.dotted", tint: Theme.Ink.cursor, size: 28)
+            GlyphWell(name: "point.3.connected.trianglepath.dotted", tint: gateway.pool.enabled ? Theme.Ink.cursor : Theme.Ink.idle, size: 28)
             VStack(alignment: .leading, spacing: 5) {
                 Text("Auto 模型池").font(Theme.Font.brand).foregroundStyle(Theme.textPrimary)
-                Text(gateway.saving ? "正在保存…" : "\(gateway.pool.members.count) 个模型 · \(gateway.pool.strategy.title) · \(gateway.snapshot.active) 个处理中")
+                Text(gateway.saving ? "正在保存…" : "\(gateway.pool.members.count) 个模型 · \(gateway.pool.strategy.title) · \(gateway.snapshot.active) 处理中 · \(gateway.snapshot.queued) 排队")
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
             Toggle("启用 Auto", isOn: binding(\.enabled))
@@ -143,7 +135,7 @@ struct FreeModelGatewayView: View {
         HStack(spacing: 8) {
             ActionButton("设置", symbol: "gearshape") { showSettings.toggle() }
                 .popover(isPresented: $showSettings, arrowEdge: .bottom) {
-                    ScrollView { VStack(spacing: 16) { controls; discoveryControls }.padding(16) }
+                    ScrollView { VStack(spacing: 16) { controls; admissionControls; discoveryControls }.padding(16) }
                         .frame(width: 460, height: 610).background(Theme.bgPrimary)
                 }
             ActionButton("接入", symbol: "link") { showConnection.toggle() }
@@ -166,16 +158,24 @@ struct FreeModelGatewayView: View {
             GatewayTopologyView(members: mapMembers, flights: gateway.snapshot.flights, selectedID: selectedID,
                 selectedTier: selectedTier, enabled: gateway.pool.enabled,
                 onSelect: { selectedID = $0 }, onTier: { selectedTier = selectedTier == $0 ? nil : $0; workspace = .pool })
-            HStack(spacing: 7) {
-                AppGlyph(name: "info.circle", size: 12)
-                Text("蓝色流动：真实请求进行中；绿色／红色闪光：完成／失败。点选模型查看详情。")
-                    .fixedSize(horizontal: false, vertical: true)
-            }.font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 14) {
+                routeKey("真实请求", color: Theme.claude)
+                routeKey("完成", color: Theme.statusSuccess)
+                routeKey("失败", color: Theme.statusError)
+                Spacer(minLength: 0)
+                Text("点选模型查看详情").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+            }.help("蓝色流动来自真实请求；绿色／红色闪光表示完成／失败。")
             if let item = byID[selectedID ?? ""] {
                 HairlineDivider()
                 inspector(item)
             }
         }.padding(20).panelCard()
+    }
+    private func routeKey(_ title: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(title).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+        }.fixedSize()
     }
     private var mapHeading: some View {
         HStack(spacing: 8) {
@@ -188,10 +188,10 @@ struct FreeModelGatewayView: View {
         HStack(spacing: 8) {
             Text("\(mapPage + 1) / \(max(1, (gateway.pool.members.count + 4) / 5)) 页")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-            Button { mapPage -= 1 } label: { AppGlyph(name: "chevron.left", size: 12) }
-                .buttonStyle(.plain).disabled(mapPage == 0).accessibilityLabel("上一页模型")
-            Button { mapPage += 1 } label: { AppGlyph(name: "chevron.right", size: 12) }
-                .buttonStyle(.plain).disabled((mapPage + 1) * 5 >= gateway.pool.members.count).accessibilityLabel("下一页模型")
+            ActionIcon(symbol: "chevron.left", tint: Theme.textSecondary, size: 26) { mapPage -= 1 }
+                .disabled(mapPage == 0).accessibilityLabel("上一页模型")
+            ActionIcon(symbol: "chevron.right", tint: Theme.textSecondary, size: 26) { mapPage += 1 }
+                .disabled((mapPage + 1) * 5 >= gateway.pool.members.count).accessibilityLabel("下一页模型")
         }.foregroundStyle(Theme.textSecondary)
     }
     private func inspector(_ item: GatewayMapMember) -> some View {
@@ -199,9 +199,9 @@ struct FreeModelGatewayView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(item.member.name).font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2).help(item.member.name)
                     Text(item.member.model).font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled).lineLimit(2).truncationMode(.middle).help(item.member.model)
                 }
                 Spacer(minLength: 8)
                 memberMenu(item.member)
@@ -247,18 +247,7 @@ struct FreeModelGatewayView: View {
         }.disabled(!editable)
     }
     private func tierChip(_ tier: GatewayTaskDifficulty, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                AppGlyph(name: selected ? "checkmark" : "plus", size: 10)
-                Text("\(tier.displayName) \(tier.rawValue)").font(Theme.Font.pill)
-            }
-            .padding(.horizontal, 9).frame(height: 30)
-            .foregroundStyle(selected ? Theme.Ink.cursor : Theme.textSecondary)
-            .background(selected ? Theme.cursor.opacity(Theme.isDark ? 0.17 : 0.09) : Theme.fieldWell,
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-            .overlay { RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(selected ? Theme.cursor.opacity(0.4) : Theme.hairline) }
-        }.buttonStyle(.plain).fixedSize()
-            .accessibilityLabel("承接\(tier.displayName)任务").accessibilityValue(selected ? "已选择" : "未选择")
+        GatewayTierChip(tier: tier, selected: selected, action: action)
     }
 
     private var workspaceBar: some View {
@@ -272,10 +261,13 @@ struct FreeModelGatewayView: View {
             title: { $0.rawValue }, tint: Theme.Ink.cursor) { workspace = $0; query = "" }
     }
     private var addButton: some View {
-        ActionButton("添加模型", symbol: "plus", tone: .accent, tint: Theme.Ink.cursor, emphasis: .primary) {
+        ActionButton(tone: .accent, tint: Theme.Ink.cursor, emphasis: .primary, perform: {
             editingMember = nil; submitted = false; confirmedFree = false; difficulties = GatewayTaskDifficulty.allCases
             if providerID == nil { providerID = gateway.connections.first?.id }
             showAdd = true
+        }) {
+            AppGlyph(name: "plus", size: 12).foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
+            Text("添加模型").foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
         }.disabled(!editable)
     }
     private func inventory(_ items: [GatewayMapMember]) -> some View {
@@ -286,7 +278,7 @@ struct FreeModelGatewayView: View {
         }
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                TextField("搜索模型或供应商", text: $query).textFieldStyle(InstrumentFieldStyle())
+                InstrumentSearchField(prompt: "搜索模型或供应商", text: $query)
                 if let tier = selectedTier {
                     Button { selectedTier = nil } label: { Label(tier.displayName, systemImage: "xmark.circle.fill") }
                         .buttonStyle(.plain).font(Theme.Font.caption).foregroundStyle(Theme.Ink.cursor).fixedSize()
@@ -342,32 +334,19 @@ struct FreeModelGatewayView: View {
                 Text("目录可匿名发现；加入模型前请选择已保存的 OpenRouter 凭据。")
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
-            TextField("搜索免费模型", text: $query).textFieldStyle(InstrumentFieldStyle())
+            InstrumentSearchField(prompt: "搜索免费模型", text: $query)
             if gateway.pool.catalog.isEmpty {
                 Text(gateway.discovering ? "正在读取免费目录…" : "点击「立即发现」读取最新免费模型。")
                     .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary).padding(.vertical, 20)
             } else if results.isEmpty {
                 Text("没有匹配的免费模型。").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).padding(.vertical, 20)
             }
-            LazyVStack(spacing: 0) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 380), spacing: 12, alignment: .top)], spacing: 12) {
                 ForEach(results) { model in
-                    let joined = gateway.pool.members.contains { $0.model == model.id && $0.providerID == gateway.pool.openRouterProviderID }
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(model.name).font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(model.id).font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary)
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                            HStack(spacing: 10) {
-                                Text("\(model.contextLength.formatted()) 上下文").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                                GatewayCapabilities(tools: model.supportsTools, images: model.supportsImages, json: model.supportsJSON)
-                            }
-                        }
-                        Spacer(minLength: 8)
-                        ActionButton(joined ? "已加入" : "加入") { gateway.add(model) }
-                            .disabled(joined || !editable || gateway.pool.openRouterProviderID == nil)
-                    }.padding(.vertical, 14)
-                    HairlineDivider()
+                    GatewayCatalogCard(model: model,
+                        joined: gateway.pool.members.contains { $0.model == model.id && $0.providerID == gateway.pool.openRouterProviderID },
+                        canJoin: editable && gateway.pool.openRouterProviderID != nil) { gateway.add(model) }
+                        .equatable()
                 }
             }
             Text("只接纳公布价格全为零的文本模型。收费变化、下架或目录过期后停止路由。定期发现与自动加入在「设置」调整。")
@@ -382,8 +361,11 @@ struct FreeModelGatewayView: View {
         }
     }
     private var discoverButton: some View {
-        ActionButton(gateway.discovering ? "发现中…" : "立即发现", symbol: "arrow.clockwise") { gateway.discover() }
-            .disabled(gateway.discovering || !editable)
+        ActionButton(perform: { gateway.discover() }) {
+            if gateway.discovering { ProgressView().controlSize(.mini) }
+            else { AppGlyph(name: "arrow.clockwise", size: 12).foregroundStyle(Theme.textSecondary) }
+            Text(gateway.discovering ? "发现中…" : "立即发现")
+        }.disabled(gateway.discovering || !editable)
     }
     private var discoveryControls: some View {
         SettingsGroup(title: "免费模型发现") {
@@ -437,21 +419,47 @@ struct FreeModelGatewayView: View {
         }.padding(18).panelCard()
     }
     private var activityHeading: some View {
-        Text("\(gateway.snapshot.requests) 个请求 · \(gateway.snapshot.active) 个处理中")
+        Text("\(gateway.snapshot.requests) 个请求 · \(gateway.snapshot.active) 处理中 · \(gateway.snapshot.queued) 排队")
             .font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
     }
     private var resetButton: some View { ActionButton("重置冷却") { gateway.resetHealth() } }
     private var modelEditor: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(editingMember == nil ? "添加免费模型" : "编辑模型能力").font(Theme.Font.brand)
+                GlyphWell(name: editingMember == nil ? "plus" : "slider.horizontal.3", tint: Theme.Ink.cursor, size: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(editingMember == nil ? "添加免费模型" : "编辑模型能力").font(Theme.Font.brand)
+                    Text("复用已保存连接 · 不切换客户端配置").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                }
                 Spacer()
-                Button("关闭") { showAdd = false }.buttonStyle(.plain)
-                    .help("关闭编辑器；尚未提交的字段不会保存")
+                Button("关闭") { showAdd = false }.buttonStyle(.plain).disabled(submitted)
+                    .keyboardShortcut(.cancelAction).help("关闭编辑器；尚未提交的字段不会保存")
             }.foregroundStyle(Theme.textPrimary).padding(20)
             HairlineDivider()
-            ScrollView { addFromProvider.padding(20) }
-        }.frame(width: 600, height: 620).background(Theme.bgPrimary)
+            ScrollView {
+                VStack(spacing: 12) {
+                    if let error = gateway.error { errorBanner(error) }
+                    addFromProvider
+                }.padding(20)
+            }
+            HairlineDivider()
+            VStack(alignment: .leading, spacing: 16) {
+                Toggle("确认该模型可免费使用", isOn: $confirmedFree)
+                    .toggleStyle(InstrumentToggleStyle()).disabled(!editable || submitted)
+                HStack(spacing: 12) {
+                    Text(submitted ? "正在保存…" : "保存后可在模型池调整档位")
+                        .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 8)
+                    ActionButton(tone: .accent, tint: Theme.Ink.cursor, emphasis: .primary, perform: addManual) {
+                        AppGlyph(name: "plus", size: 12).foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
+                        Text(gateway.pool.members.contains { $0.providerID == providerID && $0.model == modelID } ? "更新池内模型" : "加入 Auto 池")
+                            .foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
+                    }.disabled(!editable || submitted || providerID == nil || modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !confirmedFree || (Int(context) ?? 0) <= 0)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }.padding(20).background(Theme.cardSurface)
+        }.frame(width: 600, height: 680).background(Theme.bgPrimary)
+            .interactiveDismissDisabled(submitted)
     }
     private func errorBanner(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -471,7 +479,7 @@ struct FreeModelGatewayView: View {
             Button("下移优先级") { move(member, by: 1) }.disabled(gateway.pool.members.last?.id == member.id)
             Button("移出模型池", role: .destructive) { gateway.change { $0.members.removeAll { $0.id == member.id } } }
         } label: { AppGlyph(name: "ellipsis", size: 16).frame(width: 28, height: 28) }
-        .menuStyle(.borderlessButton).fixedSize().disabled(!editable)
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(!editable)
         .accessibilityLabel("\(member.name) 模型操作")
     }
     private func setEnabled(_ member: FreeModelPool.Member, enabled: Bool) {
@@ -504,15 +512,65 @@ struct FreeModelGatewayView: View {
             SettingsRow(title: "最多尝试", caption: "只在响应尚未开始时尝试备用模型。") {
                 Stepper("\(gateway.pool.maxAttempts) 个模型", value: binding(\.maxAttempts), in: 1...5)
             }
-            SettingsDivider()
-            SettingsRow(title: "并发上限") {
-                Stepper("\(gateway.pool.maxConcurrent) 个请求", value: binding(\.maxConcurrent), in: 1...8)
-            }
+
             SettingsDivider()
             SettingsRow(title: "每分钟上限", caption: "计入备用尝试，避免失败时连续消耗免费额度。") {
                 Stepper("\(gateway.pool.requestsPerMinute) 次", value: binding(\.requestsPerMinute), in: 1...60)
             }
         }.disabled(!editable)
+    }
+
+    private var admissionControls: some View {
+        VStack(spacing: 16) {
+            SettingsGroup(title: "并发与队列", symbol: "line.3.horizontal.decrease",
+                          caption: "同一供应商配置下的模型共享并发额度。队列按到达顺序安排可运行请求；繁忙供应商不会阻塞其他供应商。") {
+                SettingsRow(title: "全局并发", caption: "流式请求直到完成或断开才释放额度。") {
+                    Stepper("\(gateway.pool.maxConcurrent) 个", value: binding(\.maxConcurrent), in: 1...8)
+                }
+                SettingsDivider()
+                SettingsRow(title: "供应商默认并发", caption: "新加入的供应商沿用此值，可在下方单独覆盖。") {
+                    Stepper("\(gateway.pool.defaultProviderConcurrent) 个", value: binding(\.defaultProviderConcurrent), in: 1...8)
+                }
+                SettingsDivider()
+                SettingsRow(title: "等待队列容量", caption: "含备用等待；正文合计最多 64 MiB。0 表示不排队。") {
+                    Stepper("\(gateway.pool.maxQueued) 个", value: binding(\.maxQueued), in: 0...128)
+                }
+                SettingsDivider()
+                SettingsRow(title: "每供应商队列", caption: "防止单一供应商占满全局等待队列。") {
+                    Stepper("\(gateway.pool.providerQueueCapacity) 个", value: binding(\.providerQueueCapacity), in: 1...128)
+                }
+                SettingsDivider()
+                SettingsRow(title: "最长排队时间", caption: "队列满返回 429，等待超时返回 504；排队不消耗每分钟额度。") {
+                    Stepper("\(gateway.pool.queueTimeoutSeconds) 秒", value: binding(\.queueTimeoutSeconds), in: 1...120)
+                }
+            }
+            if !admissionProviders.isEmpty {
+                SettingsGroup(title: "供应商并发", caption: "按已保存的连接配置隔离。等待队列可转到其他兼容供应商；保存设置会中止旧配置下的等待。") {
+                    ForEach(Array(admissionProviders.enumerated()), id: \.element.id) { index, provider in
+                        if index > 0 { SettingsDivider() }
+                        let load = gateway.snapshot.providers[provider.id] ?? .init()
+                        SettingsRow(title: provider.name,
+                                    caption: "\(load.active) 处理中 · \(load.queued) 排队 · \(gateway.pool.providerConcurrent[provider.id.uuidString] == nil ? "默认" : "单独设置")") {
+                            Stepper("\(gateway.pool.concurrentLimit(for: provider.id)) 个", value: Binding(
+                                get: { gateway.pool.concurrentLimit(for: provider.id) },
+                                set: { limit in gateway.change { $0.providerConcurrent[provider.id.uuidString] = limit } }), in: 1...8)
+                            if gateway.pool.providerConcurrent[provider.id.uuidString] != nil {
+                                ActionIcon(symbol: "arrow.counterclockwise", tint: Theme.textSecondary, size: 24) {
+                                    gateway.change { $0.providerConcurrent[provider.id.uuidString] = nil }
+                                }.help("恢复默认并发").accessibilityLabel("\(provider.name) 恢复默认并发")
+                            } else {
+                                Color.clear.frame(width: 24, height: 24).accessibilityHidden(true)
+                            }
+                        }
+                    }
+                }
+            }
+        }.disabled(!editable)
+    }
+    private var admissionProviders: [CodexProvider] {
+        let ids = Set(gateway.pool.members.map(\.providerID))
+        return gateway.connections.filter { ids.contains($0.id) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private var connection: some View {
@@ -555,7 +613,8 @@ struct FreeModelGatewayView: View {
             SettingsDivider()
             SettingsRow(title: "模型 ID") {
                 HStack {
-                    TextField("完整模型 ID", text: $modelID).textFieldStyle(InstrumentFieldStyle()).frame(width: 230)
+                    TextField("完整模型 ID", text: $modelID).focused($editorFocus, equals: "model")
+                        .textFieldStyle(InstrumentFieldStyle(focused: editorFocus == "model")).frame(width: 230)
                     Menu("已有模型") {
                         ForEach(selected?.models ?? []) { model in Button(model.name) { modelID = model.name } }
                     }.disabled(selected == nil)
@@ -563,15 +622,16 @@ struct FreeModelGatewayView: View {
             }
             SettingsDivider()
             SettingsRow(title: "上下文长度") {
-                TextField("32768", text: $context).textFieldStyle(InstrumentFieldStyle()).frame(width: 110)
+                TextField("32768", text: $context).font(Theme.Font.captionMono).multilineTextAlignment(.trailing)
+                    .focused($editorFocus, equals: "context").textFieldStyle(InstrumentFieldStyle(focused: editorFocus == "context")).frame(width: 110)
             }
             SettingsDivider()
             SettingsRow(title: "任务难度", caption: "可多选，加入后也能在池内直接调整。") {
                 HStack(spacing: Theme.Space.s12) {
                     ForEach(GatewayTaskDifficulty.allCases, id: \.self) { difficulty in
-                        Toggle(difficulty.rawValue, isOn: Binding(get: { difficulties.contains(difficulty) }, set: { enabled in
-                            difficulties = GatewayTaskDifficulty.allCases.filter { $0 == difficulty ? enabled : difficulties.contains($0) }
-                        })).toggleStyle(.checkbox)
+                        GatewayTierChip(tier: difficulty, selected: difficulties.contains(difficulty)) {
+                            difficulties = GatewayTaskDifficulty.allCases.filter { $0 == difficulty ? !difficulties.contains(difficulty) : difficulties.contains($0) }
+                        }
                     }
                 }
             }
@@ -581,13 +641,6 @@ struct FreeModelGatewayView: View {
             SettingsToggleRow(title: "支持图片输入", isOn: $images)
             SettingsDivider()
             SettingsToggleRow(title: "支持结构化 JSON", isOn: $json)
-            SettingsDivider()
-            SettingsToggleRow(title: "确认该模型可免费使用", caption: "包含平台赠送额度时，请自行核对额度与超额收费规则。", isOn: $confirmedFree)
-            SettingsDivider()
-            SettingsRow(title: "提交模型", caption: "OpenRouter 模型须在当前免费目录内；其他平台使用你确认的能力。") {
-                ActionButton(gateway.pool.members.contains { $0.providerID == providerID && $0.model == modelID } ? "更新池内模型" : "加入 Auto 池") { addManual() }
-                    .disabled(providerID == nil || modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !confirmedFree || Int(context) == nil)
-            }
         }.disabled(!editable)
     }
 
@@ -610,7 +663,7 @@ struct FreeModelGatewayView: View {
                 gateway.error = "该 OpenRouter 模型不在当前免费目录中，请先发现并核对完整 ID。"; return
             }
             submitted = true
-            gateway.change { value in
+            gateway.change(completion: completeManual) { value in
                 var member = found.member(providerID: provider.id)
                 member.difficulties = difficulties
                 if let index = value.members.firstIndex(where: { $0.id == member.id }) {
@@ -620,7 +673,7 @@ struct FreeModelGatewayView: View {
             }
         } else {
             submitted = true
-            gateway.change { value in
+            gateway.change(completion: completeManual) { value in
                 let member = FreeModelPool.Member(providerID: provider.id, model: model, name: model,
                     contextLength: length, supportsTools: tools, supportsImages: images, supportsJSON: json,
                     difficulties: difficulties)
@@ -630,6 +683,12 @@ struct FreeModelGatewayView: View {
                 } else { value.members.append(member) }
             }
         }
+    }
+    private func completeManual(_ succeeded: Bool) {
+        submitted = false
+        guard succeeded else { return }
+        selectedID = providerID.map { $0.uuidString + ":" + modelID.trimmingCharacters(in: .whitespacesAndNewlines) }
+        confirmedFree = false; showAdd = false; workspace = .pool; focusRequest += 1
     }
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)

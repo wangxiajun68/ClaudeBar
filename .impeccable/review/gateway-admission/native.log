@@ -1,0 +1,3 @@
+PASS: native idle, active travel, streaming direction, terminal pulse, reduce-motion and detach lifecycle
+PASS: 200-model viewport mounts 3 row bodies; 12 output updates redraw 0 row bodies
+Rendered current native gateway to /Users/wangxiajun/Project/ClaudeBar/.build/gateway-topology-preview

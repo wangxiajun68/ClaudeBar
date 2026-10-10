@@ -40,7 +40,7 @@ struct GatewayInventoryRow: View, Equatable {
                     Button("下移优先级") { onMove(1) }.disabled(!canMoveDown)
                     Button("移出模型池", role: .destructive, action: onRemove)
                 } label: { AppGlyph(name: "ellipsis", size: 16).frame(width: 28, height: 28) }
-                .menuStyle(.borderlessButton).fixedSize().disabled(!editable)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(!editable)
                 .accessibilityLabel("\(item.member.name) 模型操作")
             }
             ViewThatFits(in: .horizontal) {
@@ -48,7 +48,7 @@ struct GatewayInventoryRow: View, Equatable {
                 VStack(alignment: .leading, spacing: 8) { facts; HStack { coverage; Spacer(); state } }
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 15)
+        .padding(.horizontal, 12).padding(.vertical, 12)
         .background(selected ? Theme.cursor.opacity(Theme.isDark ? 0.12 : 0.05) : (hovered ? Theme.cardFill(0.02) : .clear),
                     in: RoundedRectangle(cornerRadius: Theme.Radius.md))
         .onHover { hovered = $0 }
@@ -56,8 +56,10 @@ struct GatewayInventoryRow: View, Equatable {
     }
     private var facts: some View {
         HStack(spacing: 10) {
-            Text("\(item.provider) · \(item.member.contextLength.formatted()) 上下文")
-                .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
+            Text(item.provider).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                .lineLimit(1).truncationMode(.middle).help(item.provider)
+            Text(item.member.contextLength >= 1000 ? "\(item.member.contextLength / 1000)K" : "\(item.member.contextLength)").font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary)
+                .fixedSize().help("\(item.member.contextLength.formatted()) tokens 上下文")
             GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON)
         }
     }

@@ -22,6 +22,7 @@ struct ProviderDirectoryHost: View, Equatable {
     let onSelect: (ProviderCatalogEntry) -> Void
     let onOpen: (Provider) -> Void
     let onToggleCapture: (Provider, Bool) -> Void
+    var onImportToAuto: ([Provider]) -> Void = { _ in }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.model == rhs.model }
 
@@ -31,7 +32,7 @@ struct ProviderDirectoryHost: View, Equatable {
             selectedID: model.selectedID, query: model.query, category: model.category,
             configuredOnly: model.configuredOnly, onActivate: onActivate, onUseOfficial: onUseOfficial,
             onClearFilters: onClearFilters, onSelect: onSelect, onOpen: onOpen,
-            onToggleCapture: onToggleCapture, balances: model.balances)
+            onToggleCapture: onToggleCapture, onImportToAuto: onImportToAuto, balances: model.balances)
     }
 }
 
@@ -50,6 +51,7 @@ struct ProviderCatalogBrowser: View {
     let onSelect: (ProviderCatalogEntry) -> Void
     let onOpen: (Provider) -> Void
     let onToggleCapture: (Provider, Bool) -> Void
+    var onImportToAuto: ([Provider]) -> Void = { _ in }
     var balances: [UUID: String] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -200,7 +202,7 @@ struct ProviderCatalogBrowser: View {
                                         ProviderDirectoryCard(entry: row.entry, client: client, connections: row.connections,
                                             activeID: activeID, selectedID: selectedID, balances: balances,
                                             onAdd: { onSelect(row.entry) }, onOpen: onOpen, onActivate: onActivate,
-                                            onToggleCapture: onToggleCapture)
+                                            onToggleCapture: onToggleCapture, onImportToAuto: onImportToAuto)
                                     }
                                 }
                             }
@@ -265,13 +267,14 @@ struct ProviderCatalogBrowser: View {
             ProviderDirectoryCard(entry: entry, client: client, connections: layout.saved(entry),
                 activeID: activeID, selectedID: selectedID, balances: balances,
                 onAdd: { onSelect(entry) }, onOpen: onOpen, onActivate: onActivate,
-                onToggleCapture: onToggleCapture)
+                onToggleCapture: onToggleCapture, onImportToAuto: onImportToAuto)
         } else if let id = pinned.customID, let provider = layout.custom.first(where: { $0.id == id }) {
             CustomProviderDirectoryCard(provider: provider, active: true,
                 selected: provider.id == selectedID, balance: balances[provider.id],
                 onOpen: { onOpen(provider) },
                 onActivate: { onActivate(provider, $0) },
-                onToggleCapture: { onToggleCapture(provider, $0) })
+                onToggleCapture: { onToggleCapture(provider, $0) },
+                onImportToAuto: { onImportToAuto([provider]) })
         }
     }
 
@@ -286,7 +289,8 @@ struct ProviderCatalogBrowser: View {
                         selected: provider.id == selectedID, balance: balances[provider.id],
                         onOpen: { onOpen(provider) },
                         onActivate: { onActivate(provider, $0) },
-                        onToggleCapture: { onToggleCapture(provider, $0) })
+                        onToggleCapture: { onToggleCapture(provider, $0) },
+                        onImportToAuto: { onImportToAuto([provider]) })
                 }
             }
         }
@@ -404,6 +408,7 @@ private struct ProviderDirectoryCard: View {
     let onOpen: (Provider) -> Void
     let onActivate: (Provider, UUID) -> Void
     let onToggleCapture: (Provider, Bool) -> Void
+    var onImportToAuto: ([Provider]) -> Void = { _ in }
 
     private var primary: Provider? {
         connections.first { $0.id == activeID } ?? connections.first { ProviderCardState.isReady($0) } ?? connections.first
@@ -431,9 +436,11 @@ private struct ProviderDirectoryCard: View {
             ProviderModelSelector(providers: connections, activeID: activeID, choice: $modelChoice)
 
             HStack {
-                ProviderStatusBadge(state: state)
+                ProviderStatusBadge(state: state).help(protocolLabel)
                 Spacer(minLength: 0)
-                Text(protocolLabel).font(.system(size: 10)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                GatewayProviderImportButton(enabled: connections.contains { ProviderCardState.isReady($0) }) {
+                    onImportToAuto(connections)
+                }
             }.frame(height: 22)
             HStack(spacing: 8) {
                 if let provider = primary {
@@ -480,6 +487,7 @@ private struct CustomProviderDirectoryCard: View {
     let onOpen: () -> Void
     let onActivate: (UUID) -> Void
     let onToggleCapture: (Bool) -> Void
+    var onImportToAuto: () -> Void = {}
 
     private var state: ProviderCardState {
         ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete
@@ -491,7 +499,7 @@ private struct CustomProviderDirectoryCard: View {
                 ProviderIdentityMark(name: provider.name, size: 40)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(provider.name).font(.system(size: 15, weight: .semibold, design: .rounded)).lineLimit(1).help(provider.name)
-                    Text("自定义供应商").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                    Text("自定义供应商 · \(provider.models.count) 个模型").font(Theme.Font.caption).lineLimit(1).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 8)
                 if let balance { ProviderBalanceReadout(balance: balance) }
@@ -500,7 +508,7 @@ private struct CustomProviderDirectoryCard: View {
             HStack {
                 ProviderStatusBadge(state: state)
                 Spacer()
-                RollingNumberText("\(provider.models.count) 个模型").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                GatewayProviderImportButton(enabled: ProviderCardState.isReady(provider), action: onImportToAuto)
             }.frame(height: 22)
             HStack(spacing: 8) {
                 Button(action: onOpen) { Label("配置", systemImage: "slider.horizontal.3") }

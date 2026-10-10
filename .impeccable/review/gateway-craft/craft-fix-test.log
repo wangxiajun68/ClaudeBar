@@ -1,0 +1,8 @@
+.venv/bin/python Tests/run-tests.py
+RUN free-model-gateway
+PASS: phase push, bounded output pulses, short completion/failover, cancellation/revision cleanup, nonoverlapping topology
+PASS: saved-provider batch import, dedup/preserved assignments, atomic validation, free catalog guard and credential privacy
+PASS: zero-price discovery, automatic task classification/continuation/upward selection, explicit tiers/validation/migration, capabilities, cooldown, admission, privacy and private storage
+PASS: production store import completion follows durable save without UI-frame observation; rejection and write failure retain state
+PASS: real auth, credential injection, three-protocol automatic and explicit difficulty routing, strict tier failover, 429/401 fallback, first-frame fallback and no midstream retry
+PASS: 1 suites in 71.33s

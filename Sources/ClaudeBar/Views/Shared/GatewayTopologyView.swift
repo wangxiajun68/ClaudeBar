@@ -64,10 +64,16 @@ struct GatewayCapabilities: View {
     private func capability(_ icon: String, _ title: String, enabled: Bool) -> some View {
         HStack(spacing: 4) {
             AppGlyph(name: icon, size: 12)
-            if text { Text(title).font(Theme.Font.caption) }
+                .overlay {
+                    if !enabled {
+                        Rectangle().fill(Theme.textPrimary.opacity(0.72))
+                            .frame(width: 14, height: 1).rotationEffect(.degrees(-45))
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+            if text { Text(title).font(Theme.Font.caption).strikethrough(!enabled) }
         }
-        .foregroundStyle(enabled ? Theme.textSecondary : Theme.textTertiary())
-        .opacity(enabled ? 1 : 0.45)
+        .foregroundStyle(Theme.textPrimary.opacity(0.72))
         .help("\(title)：\(enabled ? "支持" : "不支持")")
         .accessibilityLabel("\(title)\(enabled ? "支持" : "不支持")")
     }
@@ -96,6 +102,29 @@ struct GatewayTopologyView: View {
                 GatewayRouteLines(links: links(geometry), moving: inViewport && !reduceMotion)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
+            }
+        }
+        .overlay {
+            GeometryReader { proxy in
+                let geometry = GatewayTopologyLayout.geometry(width: proxy.size.width, count: members.count)
+                let routes = links(geometry).sorted {
+                    let a = $0.flight?.phase.isActive == true ? 2 : ($0.selected ? 1 : 0)
+                    let b = $1.flight?.phase.isActive == true ? 2 : ($1.selected ? 1 : 0)
+                    return a < b
+                }
+                Canvas { context, _ in
+                    // Physical ports belong to the real link endpoints. The
+                    // flow still lives in Core Animation, never in this canvas.
+                    for link in routes {
+                        let ink = link.flight?.phase.isActive == true ? Theme.Ink.claude
+                            : (link.selected ? Theme.Ink.cursor : Theme.textSecondary)
+                        for point in [link.points.first, link.points.last].compactMap({ $0 }) {
+                            let port = Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6))
+                            context.fill(port, with: .color(Theme.cardSurface))
+                            context.stroke(port, with: .color(ink.opacity(link.enabled ? 0.7 : 0.35)), lineWidth: 1)
+                        }
+                    }
+                }.allowsHitTesting(false).accessibilityHidden(true)
             }
         }
         .onScrollVisibilityChange(threshold: 0.05) { inViewport = $0 }
@@ -138,7 +167,7 @@ struct GatewayTopologyView: View {
                     .strokeBorder(selectedTier == tier ? Theme.cursor.opacity(0.7) : Theme.hairline)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GatewayNodeButtonStyle())
         .foregroundStyle(Theme.textPrimary)
         .accessibilityLabel("\(tier.displayName) \(tier.rawValue)，点击筛选对应模型")
         .accessibilityValue(selectedTier == tier ? "已筛选" : "未筛选")
@@ -172,7 +201,7 @@ struct GatewayTopologyView: View {
                     .strokeBorder(selectedID == item.id ? Theme.cursor.opacity(0.7) : Theme.hairline)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GatewayNodeButtonStyle())
         .foregroundStyle(Theme.textPrimary)
         .help("\(item.member.name)\n\(item.member.model)\n\(item.provider) · \(live?.phase.title ?? item.state.title)")
         .accessibilityLabel("\(item.member.name)，\(item.provider)，\(live?.phase.title ?? item.state.title)")
@@ -206,7 +235,7 @@ struct GatewayTopologyView: View {
         }
         return result
     }
-    private func contextLabel(_ count: Int) -> String { count >= 1000 ? "\(count / 1024)K" : String(count) }
+    private func contextLabel(_ count: Int) -> String { count >= 1000 ? "\(count / 1000)K" : String(count) }
 }
 
 private struct GatewayNodeLayout: Layout {
@@ -355,5 +384,48 @@ private final class GatewayLinesView: NSView {
         flow.shadowRadius = 4; flow.shadowOpacity = 0.45; flow.shadowOffset = .zero
         ring.opacity = 0
         return Stroke(base: base, flow: flow, ring: ring)
+    }
+}
+
+/// Hover and press change ink only: diagram nodes never move away from ports.
+struct GatewayNodeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        NodeBody(label: configuration.label, pressed: configuration.isPressed)
+    }
+    private struct NodeBody: View {
+        let label: Configuration.Label
+        var pressed: Bool
+        @State private var hovered = false
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        var body: some View {
+            label.brightness(pressed ? -0.035 : 0)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .strokeBorder(Theme.textSecondary.opacity(hovered && enabled ? 0.25 : 0))
+                        .allowsHitTesting(false)
+                }
+                .onHover { hovered = $0 }
+                .animation(reduceMotion ? nil : Theme.Motion.state, value: pressed)
+                .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
+        }
+    }
+}
+
+/// One selectable difficulty treatment in inspectors and import settings.
+struct GatewayTierChip: View {
+    var tier: GatewayTaskDifficulty
+    var selected: Bool
+    var action: () -> Void
+    var body: some View {
+        ChipButton(on: selected, tint: Theme.Ink.cursor, action: action) {
+            AppGlyph(name: selected ? "checkmark" : "plus", size: 10)
+            Text(tier.displayName)
+            Text(tier.rawValue).font(Theme.Font.microMono)
+        }
+        .fixedSize()
+        .help(tier.taskHint)
+        .accessibilityLabel("承接\(tier.displayName)任务")
+        .accessibilityValue(selected ? "已选择" : "未选择")
     }
 }

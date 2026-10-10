@@ -1,0 +1,94 @@
+CLAUDEBAR_CHANNEL=release CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+=== Building ClaudeBar 1.16.0 [release] (macOS 15.0+) ===
+Using existing identity ClaudeBar Dev (1490884595485DA312DA2062EF517F3E3E998448)
+Signing identity: 1490884595485DA312DA2062EF517F3E3E998448
+Icon copied to bundle
+Fan helper built: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Resources/claudebar-fanctl
+Bundled pinned mihomo archive (v1.19.31)
+Using SDK: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/PermissionCenter.swift:279:37: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+269 |         if next != statuses { statuses = next }
+270 | 
+271 |         UNUserNotificationCenter.current().getNotificationSettings { settings in
+    |                                                                    |- note: 'self' implicitly strongly captured here
+    |                                                                    `- note: add 'self' as a capture list item to silence
+272 |             let mapped: PermissionStatus
+273 |             switch settings.authorizationStatus {
+    :
+277 |             @unknown default: mapped = .askOnUse
+278 |             }
+279 |             Task { @MainActor [weak self] in
+    |                                     |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+    |                                     `- note: explicitly assign the capture list item to silence
+280 |                 guard let self, self.statuses[.notifications] != mapped else { return }
+281 |                 self.statuses[.notifications] = mapped
+
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/ProcessSampler.swift:625:75: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 619 |             return share
+ 620 |         }
+ 621 |         DispatchQueue.main.async {
+     |                                  |- note: 'self' implicitly strongly captured here
+     |                                  `- note: add 'self' as a capture list item to silence
+ 622 |             // Held while a scroll is in flight and applied once it stops: the
+ 623 |             // readings are not on screen in any way that matters while the page
+ 624 |             // is being moved, and each one is an invalidation of the strip.
+ 625 |             ScrollHoverGate.afterScroll("ProcessSampler.publish") { [weak self] in
+     |                                                                           |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                                                           `- note: explicitly assign the capture list item to silence
+ 626 |                 guard let self else { return }
+ 627 |                 var host = host
+
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/SessionMigrationService.swift:48:41: warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 46 |                 includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { throw MigrationFailure.missing }
+ 47 |             var found: URL?, count = 0
+ 48 |             for case let file as URL in enumerator {
+    |                                         `- warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 49 |                 count += 1
+ 50 |                 guard count <= 60_000 else { throw MigrationFailure.tooLarge }
+
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/VpnManager.swift:683:30: warning: main actor-isolated static property 'shared' can not be referenced from a Sendable closure; this is an error in the Swift 6 language mode
+ 681 |                 // offset. `ingest` only buffers and parses on this thread; the
+ 682 |                 // main actor gets a debounced batch.
+ 683 |                 VpnDomainLog.shared.ingest(data)
+     |                              `- warning: main actor-isolated static property 'shared' can not be referenced from a Sendable closure; this is an error in the Swift 6 language mode
+ 684 |             }
+ 685 |         }
+
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/VpnDomainLog.swift:502:16: note: static property declared here
+500 | @MainActor
+501 | final class VpnDomainLog: ObservableObject {
+502 |     static let shared = VpnDomainLog()
+    |                `- note: static property declared here
+503 | 
+504 |     /// Recent diagnostic history; the UI displays bounded pages of this ring.
+
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/Sources/ClaudeBar/Utils/VpnManager.swift:725:36: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 723 | 
+ 724 |     private func readPipe(_ pipe: Pipe?) -> String {
+ 725 |         guard let pipe, let data = try? pipe.fileHandleForReading.readDataToEndOfFile(),
+     |                                    `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 726 |               !data.isEmpty else { return "" }
+ 727 |         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+ld: warning: duplicate -rpath '/usr/lib/swift' ignored
+swift-driver version: 1.168.6 /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Helpers/claudebar.tmp.3895: replacing existing signature
+CLI ready: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Helpers/claudebar (mtx)
+Binary created: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/MacOS/ClaudeBar
+=== Building Widget ===
+ld: warning: duplicate -rpath '/usr/lib/swift' ignored
+Widget binary: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget
+=== Code-signing ===
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Helpers/claudebar: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Resources/claudebar-batteryctl: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/Resources/claudebar-fanctl: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/PlugIns/ClaudeBarWidget.appex: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app/Contents/MacOS/ClaudeBar: replacing existing signature
+/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app: replacing existing signature
+PASS: release bundle, widget, URL scheme, entitlements and signature (/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app)
+Signed OK (1490884595485DA312DA2062EF517F3E3E998448)
+Screen Recording TCC is bound to this certificate — rebuilds should not ask again.
+=== Skipping install (CLAUDEBAR_SKIP_INSTALL=1) ===
+Build cache: /Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000/.build/release/ClaudeBar.app

@@ -1,0 +1,551 @@
+.venv/bin/python Tests/run-tests.py
+RUN cli
+PASS: TUI input, stable viewport, pause, command quoting, Unicode clipping and incremental rendering
+PASS: renderer width, CJK, telemetry, injection defense and freshness
+PASS: bounded publisher retains latest tick, atomic JSON and owner-only mode
+PASS: CLI counts, filters, full inventory, JSON/NDJSON, terminal cleanup, channel and lifecycle gates
+RUN cli-control
+PASS: dev real router, grammar, privacy, isolation, mutation serialization, same-user transport and endpoint ownership
+PASS: release real router, grammar, privacy, isolation, mutation serialization, same-user transport and endpoint ownership
+RUN build-isolation
+PASS: dev identity, storage, system networking isolation
+PASS: release identity, storage, system networking isolation
+PASS: dev identity, storage, system networking isolation
+BuildChannel=dev integration=false prompts=false bundle=com.claudebar.app.dev support=ClaudeBar Dev group=com.claudebar.app.dev.widget claude=.claude
+BuildChannel=release integration=true prompts=true bundle=com.claudebar.app support=ClaudeBar group=com.claudebar.app.widget claude=.claude
+BuildChannel=dev integration=false prompts=false bundle=com.claudebar.app.dev support=ClaudeBar Dev group=com.claudebar.app.dev.widget claude=.claude
+PASS: cache invalidation by content/flags, generated-output exclusion, unique Swift object/dependency paths
+PASS: safe build defaults, channel validation, packaging constraints, VPN launch/hotkey guards, cancelable relaunch
+RUN ui
+PASS: unchanged/changed/pruned/empty heartbeat publications; 4/5-column layout, content invalidation and resize
+PASS: the model-price draft row is drawn only while an edit of a slug outside the table is in progress
+RUN core
+PASS: numeric bounds, private atomic writes, configuration preservation, Codex metadata, the shipped xz core, and completion behind a huge record
+RUN performance
+PASS: 100 concurrent streams batch at 10 Hz without starvation; stale flush suppressed; 101 usage requests coalesce to 2 serial passes
+RUN module-performance
+after: [{"canonical_ms": 30.80725, "checksum": 1365000, "log_burst_enqueue_ms": 2.698417, "log_burst_publishes": 1, "log_construct_ms": 1.645, "log_continuous_ms": 411.826584, "log_continuous_publishes": 4, "log_load_ms": 154.851666, "rpc_batch_ms": 3.958709, "rpc_quiet_waits": 1, "rpc_timeout_ms": 38.711292, "table_html_ms": 9.377584, "table_init_ms": 11.285583, "table_layout_ms": 5.274417}]
+PASS: synthetic table, model identity, JSON-RPC framing and access-log lifecycle
+RUN backend-performance
+after: [{"mcp_cancel_slow-init_ms": 0.167375, "mcp_cancel_slow-page_ms": 0.061417, "peak_rss_mib": 10.015625}]
+after medians: {"mcp_cancel_slow-init_ms": 0.167375, "mcp_cancel_slow-page_ms": 0.061417, "peak_rss_mib": 10.015625}
+PASS: mock MCP pagination/cancellation/owned-child cleanup
+RUN measured-performance
+{
+  "workload": "Synthetic logs and providers; optimized production source slices; no app/system integration",
+  "samples": {
+    "current": [
+      {
+        "lookback_8x12MiB_ms": 43.055125,
+        "provider_groups_10x4000_configured_models_ms": 10.404542
+      }
+    ]
+  },
+  "medians_ms": {
+    "current": {
+      "lookback_8x12MiB_ms": 43.055125,
+      "provider_groups_10x4000_configured_models_ms": 10.404542
+    }
+  }
+}
+PASS: bounded lifecycle recovery, newest valid fields, malformed UTF-8, Unicode, CRLF, truncated records, ownership ambiguity, official clamping and token conservation
+RUN remaining-performance
+{
+  "baseline_ref": null,
+  "workload": "Synthetic 10000 palette items, real static manual paragraphs, synthetic Widget snapshot; optimized production slices; OS effects intercepted",
+  "samples": {
+    "current": [
+      {
+        "help_20_warm_redraws_ms": 1.982583,
+        "palette_3_preparations_and_180_selection_updates_ms": 18.205583,
+        "widget_1000_unchanged_submissions_ms": 10.370417,
+        "widget_unchanged_writes": 1
+      }
+    ]
+  },
+  "medians": {
+    "current": {
+      "help_20_warm_redraws_ms": 1.982583,
+      "palette_3_preparations_and_180_selection_updates_ms": 18.205583,
+      "widget_1000_unchanged_submissions_ms": 10.370417,
+      "widget_unchanged_writes": 1
+    }
+  }
+}
+PASS: stable ranking, full attributed text equality, concurrent cache reads, timestamp deduplication, nested change, forced publication, channel and permission gates, round trip
+RUN remaining-lifecycle
+PASS: cancelled request ownership, replacement overlap prevention, revocation/regrant, deferred traffic unmount/remount and unchanged batch
+RUN inventory-performance
+{
+  "workload": "4000 synthetic inventory models, 1001 Cursor models; 20 result reads; 4000 providers × 20 models, 20 queries; no app or system integration",
+  "baseline_ref": null,
+  "samples": {
+    "current": [
+      {
+        "directory_20_active_queries_ms": 675.081958,
+        "directory_20_empty_queries_ms": 0.005375,
+        "inventory_prepare_and_20_reads_ms": 12.295167,
+        "inventory_single_prepare_ms": 12.294417
+      }
+    ]
+  },
+  "medians_ms": {
+    "current": {
+      "directory_20_active_queries_ms": 675.081958,
+      "directory_20_empty_queries_ms": 0.005375,
+      "inventory_prepare_and_20_reads_ms": 12.295167,
+      "inventory_single_prepare_ms": 12.294417
+    }
+  }
+}
+PASS: exact inventory values, source/alias/cost preservation, stable custom search and cooperative cancellation
+RUN island-coalescing
+METRICS {"queries_before_release":1,"queries_for_101_refreshes":2,"maximum_concurrent_queries":1}
+PASS: single in-flight query, latest trailing pass, stale result rejection, Cursor-only clear and disabled wing timer
+RUN detail-performance
+current: METRICS {"document_20_serializations_ms":98.677992820739746,"document_100_html_ms":19.99199390411377,"editor_150_mounts_ms":44.672966003417969,"editor_initial_assignments":1,"quota_1000_updates_ms":13.133049011230469}
+PASS: production formatting, four time zones, Unicode/markup/links, mutable text storage, initial editor assignments and native edit publications
+RUN weather-card-performance
+PASS weather rendering switch: cached conditions, all manual modes, daylight layers and re-enable
+PASS disabled weather shader: no residual cloud layers
+SNAPSHOT_SHA256 6222f7284a3fdf44823149b5b187a505d703106fbf82c82d6e1304a07feabd50
+SYNC_SNAPSHOT_MEDIAN_MS 8.174999995389953
+PASS weather card draw lifecycle and production snapshot
+PASS production text raster supersession
+PASS production still worker background ownership, cancellation, cache and failure retry
+RUN dashboard-performance
+DASHBOARD_10000_MEDIAN_MS 0.04506111145019531 FORMATTED_PER_PASS 6
+PASS dashboard source ordering, full counts and bounded row formatting: 36 mixed cases
+RUN frame-work-performance
+METRICS {"heatmap":[{"day_keys":0,"days":366,"frames":120,"image_sha256":"0769482c23ff8e0a26db25dcac0becae7c19f2a32ca8c6996cd77bd0a4490014","median_ms":0.033916672691702843,"prepare_ms":0.92387499171309173},{"day_keys":0,"days":2557,"frames":120,"image_sha256":"8a2afcc77107b31df8d9a998694e6181c65fb9adce316987903cd892b619ee6f","median_ms":0.21979166194796562,"prepare_ms":6.2842916668159887}]}
+PASS production heatmap painting and hit testing
+METRICS {"traffic_stale_live_rows":0}
+PASS production traffic cache status, membership, selection and unmount
+METRICS {"density":[{"kde_median_ms":0.0029802322387695312,"distinct_totals":3,"median_ms":39.83306884765625,"days":2000,"density_max_absolute_error":1.1102230246251565e-15},{"distinct_totals":30,"density_max_absolute_error":1.2739375526704677e-17,"days":2000,"median_ms":39.144039154052734,"kde_median_ms":0.015020370483398438},{"distinct_totals":2000,"days":2000,"median_ms":40.339946746826172,"density_max_absolute_error":3.7269449679189215e-20,"kde_median_ms":0.90396404266357422}]}
+PASS production usage density against frozen observation-by-observation oracle
+RUN module-scheduling
+METRICS {"connector_burst_scans":2,"connector_loading_publications":2,"connector_peak_scans":1,"mid_cancel_manifest_reads":1,"pre_cancel_manifest_reads":0,"unchanged_history_publications":0}
+PASS production connector coalescing, CLI retention, migration publication and bounded cancellation
+RUN document-navigation
+METRICS {"document_navigation":[{"bytes":15390,"headings":100,"median_lookup_ms":0},{"bytes":154890,"headings":1000,"median_lookup_ms":0},{"bytes":466890,"headings":3000,"median_lookup_ms":4.1662133298814297e-05}],"parity_headings":16}
+PASS parser ranges, duplicate/protected Unicode headings and stale editor callback
+RUN core-algorithms
+METRICS {"claude_4000_paths_8_requested_ms":4.2685000000000004,"claude_4000_paths_64_requested_ms":4.6356250000000001,"claude_4000_paths_256_requested_ms":5.7912499999999998,"codex_4000_paths_8_requested_ms":5.8070409999999999,"codex_4000_paths_64_requested_ms":5.9040410000000003,"codex_4000_paths_256_requested_ms":7.1487080000000001,"codex_dense_12000_chain_ms":11.301625,"process_peak_rss_bytes":16138240}
+PASS production family routing, random graphs/cycles/long chains
+RUN frontend-native
+DIAGNOSTICS ["native_outline_title_parses": 0, "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b", "native_table_text_parses": 0, "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820", "native_table_layout_computations": 0, "unchanged_layout_computations": 0, "native_table_body_updates": 30, "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa", "native_outline_body_updates": 30, "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e", "native_outline_updates_ms": 261.050625, "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d", "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d", "native_table_updates_ms": 976.880125, "cached_layout_100_ms": 1.292]
+METRICS {"cached_layout_100_ms":1.292,"native_outline_body_updates":30,"native_outline_title_parses":0,"native_outline_updates_ms":261.05062500000003,"native_table_body_updates":30,"native_table_layout_computations":0,"native_table_text_parses":0,"native_table_updates_ms":976.88012500000002,"outline_dark_sha256":"1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e","outline_image_sha256":"50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b","table_content_changed_sha256":"e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d","table_dark_sha256":"1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa","table_image_sha256":"59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d","table_styled_sha256":"aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820","unchanged_layout_computations":0}
+PASS real native surface updates, geometry/content/height/topology/undo invalidation and pixel stability
+RUN page-frontend
+METRICS {"connector_repeat_cli_checks":0,"connector_repeat_owner_visits":0,"connector_repeat_record_checks":0,"connector_repeated_filter_ms":0.0059160000000000003,"connector_repeated_owner_counts_ms":0.217583,"cycles":30,"live_initial_cards":4,"live_initial_ms":54.869833999999997,"live_middle_sha256":"f0303de649eb49a895779f652391f16d84306d886f11a886a8dd2851d4a03a6a","live_tail_sha256":"0d211629d6a15ae3463a7319b4a4feb3c7741056e82ac6b9e30bb50a5c17def0","live_top_sha256":"7727aa3d67b9ad64827a7610a1f629fc4a87bd270fa288757c17b440600c8e7e","mixed_initial_cards":10,"mixed_initial_ms":54.673957999999999,"mixed_middle_sha256":"4d26f2946ec04e7baa2e777c2c1756a6d24ba6130012aab32f13857f0f10a542","mixed_tail_sha256":"fcf8745c26f253a0be3aa7b1b00aafeb3ce81dfa7fb17a8e96e82abbc6799410","mixed_top_sha256":"5d4b9a60b8f46e1e9331845ef0554f2578c3ddb9b3fc1e824d09c49318d22590","provider_index_lookups_ms":3.6187499999999999,"provider_index_url_normalizations":2000,"provider_repeat_row_visits":0,"provider_repeat_url_normalizations":0,"provider_repeated_partition_ms":0.0011249999999999999,"provider_url_parity_cases":369,"resting_initial_cards":12,"resting_initial_ms":83.714875000000006,"resting_middle_sha256":"19f994c560ed47581f9e2c5bfbd331b7bef7ceeafa5b21c8ba2a4cec978b6e54","resting_tail_sha256":"c9d5affbc106b7498cc230f4192894febe6f0ba0f8e3ca72b73caed9ce86e7e5","resting_top_sha256":"3edb30733662cf13ca39acf5c6f4a6a3d4c6764674adf5db336f5ab06f52bbef"}
+PASS production session containers, connector filters/counts and provider index/partition, scrolling, source changes and cache invalidation
+RUN vpn-probe-lifecycle
+METRICS {"cancelled_sleep_queries":0,"cancelled_sweep_queries":1,"overlap_fixture_total_queries":2,"pre_cancelled_sweep_queries":0}
+PASS: reset/replacement ownership, no duplicate query, parent cancellation, node-switch wait and cancelled endpoint sweep
+RUN vpn-system-proxy
+PASS: read-back covers every service, apply/clear serialize, failures back off, DNS never overrides without a kept snapshot
+RUN access-log-tail
+after: [{"large_read_off_main": 1, "log_construct_ms": 1.115125, "log_file_bytes": 25838905, "log_read_bytes": 262144, "log_read_work_ms": 40.600667, "peak_rss_mib": 13.8125}]
+after medians: {"large_read_off_main": 1, "log_construct_ms": 1.115125, "log_file_bytes": 25838905, "log_read_bytes": 262144, "log_read_work_ms": 40.600667, "peak_rss_mib": 13.8125}
+PASS: production tail reader, UTF8/CRLF/damage/id sequence and load/clear/request races
+RUN ui-animation-performance
+{
+  "working_tree": {
+    "unchanged": 0.14197826385498047,
+    "pace": 3.5109519958496094,
+    "path": 6.25300407409668,
+    "appearance": 16.396045684814453
+  }
+}
+PASS: Sankey palette/path/geometry/topology; stable layers, phase, occlusion and detach
+RUN interaction-performance
+PASS: hidden sampler suspension and fan timer lifecycle; independent scroll owners, burst coalescing, stale idle and deadline; bounded SSE order, JSON fallback and cancellation; native hide/detach/phase/stable layers
+RUN process-cpu
+PASS: busy 100.7%, idle 0.0%, 41.67 ns/tick; cwd keys canonical
+RUN process-argv
+PASS: argv-only Codex detection (env ignored, argv matched, absent pid false)
+RUN audio-accessory
+PASS: log store rebuilds at the window edge (0 → 1 with a held-store control of 0); keyboard / mouse / watch / Mac battery rejected on all three sources; headset, bud and case records scoped
+RUN rendering
+PASS: scoped/coalesced subscriptions; 6 native effects × 1000 stable updates; hide/detach stops animations; 10000-turn filtering and stale-result rejection (0.137s including waits)
+RUN local-endpoint
+PASS: 13 loopback/private hosts classified local, 17 public hosts remote (172.15/172.32, 192.169, 11.x, non-loopback bracketed IPv6, localhost.evil.com and ftp:// all correctly remote); key transport allows https + local http only
+RUN provider-icon
+PASS: 39 marks clear 3.0:1 on their themed icon well; lowest litellm-ico at 2.94:1 (litellm accepted down to 2.8:1)
+RUN product-mark
+PASS: ProductBrandMark draws the bundled Anthropic / OpenAI / Cursor marks — and the app's own rings for 第三方 — in a well at 20 sizes; ink spans 57%–60% of its tile; all four families stand the same width; both generators reproduce the committed assets
+RUN session-title
+PASS: title chain (prompt > folder > session), authored wins, wrappers stripped, 180pt budget (CJK cut, Latin kept), punctuation trimmed, emoji intact, two-part header with independent folder/title/subtitle budgets
+RUN session-scan
+22/22 session scan checks passed
+RUN quota-reset
+PASS: quota rollover fires exactly once — seed-safe, dip-safe, floor-safe, per-window, forward-instant aware, no state leak across disappearances; and the poll keeps its heartbeat, aims at the upcoming instant, is never steered by a first sighting or an advanced schedule, and never spins
+RUN quota-store
+PASS: a failed poll keeps the reading, the credits and the rollover watch (heartbeat, not a chase); an answered empty payload clears the row; a manual press drops the cache; overlapping refreshes stay single-file
+RUN cursor-usage
+PASS: Cursor allowance decodes the live plan + Grok payloads; totalSpend's bonus spend never leaks into the used fraction; both reset formats parse; the cookie spelling percent-encodes the sub and the :: separator; the two named pools (Cursor Models = autoPercentUsed, Other Models = apiPercentUsed) fraction cleanly and a missing pool stays absent rather than reading 0%; the last-known reading round-trips through disk with its money, reset and hit-limit intact
+RUN cursor-ledger
+PASS: Cursor's aggregation decodes with string token counts, an absent tokenUsage is a zero row rather than a dropped page, an error envelope is nil rather than a free month, the effort tier folds onto the local client's model id, windows chunk losslessly and a year degrades to the billing cycle with a flag, and an actual charge can never reach the estimate path
+RUN completion-notify
+PASS: fires on a new key (normal, short, after-busy, later turns), stays silent for killed/stale/repeated/unseeded turns, seeds at launch, prunes departures
+PASS: waiting-state edge fires on entry only, once per prompt, re-arms on re-ask, seeds at launch, prunes departures
+RUN session-waiting
+21/21 session waiting-state checks passed
+RUN workflow-session
+PASS: native journal lifecycle, stages, async run notifications, stale/dead/unknown, resume ownership, partial append, truncation, no false completion and background activity
+RUN island-session-alert
+14/14 island session-alert checks passed
+RUN waiting-notify
+30/30 waiting-notify checks passed
+RUN greeting-data
+PASS: credits, zero, unknown, unlimited, invalid values, credit-only accounts, legacy payloads, auth failures, failure flagging, slot identity, malformed windows
+RUN greeting-phrase
+PASS: local dates, lunar festivals beyond 2027, leap-month exclusion, moving parent holidays, warm variety, stable redraws, rest precedence and languages
+RUN greeting-layout
+PASS: 5300 greeting/name layouts, original casing, readable name size, instrument clearance, cache and texture; day/night ink; dated solar events, source precedence, polar/DST and missing data; wind directions in Chinese, 风-suffixed and English spellings
+RUN greeting-name
+PASS: possessive and host-name shapes resolve to the person; a model-only or address-like name is kept whole, never fragmented; a Han name draws as pinyin, given name first; live name Xiajun Wang
+RUN solar-term
+PASS: HKO solar-term dates 2026-2036, season boundaries, out-of-range reuse
+RUN weather-astronomy
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/weather-astronomy-q_9nmnmo/Probe.swift:918:37: warning: 'CLGeocoder' was deprecated in macOS 26.0: Use MapKit [#DeprecatedDeclaration]
+ 916 |         if let cached = cache[key] { return cached }
+ 917 |         let location = CLLocation(latitude: latitude, longitude: longitude)
+ 918 |         guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")).first,
+     |                                     `- warning: 'CLGeocoder' was deprecated in macOS 26.0: Use MapKit [#DeprecatedDeclaration]
+ 919 |               let name = Self.format(mark) else { return nil }
+ 920 |         cache[key] = name
+
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/weather-astronomy-q_9nmnmo/Probe.swift:918:50: warning: 'reverseGeocodeLocation(_:preferredLocale:)' was deprecated in macOS 26.0: Use MKReverseGeocodingRequest [#DeprecatedDeclaration]
+ 916 |         if let cached = cache[key] { return cached }
+ 917 |         let location = CLLocation(latitude: latitude, longitude: longitude)
+ 918 |         guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")).first,
+     |                                                  `- warning: 'reverseGeocodeLocation(_:preferredLocale:)' was deprecated in macOS 26.0: Use MKReverseGeocodingRequest [#DeprecatedDeclaration]
+ 919 |               let name = Self.format(mark) else { return nil }
+ 920 |         cache[key] = name
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data, domestic sources
+RUN menubar-strip
+PASS: menu-bar strip fits its declared width with and without a battery; the rates are green through the tunnel and resting white outside it, without changing the strip's shape; the gauge is a strip-height 1.618:1 capsule with no terminal post; charging, discharging, and holding have distinct labels
+RUN connection-panel
+PASS: connection inspector is three sections (no rings, no address deck), shares one state vocabulary and one RSSI ruler with its tile, and states that a link and a listener are not internet access
+RUN charge-limit
+PASS: latest intent, mode/restore ordering, authorization changes, response watchdog, stale replies, sleep, recovery and persistence
+{"revision":0,"mode":1,"limit":80,"state":0,"percent":-1,"dischargeSupported":true,"sleeping":true,"error":"","notice":"","terminal":false}
+Battery policy, readback, rollback, and sleep recovery passed (no hardware writes).
+RUN model-cost
+PASS: slug canonicalization, longest-match, disjoint currency buckets, 56 rate cards + 7 stated-unpriced, grouped formatting, opt-in conversion with no silent rate, presentation-consistent captions
+RUN proxy-usage
+PASS: proxy token buckets are disjoint across Anthropic, Chat and Responses shapes
+PASS: rollup records disjoint buckets, accumulates, and only announces writes that landed
+PASS: third-party rollup repairs pre-fix rows and stores all four buckets
+PASS: third-party rollup writes against a real database and reports failures
+RUN proxy-inflight
+216/216 proxy-inflight checks passed
+RUN proxy-upstream
+PASS: Claude-only OpenAI fallback, credentials, model, route isolation, explicit/active priority, stale selection and loopback rejection
+RUN cc-concurrency
+PASS: CC concurrency defaults, legacy decoding, round trip, editor bounds, keyless-loopback readiness, production env mapping, switching and official restore
+RUN codex-session
+PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state means a *recently written* open turn, so a stalled one is listed but idle and offered for cleanup; titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks; an appended terminal event is seen through the file cache
+PASS: with no thread index, the rollout walk still lists open main threads and sub-agents
+PASS: running means a *recently written* open turn, independent of any holder
+RUN session-migration
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-migration-x9e8xkz2/Service.swift:48:41: warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 46 |                 includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { throw MigrationFailure.missing }
+ 47 |             var found: URL?, count = 0
+ 48 |             for case let file as URL in enumerator {
+    |                                         `- warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 49 |                 count += 1
+ 50 |                 guard count <= 60_000 else { throw MigrationFailure.tooLarge }
+PASS: dev branch parsing, native formats, privacy, dedup, revisions, rollback and external gates
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-migration-x9e8xkz2/Service.swift:48:41: warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 46 |                 includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { throw MigrationFailure.missing }
+ 47 |             var found: URL?, count = 0
+ 48 |             for case let file as URL in enumerator {
+    |                                         `- warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 49 |                 count += 1
+ 50 |                 guard count <= 60_000 else { throw MigrationFailure.tooLarge }
+PASS: release branch parsing, native formats, privacy, dedup, revisions, rollback and external gates
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-migration-x9e8xkz2/Service.swift:48:41: warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 46 |                 includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { throw MigrationFailure.missing }
+ 47 |             var found: URL?, count = 0
+ 48 |             for case let file as URL in enumerator {
+    |                                         `- warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 49 |                 count += 1
+ 50 |                 guard count <= 60_000 else { throw MigrationFailure.tooLarge }
+PASS: dev branch parsing, native formats, privacy, dedup, revisions, rollback and external gates
+PASS: independent Cursor TEXT/BLOB schema, quoted argv and credential-free private manifests
+RUN agent-protocol-bridge
+PASS: text, images, tool errors, parallel calls, incremental JSON, usage, malformed and truncated streams
+PASS: production native HTTP transport, auth-before-route, frozen model/key isolation, JSON/SSE, EOF error, non-retrying format failures, disconnect cancellation and token estimate
+RUN inflight-animation
+PASS: no implicit value-keyed animation on the per-poll digit components (RollingNumberText, RollingNumberModifier, SectionHeader.trailingView, Island wings / usage hero, TokenComparison), and the shared roll opens its own transaction
+RUN cursor-turn
+36/36 Cursor monitor checks passed
+RUN card-shadow
+PASS: the tile surface's drop shadow is layer-backed (with a shadowPath, non-hit-testable, flipped), and the panel surface keeps its SwiftUI shadow — the swap is worth 1.9x on a card and nothing on a panel
+RUN machine-mark
+PASS: marks draw Lucide geometry on its 24pt grid in a generated file; the reading is a live lane (12/10/8 countable bars, 6-of-12 in order, idle stubs pale, taller bar = higher reading, aggregate bars laid out by the mark itself and visibly filled, GPU per sub-unit, 内存/硬盘 capacities); the tile badge draws its glyph with an empty margin, so no ring can sit behind it
+RUN fan-rotor
+PASS: illustration and turbine crops decode; symbol fallback renders; retiming, pause and resume preserve phase
+RUN vpn-domain-log
+VPN query 10000 rows × 100: 3086.28 ms (checksum 0)
+VPN query 2000 rows × 100: 618.44 ms (checksum 0)
+vpn domain log OK · query + connections + 200-row pages + 2,000-row ring
+RUN vpn-domain-rules
+PASS normalization
+PASS reject 
+PASS reject https://example.com
+PASS reject example.com/path
+PASS reject example.com:443
+PASS reject *.example.com
+PASS reject a..com
+PASS reject -a.com
+PASS reject a-.com
+PASS reject localhost
+PASS reject 127.0.0.1
+PASS reject a,b.com
+PASS reject a
+.com
+PASS reject 中文.com
+PASS suffix includes root and children
+PASS domain boundaries
+PASS specificity precedence
+PASS manual proxy beats automatic bypass
+PASS exact exception beats suffix
+PASS indentation 0
+PASS user before automatic pin
+PASS preserve sibling block
+PASS indentation 2
+PASS user before automatic pin
+PASS preserve sibling block
+PASS indentation 4
+PASS user before automatic pin
+PASS preserve sibling block
+PASS empty/missing/flow rules
+PASS empty/missing/flow rules
+PASS empty/missing/flow rules
+PASS empty/missing/flow rules
+PASS retain flow tail
+PASS empty/missing/flow rules
+PASS retain flow tail
+PASS empty/missing/flow rules
+PASS retain flow tail
+PASS unsupported format fails visibly
+PASS no changes without rules
+PASS persistence roundtrip
+PASS private file mode
+PASS invalid stored domains filtered
+PASS builder uses primary group
+PASS builder decodes YAML Unicode group names
+PASS builder falls back to selector
+PASS builder falls back to leaf
+PASS builder fails closed without proxy
+PASS domain rules and YAML structure
+RUN vpn-provider-direct
+  ok   the self-hosted provider host survives host extraction
+  ok   the pin copies the profile's own item indentation (column zero)
+  ok   the pin precedes GEOIP,CN — after it the pin would be dead text
+  ok   the profile tail is preserved
+  ok   injected exactly once
+  ok   a two-space profile keeps two-space items: "proxies: []\nrules:\n  - \"DOMAIN,llm.example.net,DIRECT\"\n  - \"MATCH,DIRECT\"\n"
+  ok   an empty rules: block is left untouched
+  ok   not pinned: https://api.openrouter.ai/api/v1
+  ok   not pinned: https://api.anthropic.com
+  ok   not pinned: https://api.openai.com/v1
+  ok   not pinned: https://api.x.ai/v1
+  ok   not pinned: https://generativelanguage.googleapis.com/v1beta/openai
+  ok   not pinned: https://integrate.api.nvidia.com/v1
+  ok   not pinned: http://127.0.0.1:15721
+  ok   not pinned: http://localhost:11434
+  ok   not pinned: https://192.168.241.10:3000
+  ok   not pinned: http://10.0.0.5
+  ok   not pinned: http://foo.local
+  ok   not pinned: http://[::1]:11434
+  ok   not pinned: 
+  ok   pinned: https://open.bigmodel.cn/api/anthropic -> open.bigmodel.cn
+  ok   pinned: https://dashscope.aliyuncs.com/apps/anthropic -> dashscope.aliyuncs.com
+  ok   pinned: https://api.moonshot.cn/anthropic -> api.moonshot.cn
+  ok   pinned: https://ark.cn-beijing.volces.com/api/compatible -> ark.cn-beijing.volces.com
+  ok   pinned: https://api.stepfun.com -> api.stepfun.com
+  ok   pinned: https://api.siliconflow.cn -> api.siliconflow.cn
+  ok   a row without a scheme still resolves its host
+  ok   deduped + sorted: ["llm.example.net", "open.bigmodel.cn"]
+  ok   a profile without rules: is left byte-identical
+  ok   an indented rules: is not injected into
+RUN vpn-format
+PASS: formatting, sums and differences clamp at the Int64 bounds instead of trapping
+RUN vpn-subscription-reentry
+PASS: subscription write lock — single claimant, owner-scoped release, straggler rejection
+RUN vpn-core-log-writer
+PASS: core log rotation, tail keeping, size adoption and generation resync
+RUN vpn-live-rates
+PASS: 0.25 s ceiling, equal-sample slots, all-flat freeze and reset cancellation
+RUN failover-log-cursor
+PASS: failover cursor advances by whole lines only, resyncs to EOF on rotation, and survives mid-character and off-EOF boundaries
+RUN smc-sampling
+PASS: SMC decode (ui8 LE pair, ui16, sp78/sp87, fpe2, flt, fds names), fan-mode/fan-list assembly and the NaN/inf clamp — one mode-key read per fan
+RUN usage-analysis
+PASS: production usage dates, totals, quantiles, cache rates, ECDF/Lorenz, time grains, calendar truncation and raincloud density eligibility/boundaries/mass
+PASS: provider attribution from actual metadata, period and source bounds, missing metadata, same-model relays and snapshot conservation
+RUN usage-index
+PASS: SQLite production indexing, cumulative deltas, dedupe, archives and aggregate conservation
+RUN model-price-source
+China vendor pages (fixtures, offline):
+  ok   GLM has rows and no zero bucket
+  ok   GLM takes the base band, like the bundled table
+  ok   StepFun step-5-preview agrees with the table
+  ok   StepFun folds the two context bands to one row per model
+  ok   MiniMax M3 takes the discounted price, like the table
+  ok   MiniMax folds the two context bands to one row per model
+  ok   MiniMax M2.x carries the published write price
+  ok   Kimi k2.7-code agrees with the table
+  ok   Kimi highspeed is its own row
+  ok   Kimi k3 reads its column sheet (two write buckets, not the hit price)
+  ok   DeepSeek v4-pro takes the PEAK price, like the table
+  ok   DeepSeek carries the legacy flash ids at the flash price
+  ok   Aliyun reads the table at all
+  ok   Aliyun qwen3.7-max agrees with the table
+  ok   Aliyun reads the prices, not the slug's digits
+  ok   Aliyun drops dated snapshots
+  ok   Aliyun keeps the model's own version stamp (qwen3.8-max-0902)
+
+models.dev (extract fixture):
+  ok   models.dev claude-opus-5-5 agrees with the bundled table
+  ok   models.dev rows are USD
+  ok   models.dev rows all have four non-zero buckets
+  ok   dated snapshots fold onto the base id
+  ok   a fetched cache read above input never leaves the parser
+  ok   a fetched zero cache bucket never leaves the parser
+  ok   a non-finite string price never leaves the parser
+  ok   the finite rows beside them are untouched
+  ok   DeepSeek's coverage list reaches every built-in row its page prices
+  ok   DeepSeek's coverage list is spelled the way lookups are done
+  ok   智谱 GLM's coverage list reaches every built-in row its page prices
+  ok   智谱 GLM's coverage list is spelled the way lookups are done
+  ok   Kimi's coverage list reaches every built-in row its page prices
+  ok   Kimi's coverage list is spelled the way lookups are done
+  ok   阿里百炼's coverage list reaches every built-in row its page prices
+  ok   阿里百炼's coverage list is spelled the way lookups are done
+  ok   阶跃星辰's coverage list reaches every built-in row its page prices
+  ok   阶跃星辰's coverage list is spelled the way lookups are done
+  ok   MiniMax's coverage list reaches every built-in row its page prices
+  ok   MiniMax's coverage list is spelled the way lookups are done
+
+PASS: all six vendor pages parse to the numbers in the bundled table; the column sheets, the peak/off-peak pairs and the entity decoding are pinned
+RUN model-price-catalog
+PASS: validation, day-key, forward-dated overrides, single vs batch commit
+PASS: a corrupt price file is quarantined to .bak, reported, and replaced on the next write
+PASS: a future price-file version is reported and left untouched
+PASS: a failed write is reported, and the in-memory edit is not pretended to be persisted
+RUN model-list-fetch
+PASS: URL candidates, response shapes, dedupe/sort, 401 survives the guessed candidates, bounded body, clipped error text, key transport
+RUN promo-key
+Island key regression passed in light and dark themes
+RUN icon-minimal
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/icon-minimal-7g83z5_4/inflated.icns is not minimal — run Tools/recompress-icon.py to save 6,092 B:
+  ic12: 12,420 -> 6,328
+PASS: Sources/AppIcon.icns is minimal (1,705,955 B)
+PASS: Sources/AppIcon-Dev.icns is minimal (1,884,046 B)
+PASS: both committed icons are minimal; --check rejects a re-inflated copy without writing
+RUN connector-batch
+PASS: batch capability derived from the card's own rules; disable skips already-off; Cursor takes both commands (state unreadable); remove follows canRemove; client-managed rows are skipped by every action; outcome line matches the action and failures stay out of it
+PASS: platform view narrows the same-name association; 启停 is a directory move that never writes client config; parked symlinks, occupied restore paths and broken registries refuse safely; dev gate moves nothing
+RUN provider-delete
+PASS: deleting the live provider restores the official client config, an inactive delete does not, and the page's restore precedes the removal on both clients
+RUN feishu-documents
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-feishu-tests-7o8ydzr1/regression.swift:2448:9: warning: using '_' to ignore the result of a Void-returning function is redundant
+2446 |                                 replacementRange: NSRange(location: NSNotFound, length: 0))
+2447 |         precondition(composing.hasMarkedText(), "the fixture must hold a live composition")
+2448 |         _ = composing.doCommand(by: #selector(NSResponder.insertTab(_:)))
+     |         `- warning: using '_' to ignore the result of a Void-returning function is redundant
+2449 |         precondition(boundaryMoves == [1], "Tab at the cell edge must announce the boundary move")
+2450 |         precondition(!composing.hasMarkedText(), "the composition must be committed before the boundary move")
+PASS: HTML tables/code/entities/row spans, safe embeds, fenced literals, task lists, escaped pipes and unique hierarchical outline anchors
+PASS: source-preserving inline replacements, Unicode/CRLF/frontmatter, shared HTML ranges, nested lists and callouts
+PASS: Lark callout, grid, checkbox, mention, color, formula, bookmark and whiteboard source
+PASS: native rich text marks, links, literal punctuation and safe serialization
+PASS: production native editor typing preserves marks and Unicode; native undo restores content
+PASS: IME composition commits before boundary moves; table structure undo survives unfocused cells and editor rebuilds
+PASS: real merged table topology, editable dimensions, row/column operations, preserved cell HTML, safe links and HTML leaf ranges
+PASS: Feishu production JSON/Drive/search/Wiki parsing, pagination arguments, URL boundary, secret-safe errors, dev isolation, preview state, and child cancellation
+PASS: production auth status, login cancellation, account cache isolation, cache hits, deduplicated pagination, revision-safe saves, failure retention and create-then-open with mocked CLI
+PASS: production CLI transport drains simultaneous pipes, streams large stdin, preserves literal arguments, caps output, suppresses raw stderr, and cancels only its mock child
+RUN feishu-component
+PASS: SDK signature vector, credential-free payload, dev host/auth entry gates
+PASS: exact ephemeral loopback route, GET only, cache suppression, shutdown
+RUN widget-tint
+PASS: all 56 bundled model slugs hash to the same palette slot in Theme and the widget, and every token magnitude boundary agrees
+RUN widget-snapshot
+PASS: the older payload decodes with empty external sessions, the optionals stay nil, and the current shape round-trips through the shipped encoder
+RUN capture-retention
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-capture-3nkpkbd9/Regression.swift:76:9: warning: result of call to 'exec(_:args:)' is unused [#NoUsage]
+ 74 |         // connection-level setting, and the DELETE is cheap because
+ 75 |         // `capture_id` is the payloads primary key.
+ 76 |         exec("""
+    |         `- warning: result of call to 'exec(_:args:)' is unused [#NoUsage]
+ 77 |             DELETE FROM payloads WHERE capture_id NOT IN (
+ 78 |                 SELECT id FROM captures ORDER BY id DESC LIMIT \(listLimit)
+
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-capture-3nkpkbd9/Regression.swift:81:9: warning: result of call to 'exec(_:args:)' is unused [#NoUsage]
+ 79 |             )
+ 80 |             """, args: [])
+ 81 |         exec("""
+    |         `- warning: result of call to 'exec(_:args:)' is unused [#NoUsage]
+ 82 |             DELETE FROM captures WHERE id NOT IN (
+ 83 |                 SELECT id FROM captures ORDER BY id DESC LIMIT \(listLimit)
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+PASS: capture prune keeps the newest 120 rows and returns their pages to the filesystem
+RUN capture-detail
+/var/folders/lj/c89d7x7s0rn6_0gz9xrbvd040000gn/T/claudebar-capture-detail-s_1bodjs/Regression.swift:866:9: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 864 | @main struct Regression {
+ 865 |     @MainActor static func main() async throws {
+ 866 |         try sqlite3_open(":memory:", &StoreFixture.db)
+     |         `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+ 867 |         sqlite3_exec(StoreFixture.db, """
+ 868 |             CREATE TABLE captures (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+PASS: detail derivation, 64-bit token columns, timestamp fallback, eviction publishing and clip folding
+RUN swarm-grid
+PASS: swarm grid packing/slots/strip invariants across the size matrix
+RUN cursor-ledger-lifecycle
+PASS: Cursor ledger revocation clears the reading and its file, a late completion cannot republish, and a regrant re-reads the last requested window
+PASS: warm start loads the seeded reading with the switch on
+PASS: warm start ignores the seeded reading with the switch off
+RUN command-palette-reopen
+appear#1 rows=[]
+gap 0ms: re-adopted
+same-transaction shape covered by gap 0
+gap 20ms: re-adopted
+gap 50ms: re-adopted
+gap 80ms: re-adopted
+gap 120ms: re-adopted
+gap 160ms: re-adopted
+appear#2 rows=[]
+gap 500ms: remounted
+PASS: 2 mounts, 1 unmounts across 7 close→re-open cycles, no stale frame
+RUN permission-status
+PASS: screen-recording status distinguishes refused from never-asked, under both build channels
+RUN screenshot-overlay
+PASS: pin chrome bar and buttons stay inside the window across layout and rescale; toolbar size is final at init
+RUN render-preview
+PASS: popup and island preview probes compile; crop and action-bar faces come from production
+RUN wooden-fish
+PASS: private counts, restoration, midnight, reset, overflow, multi-screen placement, golden proportions, manual rhythm, coalesced words, reduced motion and damped PCM
+PASS: production wooden-fish model, artwork, controls, audio and controller compile
+RUN capture-isolation
+PASS: 抓包 stays on the client that owns it while name/key/models keep syncing
+PASS: Claude 抓包 self-heals the cross-client residue and leaves consistent state alone
+RUN free-model-gateway
+PASS: phase push, bounded output pulses, short completion/failover, cancellation/revision cleanup, nonoverlapping topology
+PASS: saved-provider batch import, dedup/preserved assignments, atomic validation, free catalog guard and credential privacy
+PASS: zero-price discovery, automatic task classification/continuation/upward selection, explicit tiers/validation/migration, capabilities, cooldown, admission, privacy and private storage
+PASS: per-provider shared permits, free-provider selection, FIFO/global/byte bounds, cancellation, timeout, fallback transfer, live reconfiguration, shutdown, burst isolation and legacy migration
+PASS: production store import completion follows durable save without UI-frame observation; rejection and write failure retain state
+PASS: real HTTP provider isolation, bounded queue/Retry-After, queue timeout without upstream debit, queued socket withdrawal and streaming-disconnect permit release
+PASS: real auth, credential injection, three-protocol automatic and explicit difficulty routing, strict tier failover, 429/401 fallback, first-frame fallback and no midstream retry
+PASS: 100 suites in 619.79s

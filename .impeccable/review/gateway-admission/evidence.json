@@ -1,0 +1,40 @@
+{
+  "kind": "native macOS settings + isolated production policy/loopback validation",
+  "source_sha256": {
+    "Sources/ClaudeBar/Models/FreeModelPool.swift": "6152900ac205e725f9a509eaf1630d0f27abd5e3cf242acb4738cb9e290b093e",
+    "Sources/ClaudeBar/Models/FreeModelGatewayStore.swift": "d628f587440fb038ffe72d0a7dc41196364a637a96922b3ea199cd3e7de0bd40",
+    "Sources/ClaudeBar/Utils/FreeModelGateway.swift": "77d912cb3540776aa917e41c6606d04c5132f9807cf8c8641932e2f12d9a6681",
+    "Sources/ClaudeBar/Utils/CodexProxyServer.swift": "5b1de7bc9705693f50e9545794b68e4171eba2584a970c9f4377b7cefdb8771d",
+    "Sources/ClaudeBar/Views/Shared/FreeModelGatewayView.swift": "74e017495c445d73fb13ff21d8075a3862bc4741c2b32f024466f10b4190b258",
+    "Tests/free-model-gateway-regressions.py": "dfff527b224c822a4ea6035ee5f7cb9f8fb08779fcdd8382a0b6b03002845d06",
+    "Tools/render-model-gateway-preview.py": "083998d12f6d3dbec5be4b7dbf783b05750049ea33caa7e3594fcc242b90dce1"
+  },
+  "snapshot": "/Users/wangxiajun/Project/ClaudeBar/.build/gateway-import-validation/1791627666878423000",
+  "full_regression": {
+    "suites": 100,
+    "seconds": 619.79,
+    "note": "passed before final pre-header callback ownership correction"
+  },
+  "final_targeted": {
+    "group": "free-model-gateway",
+    "seconds": 71.1,
+    "result": "passed; includes final pre-header and streaming disconnect cases"
+  },
+  "dev": "passed; final source; bundle/widget/URLscheme/entitlements/signature verified; no install/start",
+  "release": "passed; final source; bundle/widget/URLscheme/entitlements/signature verified; no install/start",
+  "native": "passed lifecycle + 200-model mount3rows/output12updates redraw0rows; light/dark admission captures inspected",
+  "limits": {
+    "global": 4,
+    "default_provider": 2,
+    "global_queue": 32,
+    "provider_queue": 8,
+    "queue_timeout_seconds": 30,
+    "queued_body_bytes": 67108864
+  },
+  "not_exercised": [
+    "real supplier inference or pressure test",
+    "application runtime/keyboard/VoiceOver",
+    "VPN or hardware integration"
+  ],
+  "result": "complete"
+}

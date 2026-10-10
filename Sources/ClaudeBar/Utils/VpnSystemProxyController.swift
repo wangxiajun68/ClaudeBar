@@ -152,7 +152,7 @@ enum VpnSystemProxyController {
     /// app holding its own proxy setting.
     nonisolated private static func bypassDomains() -> [String] {
         defaultBypass.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            + VpnProviderDirect.hosts()
+            + VpnDomainRules.providerBypass(VpnProviderDirect.hosts(), rules: VpnDomainRules.load())
     }
 
     /// Read back the HTTP proxy on **every** enabled network service — used by

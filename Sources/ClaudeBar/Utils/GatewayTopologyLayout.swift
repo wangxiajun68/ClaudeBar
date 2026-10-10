@@ -33,7 +33,7 @@ enum GatewayTopologyLayout {
             size: CGSize(width: width, height: height))
     }
 
-    /// Pin actual live endpoints (up to admission's eight requests), then the
+    /// Pin actual live endpoints (up to admission's eight requests), retain two recent completions, then the
     /// selected model, then a page of the pool. Never draw all 200 endpoints.
     static func visibleIDs(members: [FreeModelPool.Member], flights: [FreeModelGateway.Flight],
                            selected: String?, page: Int, pageSize: Int = 5) -> [String] {
@@ -41,9 +41,11 @@ enum GatewayTopologyLayout {
         var ids: [String] = []
         func append(_ id: String) { if available.contains(id), !ids.contains(id), ids.count < 9 { ids.append(id) } }
         for flight in flights where flight.phase.isActive { append(flight.memberID) }
+        for flight in flights.prefix(2) where !flight.phase.isActive { append(flight.memberID) }
         if let selected { append(selected) }
         let start = min(max(0, page) * pageSize, members.count)
         for member in members.dropFirst(start).prefix(pageSize) { append(member.id) }
-        return ids
+        let pinned = Set(ids)
+        return members.map(\.id).filter { pinned.contains($0) }
     }
 }

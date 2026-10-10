@@ -51,6 +51,7 @@ struct AppPreferences {
 }
 
 enum VpnProviderDirect { static func hosts() -> [String] { [] } }
+enum VpnDomainRules { static func load() -> [String] { [] }; static func providerBypass(_ hosts: [String], rules: [String]) -> [String] { hosts } }
 
 /// Scripted `networksetup`: it models per-service web-proxy and DNS state, so
 /// a write command changes what the next read returns — exactly the read-back

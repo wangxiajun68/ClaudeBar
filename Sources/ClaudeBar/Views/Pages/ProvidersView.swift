@@ -13,6 +13,7 @@ struct ProvidersView: View {
     @State private var selectedID: UUID?
     @State private var connectionEdit: ProviderConnectionRoute?
     @State private var setupEntry: ProviderCatalogEntry?
+    @State private var gatewayImport: GatewayProviderImportRoute?
     /// What the last 导入 said. The store's `importSummary` is the same string,
     /// but the page cannot read it: the band is redrawn from `Facts`, which
     /// deliberately does not observe it, so a one-off outcome is local state
@@ -86,6 +87,9 @@ struct ProvidersView: View {
                 ProviderConnectionEditor(client: client, draft: draft, onSave: saveConnection,
                                          onDelete: route.isNew ? nil : { deleteConnection(route.id) })
             }
+        }
+        .sheet(item: $gatewayImport) { route in
+            GatewayProviderImportView(providerIDs: route.providerIDs)
         }
         .sheet(item: $setupEntry) { entry in
             ProviderQuickSetup(draft: .init(entry: entry, client: client), onSave: saveSetup)
@@ -161,7 +165,8 @@ struct ProvidersView: View {
             onClearFilters: { query = ""; category = nil; configuredOnly = false },
             onSelect: { setupEntry = $0 },
             onOpen: { connectionEdit = ProviderConnectionRoute(id: $0.id, isNew: false) },
-            onToggleCapture: { setCapture($0, enabled: $1) }
+            onToggleCapture: { setCapture($0, enabled: $1) },
+            onImportToAuto: { gatewayImport = .init(providerIDs: $0.map(\.id)) }
         )
         .equatable()
         // Not in the mount frame: `refreshBalance` flips `balanceLoading`

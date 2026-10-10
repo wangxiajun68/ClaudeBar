@@ -79,11 +79,13 @@ final class CodexProxyServer: @unchecked Sendable {
     /// Called as soon as `URLSession` hands one back.
     private static func attachUpstream(_ tap: CaptureTap?, task: URLSessionDataTask) {
         tap?.attachUpstreamAbort { task.cancel() }
+        gatewayLifetime?.attach(task)
     }
 
     /// Raised before issuing an upstream request when the interrupt already
     /// landed — the connection is gone, so the request would be pure waste.
     private static func throwIfInterrupted(_ tap: CaptureTap?) throws {
+        try Task.checkCancellation()
         if wasInterrupted() || tap?.isInterrupted == true { throw URLError(.cancelled) }
     }
 
@@ -784,7 +786,69 @@ final class CodexProxyServer: @unchecked Sendable {
 
     // MARK: - Third-party free-model gateway
 
+    /// Owns only the Auto request's transport task. Peer closure must remove a
+    /// queued waiter even when no upstream/capture has been created yet.
+    private final class GatewayConnectionLifetime: @unchecked Sendable {
+        private let lock = NSLock()
+        private let connection: NWConnection
+        private var operation: Task<Void, Never>?
+        private var upstream: URLSessionDataTask?
+        private var cancelled = false
+        private var finished = false
+        init(_ connection: NWConnection) { self.connection = connection }
+        func bind(_ operation: Task<Void, Never>) {
+            lock.lock(); let cancel = cancelled || finished
+            if !cancel { self.operation = operation }
+            lock.unlock()
+            if cancel { operation.cancel() }
+        }
+        func attach(_ task: URLSessionDataTask) {
+            lock.lock(); let cancel = cancelled || finished
+            if !cancel { upstream = task }
+            lock.unlock()
+            if cancel { task.cancel() }
+        }
+        func watch() {
+            connection.stateUpdateHandler = { [weak self] state in
+                switch state { case .failed, .cancelled: self?.cancel(); default: break }
+            }
+            // The complete HTTP body has already been consumed. This proxy
+            // closes after each response; it does not accept pipelined calls.
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] data, _, ended, error in
+                if ended || error != nil || data?.isEmpty == false { self?.cancel() }
+            }
+        }
+        func cancel() {
+            lock.lock()
+            guard !finished, !cancelled else { lock.unlock(); return }
+            cancelled = true
+            let operation = operation, upstream = upstream
+            self.operation = nil; self.upstream = nil
+            lock.unlock()
+            operation?.cancel(); upstream?.cancel()
+        }
+        func finish() {
+            lock.lock(); finished = true; operation = nil; upstream = nil; lock.unlock()
+            connection.stateUpdateHandler = nil
+        }
+    }
+    @TaskLocal private static var gatewayLifetime: GatewayConnectionLifetime?
+
     private func forwardGateway(_ connection: NWConnection, request: HTTPRequest,
+                                json: [String: Any], path: String) async {
+        let lifetime = GatewayConnectionLifetime(connection)
+        let operation = Task {
+            await Self.$gatewayLifetime.withValue(lifetime) {
+                await runGateway(connection, request: request, json: json, path: path)
+            }
+        }
+        lifetime.bind(operation); lifetime.watch()
+        await withTaskCancellationHandler { await operation.value } onCancel: { lifetime.cancel() }
+        lifetime.finish()
+        connection.cancel()
+    }
+
+    private func runGateway(_ connection: NWConnection, request: HTTPRequest,
                                 json: [String: Any], path: String) async {
         let gateway = FreeModelGateway.shared
         var plan: FreeModelGateway.Plan?
@@ -801,15 +865,17 @@ final class CodexProxyServer: @unchecked Sendable {
             }
             let adapted = try GatewayWireAdapter.request(json, path: path)
             let requirements = try GatewayRequirements(chat: adapted.chat)
-            let selected = try await gateway.begin(requirements)
+            let selected = try await gateway.begin(requirements, requestBytes: request.body?.count ?? 0)
             plan = selected
             let deadline = Date().addingTimeInterval(60)
             var lastFailure: Error = GatewayFailure.coolingDown
-            for candidate in selected.candidates {
+            var remaining = selected.candidates
+            while !remaining.isEmpty {
                 try Self.throwIfInterrupted(nil)
                 guard Date() < deadline else { break }
-                guard await gateway.canAttempt(candidate, plan: selected) else { continue }
-                try await gateway.started(candidate, plan: selected)
+                guard let candidate = try await gateway.acquireAttempt(remaining, plan: selected,
+                    waitTimeout: deadline.timeIntervalSinceNow) else { break }
+                remaining.removeAll { $0.member.id == candidate.member.id }
                 do {
                     try await forwardGatewayCandidate(connection, request: request, adapted: adapted,
                         candidate: candidate, plan: selected, headWritten: &headWritten)
@@ -832,7 +898,8 @@ final class CodexProxyServer: @unchecked Sendable {
                 if code == 0 { if let plan { await gateway.finish(plan) }; return }
                 let message = (error as? GatewayFailure)?.localizedDescription
                     ?? "自动网关请求失败，请检查模型池或稍后重试。"
-                let event: [String: Any] = ["type": "error", "error": ["type": "gateway_error", "message": message]]
+                let failure = error as? GatewayFailure
+                let event: [String: Any] = ["type": "error", "error": ["type": "gateway_error", "code": failure?.code ?? "gateway_error", "message": message]]
                 if headWritten {
                     if anthropic { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
                     else if path.hasSuffix("/responses") {
@@ -845,7 +912,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     // Before any head is sent, preserve a real HTTP error even
                     // for stream clients; never pretend a failed request is 200.
                     await respond(connection, status: "\(max(400, code)) Error", contentType: "application/json",
-                        body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data())
+                        body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data(), retryAfter: failure?.retryAfter)
                 }
             }
         }
@@ -884,8 +951,13 @@ final class CodexProxyServer: @unchecked Sendable {
             req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             req.setValue(streamUpstream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
             try Self.throwIfInterrupted(tap)
+            let lifetime = Self.gatewayLifetime
             let (bytes, response) = try await GatewayNetwork.shared.session.bytes(for: req,
-                delegate: InterruptWatcher { Self.attachUpstream(tap, task: $0) })
+                delegate: InterruptWatcher {
+                    Self.attachUpstream(tap, task: $0)
+                    // Delegate callbacks do not inherit the caller's task locals.
+                    lifetime?.attach($0)
+                })
             task = bytes.task
             Self.attachUpstream(tap, task: bytes.task)
             guard let http = response as? HTTPURLResponse else { throw GatewayFailure.upstream(502) }
@@ -994,6 +1066,7 @@ final class CodexProxyServer: @unchecked Sendable {
             }
             tap?.finish(state: .done, status: 200, error: nil)
             log.finish(status: 200, tokens: totals)
+            task?.cancel()
             await FreeModelGateway.shared.report(candidate, plan: plan, status: 200, latency: latency)
         } catch {
             let interrupted = Self.wasInterrupted() || GatewayWireAdapter.status(error) == 0
@@ -1001,6 +1074,7 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: interrupted ? .aborted : .error, status: status,
                         error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）")
             log.finish(status: status, error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）", tokens: totals)
+            task?.cancel()
             await FreeModelGateway.shared.report(candidate, plan: plan, status: status,
                 latency: Date().timeIntervalSince(started), retryAfter: retryAfter)
             throw error
@@ -1599,8 +1673,9 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
-    private func respond(_ connection: NWConnection, status: String, contentType: String, body: Data) async {
-        let head = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+    private func respond(_ connection: NWConnection, status: String, contentType: String, body: Data, retryAfter: Int? = nil) async {
+        let retry = retryAfter.map { "Retry-After: \(max(1, $0))\r\n" } ?? ""
+        let head = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n\(retry)Connection: close\r\n\r\n"
         await write(connection, data: Data(head.utf8) + body)
     }
 }

@@ -6,6 +6,7 @@ Only synthetic providers, temporary files and owned fixture processes are used.
 from pathlib import Path
 import http.client
 import json
+import socket
 import subprocess
 import tempfile
 import threading
@@ -30,7 +31,7 @@ def method(source, marker):
     end = source.index('\n    }', start) + len('\n    }')
     return source[start:end]
 
-common = [utils/'GatewayTopologyLayout.swift', models/'FreeModelPool.swift', utils/'GatewayTaskRouter.swift', utils/'FreeModelGateway.swift', utils/'PrivateFileWriter.swift',
+common = [utils/'GatewayProviderImport.swift', utils/'GatewayTopologyLayout.swift', models/'FreeModelPool.swift', utils/'GatewayTaskRouter.swift', utils/'FreeModelGateway.swift', utils/'PrivateFileWriter.swift',
           utils/'GatewayWireAdapter.swift', utils/'ConversationMedia.swift', utils/'AgentProtocolBridge.swift',
           utils/'CodexProxyTransform.swift']
 
@@ -63,7 +64,7 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
             precondition(!FreeModelPool.isOpenRouter(base))
         }
         let id = UUID(), otherID = UUID()
-        var pool = FreeModelPool(); pool.enabled = true; pool.maxConcurrent = 1
+        var pool = FreeModelPool(); pool.enabled = true; pool.maxConcurrent = 1; pool.maxQueued = 0
         pool.members = [catalog[0].member(providerID:id), catalog[0].member(providerID:otherID)]
         pool.catalog = catalog; pool.discoveredAt = Date()
         let endpoint = FreeModelGateway.Endpoint(id:id,name:"A",baseURL:"https://openrouter.ai/api/v1",apiKey:"fixture-a")
@@ -168,6 +169,7 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         let later = Date().addingTimeInterval(61)
         let after = try await gateway.begin(requirements,now:later)
         try await gateway.started(after.candidates[0],plan:after,now:later)
+        await gateway.report(after.candidates[0],plan:after,status:500,latency:0.1,now:later)
         await expect(.rateLimited) { try await gateway.started(after.candidates[1],plan:after,now:later) }
         await gateway.finish(after)
         pool.requestsPerMinute = 60; pool.discoveredAt = Date().addingTimeInterval(-49*3600)
@@ -249,6 +251,42 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         let mapped = GatewayTopologyLayout.visibleIDs(members:many,flights:flights,selected:many[0].id,page:0)
         precondition(mapped.count <= 9 && Set(flights.map(\.memberID)).isSubset(of:Set(mapped)))
         print("PASS: phase push, bounded output pulses, short completion/failover, cancellation/revision cleanup, nonoverlapping topology")
+
+        let importID = UUID()
+        let configured = CodexProvider(id:importID,apiKey:"fixture-import-secret",baseURL:"https://example.test/v1",
+            models:[.init(name:"manual-a"),.init(name:"manual-b")])
+        let manualA = FreeModelPool.Member(providerID:importID,model:"manual-a",name:"A",contextLength:64000,
+            supportsTools:true,supportsImages:false,supportsJSON:false,difficulties:[.medium])
+        var manualB = manualA; manualB.model = "manual-b"; manualB.name = "B"
+        var importPool = FreeModelPool()
+        importPool.members = [manualA]; importPool.members[0].enabled = false
+        var duplicateA = manualA; duplicateA.difficulties = [.high]
+        let merged = try GatewayProviderImport.merge([duplicateA,manualB,manualB],into:importPool,providers:[configured],confirmedFree:true)
+        precondition(merged.members.count == 2 && merged.members[0] == importPool.members[0] && !merged.enabled)
+        precondition(!String(decoding:try JSONEncoder().encode(merged),as:UTF8.self).contains(configured.apiKey))
+        func rejectImport(_ drafts:[FreeModelPool.Member],_ current:FreeModelPool = FreeModelPool(),
+                          _ connections:[CodexProvider] = [configured],_ confirmed:Bool = true) {
+            do { _ = try GatewayProviderImport.merge(drafts,into:current,providers:connections,confirmedFree:confirmed); fatalError("Expected import rejection") }
+            catch { precondition(error is GatewayProviderImport.Failure) }
+        }
+        rejectImport([manualA],FreeModelPool(),[configured],false)
+        rejectImport([manualA],FreeModelPool(),[])
+        var missing = manualB; missing.model = "not-configured"
+        rejectImport([manualA,missing])
+        for base in ["http://example.test/v1","https://127.0.0.1/v1","https://user@example.test/v1"] {
+            var invalid = configured; invalid.baseURL = base; rejectImport([manualA],FreeModelPool(),[invalid])
+        }
+        var noKey = configured; noKey.apiKey = ""; rejectImport([manualA],FreeModelPool(),[noKey])
+        var invalidLength = manualA; invalidLength.contextLength = 0; rejectImport([invalidLength])
+        var full = FreeModelPool(); full.members = (0..<200).map { i in var m=manualA;m.model="existing-\(i)";return m }
+        rejectImport([manualB],full)
+        var router = configured; router.baseURL = "https://openrouter.ai/api/v1"; router.models = [.init(name:catalog[0].id)]
+        var routerPool = FreeModelPool(); routerPool.catalog = catalog; routerPool.discoveredAt = Date()
+        var routerDraft = catalog[0].member(providerID:importID); routerDraft.difficulties = [.high]; routerDraft.supportsTools = false
+        let routerMerged = try GatewayProviderImport.merge([routerDraft],into:routerPool,providers:[router],confirmedFree:true)
+        precondition(routerMerged.members[0].discovered && routerMerged.members[0].supportsTools && routerMerged.members[0].difficulties == [.high])
+        routerPool.discoveredAt = Date().addingTimeInterval(-49*3600); rejectImport([routerDraft],routerPool,[router])
+        print("PASS: saved-provider batch import, dedup/preserved assignments, atomic validation, free catalog guard and credential privacy")
         let storage = FreeModelPoolStorage(url:folder.appendingPathComponent("pool.json"))
         precondition(try await storage.load() == FreeModelPool())
         try await storage.save(pool)
@@ -263,8 +301,311 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
 }
 '''
 
+queue_policy = r'''
+import Foundation
+func check(_ condition: Bool, _ message: String = "") {
+    if !condition { FileHandle.standardError.write(Data(("QUEUE FAILED: " + message + "\n").utf8)); exit(1) }
+}
+func queued(_ gateway: FreeModelGateway, _ count: Int) async throws {
+    for _ in 0..<1000 {
+        if (await gateway.snapshot()).queued == count { return }
+        try await Task.sleep(for: .milliseconds(2))
+    }
+    fatalError("Queue did not reach \(count)")
+}
+func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) async {
+    do { try await operation(); fatalError("Expected \(failure)") }
+    catch { check(error as? GatewayFailure == failure, "\(error) expected \(failure)") }
+}
+func cancelled<T>(_ task: Task<T, Error>) async {
+    do { _ = try await task.value; fatalError("Expected cancellation") }
+    catch is CancellationError { }
+    catch { fatalError("Unexpected \(error)") }
+}
+@main struct QueuePolicy {
+    static func main() async throws {
+        let a = UUID(), b = UUID()
+        let endpoints = [FreeModelGateway.Endpoint(id:a,name:"A",baseURL:"https://a.example/v1",apiKey:"fixture-a"),
+                         FreeModelGateway.Endpoint(id:b,name:"B",baseURL:"https://b.example/v1",apiKey:"fixture-b")]
+        func member(_ id: UUID, _ model: String, _ tiers: [GatewayTaskDifficulty]) -> FreeModelPool.Member {
+            .init(providerID:id,model:model,name:model,contextLength:64000,supportsTools:true,supportsImages:true,supportsJSON:true,difficulties:tiers)
+        }
+        var pool = FreeModelPool(); pool.enabled = true; pool.strategy = .priority
+        pool.requestsPerMinute = 60; pool.maxConcurrent = 4; pool.defaultProviderConcurrent = 1
+        pool.maxQueued = 8; pool.queueTimeoutSeconds = 1
+        pool.members = [member(a,"a1",[.low,.medium]), member(a,"a2",[.low]), member(b,"b1",[.medium,.high])]
+        func needs(_ tier: String) throws -> GatewayRequirements {
+            try .init(chat:["messages":[["role":"user","content":"fixture"]],"max_tokens":1,"task_difficulty":tier])
+        }
+        let low = try needs("low"), medium = try needs("medium"), high = try needs("high")
+        func configured(_ value: FreeModelPool) async -> FreeModelGateway {
+            let g = FreeModelGateway(); await g.configure(value,endpoints:endpoints); return g
+        }
+        let g = await configured(pool)
+        let first = try await g.begin(low)
+        try await g.started(first.candidates[0],plan:first)
+        let blocked = Task { try await g.begin(low) }
+        try await queued(g,1)
+        let both = try await g.begin(medium)
+        check(both.candidates[0].endpoint.id == b,"saturated A must not block ready B")
+        try await g.started(both.candidates[0],plan:both)
+        let busy = await g.snapshot()
+        check(busy.active == 2 && busy.queued == 1 && busy.requests == 2)
+        check(busy.providers[a]?.active == 1 && busy.providers[b]?.active == 1)
+        check(busy.flights.count == 2,"queued call cannot manufacture a connecting flight")
+        await g.finish(first)
+        let next = try await blocked.value
+        check(next.candidates[0].endpoint.id == a)
+        await g.finish(next); await g.finish(both)
+        check((await g.snapshot()).active == 0)
+        await expect(.interrupted) { _ = try await g.acquireAttempt(first.candidates,plan:first) }
+
+        var partitioned = pool; partitioned.providerQueueCapacity = 1
+        let partitions = await configured(partitioned)
+        let partitionA = try await partitions.begin(low), partitionB = try await partitions.begin(high)
+        let waitingA = Task { try await partitions.begin(low) }; try await queued(partitions,1)
+        await expect(.queueFull) { _ = try await partitions.begin(low) }
+        let waitingB = Task { try await partitions.begin(medium) }; try await queued(partitions,2)
+        check((await partitions.snapshot()).providers[b]?.queued == 1,"full A queue must leave B queue available")
+        await partitions.finish(partitionB)
+        let unblockedB = try await waitingB.value
+        let partitionLoad = await partitions.snapshot()
+        check(unblockedB.candidates[0].endpoint.id == b && partitionLoad.queued == 1)
+        await partitions.finish(unblockedB); await partitions.finish(partitionA)
+        let unblockedA = try await waitingA.value; await partitions.finish(unblockedA)
+
+        let cooled = await configured(pool)
+        let offending = try await cooled.begin(low)
+        var twoSlots = pool; twoSlots.defaultProviderConcurrent = 2
+        await cooled.configure(twoSlots,endpoints:endpoints); await cooled.finish(offending)
+        let failing = try await cooled.begin(medium), reserved = try await cooled.begin(medium)
+        try await cooled.started(failing.candidates[0],plan:failing)
+        await cooled.report(failing.candidates[0],plan:failing,status:401,latency:0.1)
+        let alternate = await cooled.preferredAttempt(reserved.candidates,plan:reserved)
+        check(alternate?.endpoint.id == b,"unused reservation must transfer after concurrent account cooldown")
+        try await cooled.started(alternate!,plan:reserved)
+        await cooled.finish(failing);await cooled.finish(reserved)
+
+        var serial = pool; serial.maxConcurrent = 1
+        let fifo = await configured(serial)
+        let held = try await fifo.begin(low)
+        let second = Task { try await fifo.begin(low) }; try await queued(fifo,1)
+        let third = Task { try await fifo.begin(low) }; try await queued(fifo,2)
+        await fifo.finish(held)
+        let secondPlan = try await second.value
+        let fifoLoad = await fifo.snapshot()
+        check(fifoLoad.active == 1 && fifoLoad.queued == 1)
+        await fifo.finish(secondPlan)
+        let thirdPlan = try await third.value; await fifo.finish(thirdPlan)
+        check((await fifo.snapshot()).requests == 3)
+
+        serial.maxQueued = 1
+        let bounded = await configured(serial)
+        let owner = try await bounded.begin(low)
+        let waiting = Task { try await bounded.begin(low) }; try await queued(bounded,1)
+        await expect(.queueFull) { _ = try await bounded.begin(high) }
+        waiting.cancel(); await cancelled(waiting); try await queued(bounded,0)
+        let expiry = Task { try await bounded.begin(low) }; try await queued(bounded,1)
+        await expect(.queueTimedOut) { _ = try await expiry.value }
+        let expiredLoad = await bounded.snapshot()
+        check(expiredLoad.requests == 1 && expiredLoad.queued == 0)
+        check((await bounded.snapshot()).health.isEmpty)
+        await bounded.finish(owner)
+        serial.maxQueued = 0; let immediate = await configured(serial)
+        let occupied = try await immediate.begin(low)
+        await expect(.busy) { _ = try await immediate.begin(low) }
+        await immediate.finish(occupied)
+
+        let bytes = await configured(pool)
+        let byteOwner = try await bytes.begin(low)
+        let huge = Task { try await bytes.begin(low,requestBytes:64*1024*1024) }
+        try await queued(bytes,1)
+        check((await bytes.snapshot()).queuedBytes == 64*1024*1024)
+        await expect(.queueFull) { _ = try await bytes.begin(low,requestBytes:1) }
+        huge.cancel(); await cancelled(huge); await bytes.finish(byteOwner)
+
+        var fallbackPool = pool; fallbackPool.maxConcurrent = 2
+        let switching = await configured(fallbackPool)
+        let blockedB = try await switching.begin(high)
+        let route = try await switching.begin(medium)
+        try await switching.started(route.candidates[0],plan:route)
+        await switching.report(route.candidates[0],plan:route,status:500,latency:0.1)
+        let retry = Task { try await switching.started(route.candidates[1],plan:route) }
+        try await queued(switching,1)
+        check((await switching.snapshot()).providers[a]?.active == 0,"failed provider permit must be released before fallback wait")
+        check((await switching.snapshot()).providers[b]?.active == 1)
+        let independent = try await switching.begin(low)
+        check((await switching.snapshot()).active == 2,"fallback wait must not hold a global permit needed by an independent provider")
+        await switching.finish(independent)
+        await switching.finish(blockedB); try await retry.value
+        check((await switching.snapshot()).providers[b]?.active == 1)
+        check((await switching.snapshot()).flights.first?.attempt == 2)
+        await switching.finish(route)
+        check((await switching.snapshot()).providers.values.allSatisfy { $0.active == 0 })
+
+        let c = UUID()
+        var multi = pool; multi.maxConcurrent = 3
+        multi.members.append(member(c,"c1",[.medium,.high]))
+        let alternatives = FreeModelGateway()
+        await alternatives.configure(multi,endpoints:endpoints + [.init(id:c,name:"C",baseURL:"https://c.example/v1",apiKey:"fixture-c")])
+        let holdB = try await alternatives.begin(high), holdC = try await alternatives.begin(high)
+        let failA = try await alternatives.begin(medium)
+        try await alternatives.started(failA.candidates[0],plan:failA)
+        await alternatives.report(failA.candidates[0],plan:failA,status:500,latency:0.1)
+        let alternateWait = Task { try await alternatives.acquireAttempt(Array(failA.candidates.dropFirst()),plan:failA) }
+        try await queued(alternatives,1)
+        await alternatives.finish(holdC)
+        let actualAlternate = try await alternateWait.value
+        check(actualAlternate?.endpoint.id == c,"waiting retry must reconsider another provider that became available")
+        check((await alternatives.snapshot()).providers[b]?.active == 1)
+        await alternatives.finish(failA);await alternatives.finish(holdB)
+
+        let edit = await configured(pool)
+        let editOwner = try await edit.begin(low)
+        let old = Task { try await edit.begin(low) }; try await queued(edit,1)
+        var changed = pool; changed.providerConcurrent[a.uuidString] = 2
+        await edit.configure(changed,endpoints:endpoints)
+        await expect(.interrupted) { _ = try await old.value }
+        await expect(.interrupted) { _ = try await edit.acquireAttempt(editOwner.candidates,plan:editOwner) }
+        check((await edit.snapshot()).providers[a]?.active == 1,"configuration must not erase live reservations")
+        let more = try await edit.begin(low)
+        check((await edit.snapshot()).providers[a]?.active == 2)
+        changed.providerConcurrent[a.uuidString] = 1
+        await edit.configure(changed,endpoints:endpoints)
+        let narrowed = Task { try await edit.begin(low) }; try await queued(edit,1)
+        await edit.finish(editOwner)
+        check((await edit.snapshot()).queued == 1,"lowered limit must drain below the new limit")
+        await edit.finish(more)
+        let resumed = try await narrowed.value
+        await edit.finish(resumed)
+        let stopOwner = try await edit.begin(low)
+        let stopWait = Task { try await edit.begin(low) }; try await queued(edit,1)
+        await edit.shutdown(); await expect(.disabled) { _ = try await stopWait.value }
+        await expect(.disabled) { _ = try await edit.begin(high) }
+        await edit.finish(stopOwner)
+
+        var bulk = pool; bulk.maxQueued = 128; bulk.providerQueueCapacity = 128; bulk.queueTimeoutSeconds = 10
+        let burst = await configured(bulk)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for i in 0..<40 {
+                group.addTask {
+                    let p = try await burst.begin(i.isMultiple(of:2) ? low : high)
+                    try await burst.started(p.candidates[0],plan:p)
+                    let snapshot = await burst.snapshot()
+                    check(snapshot.active <= bulk.maxConcurrent && snapshot.providers.values.allSatisfy { $0.active <= $0.limit },"burst oversubscription")
+                    try await Task.sleep(for:.milliseconds(2))
+                    await burst.finish(p)
+                }
+            }
+            try await group.waitForAll()
+        }
+        let done = await burst.snapshot()
+        check(done.active == 0 && done.queued == 0 && done.requests == 40)
+        check(done.providers.values.allSatisfy { $0.active == 0 })
+        check(!String(describing:done).contains("fixture-a"))
+
+        var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(pool)) as! [String:Any]
+        for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds"] { legacy.removeValue(forKey:key) }
+        let loaded = try JSONDecoder().decode(FreeModelPool.self,from:JSONSerialization.data(withJSONObject:legacy))
+        check(loaded.maxConcurrent == pool.maxConcurrent && loaded.defaultProviderConcurrent == 2 && loaded.maxQueued == 32 && loaded.queueTimeoutSeconds == 30)
+        check(loaded.members == pool.members && loaded.providerConcurrent.isEmpty && loaded.providerQueueCapacity == 8)
+        for mutate: (inout FreeModelPool) -> Void in [
+            { $0.defaultProviderConcurrent = 0 }, { $0.providerConcurrent[a.uuidString] = 9 },
+            { $0.providerConcurrent["not-a-provider"] = 1 }, { $0.maxQueued = 129 },
+            { $0.maxQueued = -1 }, { $0.providerQueueCapacity = 0 }, { $0.providerQueueCapacity = 129 }, { $0.queueTimeoutSeconds = 0 }, { $0.queueTimeoutSeconds = 121 }] {
+            var invalid = pool; mutate(&invalid); check(invalid.validationError != nil)
+        }
+        check(GatewayFailure.queueFull.status == 429 && GatewayFailure.queueTimedOut.status == 504)
+        print("PASS: per-provider shared permits, free-provider selection, FIFO/global/byte bounds, cancellation, timeout, fallback transfer, live reconfiguration, shutdown, burst isolation and legacy migration")
+    }
+}
+'''
+
+store_completion = r'''
+import Foundation
+import Combine
+
+enum FilePaths {
+    static var freeModelPoolFile: URL {
+        URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("store/pool.json")
+    }
+}
+struct Provider { var id = UUID() }
+@MainActor final class CodexProviderStore: ObservableObject {
+    @Published var providers: [CodexProvider] = []
+}
+@MainActor final class ProviderStore: ObservableObject {
+    @Published var providers: [Provider] = []
+}
+enum ProviderBridge {
+    static func toCodex(_ provider: Provider) -> CodexProvider {
+        .init(id: provider.id, apiKey: "fixture-only", baseURL: "https://fixture.example/v1", models: [])
+    }
+}
+@main struct StoreCompletion {
+    @MainActor static func main() async throws {
+        let storage = FreeModelPoolStorage(url: FilePaths.freeModelPoolFile)
+        var initial = FreeModelPool(); initial.discoveryEnabled = false
+        try await storage.save(initial)
+        let providers = CodexProviderStore(), claude = ProviderStore()
+        let id = UUID()
+        providers.providers = [.init(id:id,apiKey:"fixture-only",baseURL:"https://fixture.example/v1",models:[.init(name:"fixture/free")])]
+        let store = FreeModelGatewayStore()
+        store.start(providers:providers,claude:claude)
+        for _ in 0..<500 where store.loading || store.connections.isEmpty {
+            try await Task.sleep(for:.milliseconds(10))
+        }
+        precondition(store.canEdit && store.connections.count == 1)
+        let member = FreeModelPool.Member(providerID:id,model:"fixture/free",name:"Fixture",contextLength:32000,
+            supportsTools:false,supportsImages:false,supportsJSON:false)
+        var calls = 0
+        let imported: Bool = await withCheckedContinuation { continuation in
+            precondition(store.importModels([member],confirmedFree:true) { succeeded in
+                calls += 1
+                precondition(!store.saving)
+                continuation.resume(returning:succeeded)
+            })
+            // The existing write gate must reject another import immediately.
+            var rejected = false
+            precondition(!store.importModels([member],confirmedFree:true) { succeeded in
+                precondition(!succeeded); rejected = true
+            })
+            precondition(rejected)
+        }
+        let saved = try await storage.load()
+        precondition(imported && calls == 1 && saved.members == [member] && store.pool.members == [member])
+        let encoded = try Data(contentsOf:FilePaths.freeModelPoolFile)
+        precondition(!saved.enabled && !String(decoding:encoded,as:UTF8.self).contains("fixture-only"))
+        var rejected = false
+        precondition(!store.importModels([member],confirmedFree:false) { succeeded in
+            precondition(!succeeded); rejected = true
+        })
+        precondition(rejected && store.canEdit)
+        var invalid = false
+        store.change(completion:{ succeeded in precondition(!succeeded); invalid = true }) { $0.maxAttempts = 0 }
+        precondition(invalid && store.pool.maxAttempts == initial.maxAttempts && store.canEdit)
+        // A failed private write reports failure and keeps the original state.
+        let parent = FilePaths.freeModelPoolFile.deletingLastPathComponent()
+        try FileManager.default.removeItem(at:parent)
+        try Data("blocked-directory".utf8).write(to:parent)
+        let failed: Bool = await withCheckedContinuation { continuation in
+            store.change(completion:{ succeeded in
+                precondition(!store.saving); continuation.resume(returning:succeeded)
+            }) { $0.enabled = true }
+        }
+        precondition(!failed && !store.pool.enabled && store.canEdit && store.error != nil)
+        store.stop()
+        var stopped = false
+        store.change(completion:{ succeeded in precondition(!succeeded); stopped = true }) { $0.enabled = true }
+        precondition(stopped)
+        print("PASS: production store import completion follows durable save without UI-frame observation; rejection and write failure retain state")
+    }
+}
+'''
+
 server = (utils/'CodexProxyServer.swift').read_text()
-selected = ['    private func forwardGateway(', '    private func forwardGatewayCandidate',
+selected = ['    private func forwardGateway(', '    private func runGateway(',
+            '    private final class GatewayConnectionLifetime', '    private func forwardGatewayCandidate',
             '    private func writeMigration', '    private func chatCompletionsURL',
             '    private func readRequest', '    private func receive', '    private func sseHead',
             '    private func write(', '    private func respond', '    private func isAuthorized',
@@ -294,7 +635,8 @@ class CodexProxyServer: @unchecked Sendable {
     struct HTTPRequest { var method:String; var path:String; var headers:[String:String]; var body:Data? }
     static func throwIfInterrupted(_ tap:CaptureTap?) throws { try Task.checkCancellation() }
     static func wasInterrupted() -> Bool { Task.isCancelled }
-    static func attachUpstream(_ tap:CaptureTap?,task:URLSessionDataTask) {}
+    static func attachUpstream(_ tap:CaptureTap?,task:URLSessionDataTask) { gatewayLifetime?.attach(task) }
+    @TaskLocal private static var gatewayLifetime: GatewayConnectionLifetime?
     func bindInterrupt(_ tap:CaptureTap?,connection:NWConnection) {}
     func startLog(_ request:HTTPRequest,source:ProxyLogSource,kind:ProxyLogKind,provider:String) async -> ProxyLogTap { ProxyLogTap() }
     func makeOpenAITap(kind:CaptureKind,request:HTTPRequest,json:[String:Any],rewritten:Data,stream:Bool,upstream:CodexProxyState.UpstreamEndpoint) async -> CaptureTap? { nil }
@@ -307,7 +649,10 @@ class CodexProxyServer: @unchecked Sendable {
         }
         if request.path == "/fixture/telemetry" {
             let value = await FreeModelGateway.shared.snapshot()
-            let body: [String:Any] = ["active":value.active,"flights":value.flights.map {
+            let body: [String:Any] = ["active":value.active,"queued":value.queued,"requests":value.requests,
+                "failures":value.health.values.reduce(0) { $0 + $1.failures },
+                "providers":Dictionary(uniqueKeysWithValues:value.providers.map { ($0.key.uuidString,["active":$0.value.active,"limit":$0.value.limit,"queued":$0.value.queued]) }),
+                "flights":value.flights.map {
                 ["phase":$0.phase.rawValue,"memberID":$0.memberID,"attempt":$0.attempt,"pulses":$0.outputPulses,"request":$0.requestID.uuidString]
             }]
             await respond(connection,status:"200 OK",contentType:"application/json",body:try! JSONSerialization.data(withJSONObject:body)); return
@@ -330,6 +675,10 @@ enum CodexProxyState {
                         FreeModelPool.Member(providerID:secondID,model:"second",name:"Second",contextLength:128000,supportsTools:true,supportsImages:false,supportsJSON:true)]
         if let tiers = settings["tiers"] as? [String] {
             for index in pool.members.indices { pool.members[index].difficulties = [GatewayTaskDifficulty(rawValue:tiers[index])!] }
+        }
+        if settings["queue"] as? Bool == true {
+            pool.maxConcurrent = 2; pool.defaultProviderConcurrent = 1
+            pool.maxQueued = 2; pool.queueTimeoutSeconds = 5
         }
         let base = settings["base"] as! String
         await FreeModelGateway.shared.configure(pool,endpoints:[
@@ -360,6 +709,11 @@ class Upstream(BaseHTTPRequestHandler):
     mode = '429'
     def log_message(self, *args):
         pass
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError,ConnectionResetError):
+            pass  # Expected only when an owned disconnect fixture aborts a stream.
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.calls.append((self.path, dict(self.headers), body))
@@ -380,14 +734,19 @@ class Upstream(BaseHTTPRequestHandler):
                       'usage': {'prompt_tokens':10,'completion_tokens':2,'total_tokens':12}}
             data = json.dumps(result).encode()
             self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(data); return
+        if self.mode == 'preheaders':
+            self.release['first' if first else 'second'].wait(timeout=10)
         self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
         if self.mode == 'slow':
-            self.wfile.flush(); time.sleep(0.3)
+            # A comment opens URLSession's bytes delivery without model output.
+            self.wfile.write(b': heartbeat\n\n'); self.wfile.flush(); time.sleep(0.3)
         if first and self.mode == 'sse-error':
             self.wfile.write(b'data: {"error":{"code":429,"message":"fixture unavailable"}}\n\n'); return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"fixture answer"}}]}\n\n')
         if self.mode == 'slow':
             self.wfile.flush(); time.sleep(0.6)
+        if self.mode == 'queue':
+            self.wfile.flush(); self.release['first' if first else 'second'].wait(timeout=10)
         if self.mode == 'incomplete':
             return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n')
@@ -400,6 +759,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
     catalog = (models/'ProviderCatalog.swift').read_text().split('struct ProviderSetupDraft')[0]
     state = (models/'CodexProxyState.swift').read_text()
     types.write_text(catalog + '\nenum LocalProxyAddress {\n' + method(state, '    static func isLoopback') + '\n}\n')
+    types.write_text(types.read_text() + '\nstruct CodexModelConfig: Equatable { var name:String; var contextWindow = \"32000\" }\nstruct CodexProvider: Equatable { var id:UUID; var name = \"Fixture\"; var apiKey:String; var baseURL:String; var models:[CodexModelConfig] }\n')
     common.append(types)
     policy = policy.replace('precondition(', 'check(')
     policy = 'func check(_ value:Bool,_ message:String = "") { if !value { FileHandle.standardError.write(Data(("FAILED: " + message + "\\n").utf8)); exit(1) } }\n' + policy
@@ -407,6 +767,14 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
     binary = folder/'policy'
     subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(policy_file),'-o',str(binary)],check=True)
     subprocess.run([str(binary),temporary],check=True)
+    queue_file = folder/'QueuePolicy.swift'; queue_file.write_text(queue_policy)
+    queue_binary = folder/'queue-policy'
+    subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(queue_file),'-o',str(queue_binary)],check=True)
+    subprocess.run([str(queue_binary)],check=True,timeout=30)
+    store_file = folder/'StoreCompletion.swift'; store_file.write_text(store_completion)
+    store_binary = folder/'store-completion'
+    subprocess.run(['swiftc','-O','-parse-as-library',*map(str,common),str(models/'FreeModelGatewayStore.swift'),str(store_file),'-o',str(store_binary)],check=True)
+    subprocess.run([str(store_binary),temporary],check=True,timeout=20)
     transport_file = folder/'Transport.swift'; transport_file.write_text(transport)
     bridge_config = utils/'MigrationBridgeConfiguration.swift'
     # chatCompletionsURL is the existing production joiner; its unrelated
@@ -446,7 +814,6 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                 deadline = time.monotonic()+5
                 while worker.is_alive() and time.monotonic() < deadline:
                     _t=telemetry()['flights']
-                    if _t: print('SAMPLE', round(time.monotonic()%100,3), [_f['phase'] for _f in _t], flush=True)
                     seen.update(f['phase'] for f in _t)
                     time.sleep(0.025)
                 worker.join(timeout=5)
@@ -457,6 +824,10 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                 status,data = send(True)
             assert status == expected_status, (status,data)
             observed = telemetry()
+            deadline = time.monotonic() + 1
+            while observed['active'] and time.monotonic() < deadline:
+                time.sleep(0.01)
+                observed = telemetry()
             assert observed['active'] == 0 and all(f['phase'] not in ('connecting','waiting','streaming') for f in observed['flights']), observed
             if mode == 'slow':
                 assert observed['flights'][0]['phase'] == 'succeeded' and observed['flights'][0]['pulses'] > 0
@@ -466,7 +837,100 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
             return data, list(Upstream.calls)
         finally:
             process.terminate(); process.wait(timeout=10)
+    def run_queue_case():
+        Upstream.mode = 'queue'; Upstream.calls = []
+        Upstream.release = {'first':threading.Event(), 'second':threading.Event()}
+        case = folder/'queue'; case.mkdir()
+        process = subprocess.Popen([str(server_binary),str(case)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        sockets = []; workers = []
+        try:
+            process.stdin.write(json.dumps({'base':f'http://127.0.0.1:{upstream.server_port}','tiers':['low','high'],'queue':True})); process.stdin.close()
+            line = process.stdout.readline().strip()
+            assert line.startswith('READY '), (line,process.stderr.read())
+            port = int(line.split()[1]); token = (case/'proxy-token').read_text()
+            def payload(tier, stream=True):
+                return {'model':'auto','messages':[{'role':'user','content':'fixture'}],'max_tokens':8,'task_difficulty':tier,'stream':stream}
+            def telemetry():
+                connection = http.client.HTTPConnection('127.0.0.1',port,timeout=5)
+                connection.request('GET','/fixture/telemetry',headers={'Authorization':'Bearer '+token})
+                response = connection.getresponse(); result = json.loads(response.read()); connection.close()
+                return result
+            def load(active,queued):
+                deadline = time.monotonic()+5
+                while time.monotonic()<deadline:
+                    value = telemetry()
+                    assert all(p['active'] <= p['limit'] for p in value['providers'].values()), value
+                    if value['active']==active and value['queued']==queued: return value
+                    time.sleep(.01)
+                raise AssertionError((active,queued,telemetry()))
+            def streams(count):
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    value=telemetry()
+                    if sum(f['phase']=='streaming' for f in value['flights'])==count:return
+                    time.sleep(.01)
+                raise AssertionError(telemetry())
+            def raw(tier):
+                data = json.dumps(payload(tier)).encode()
+                client = socket.create_connection(('127.0.0.1',port),timeout=5); sockets.append(client)
+                head = f'POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len(data)}\r\nConnection: close\r\n\r\n'.encode()
+                client.sendall(head+data); return client
+            def send(tier,stream=True):
+                client = http.client.HTTPConnection('127.0.0.1',port,timeout=8)
+                client.request('POST','/v1/chat/completions',json.dumps(payload(tier,stream)),{'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+                response = client.getresponse(); answer=(response.status,response.read(),dict(response.getheaders()));client.close();return answer
+            a = raw('low'); load(1,0); streams(1)
+            abandoned = raw('low'); load(1,1)
+            b = raw('high'); load(2,1); streams(2)
+            assert len(Upstream.calls)==2,Upstream.calls
+            abandoned.shutdown(socket.SHUT_RDWR); abandoned.close()
+            load(2,0)
+            answers = []
+            for expected in [1,2]:
+                worker = threading.Thread(target=lambda:answers.append(send('low'))); workers.append(worker);worker.start()
+                load(2,expected)
+            status,data,headers = send('low')
+            assert status==429 and json.loads(data)['error']['code']=='gateway_queue_full' and headers['Retry-After']=='1',(status,data,headers)
+            assert len(Upstream.calls)==2
+            for worker in workers: worker.join(timeout=7);assert not worker.is_alive()
+            assert len(answers)==2
+            for status,data,headers in answers:
+                assert status==504 and json.loads(data)['error']['code']=='gateway_queue_timeout' and headers['Retry-After']=='1',(status,data,headers)
+            value = load(2,0)
+            assert value['requests']==2 and len(Upstream.calls)==2, value
+            # Disconnect a streaming client while it has both headers/output.
+            a.shutdown(socket.SHUT_RDWR); a.close()
+            value = load(1,0)
+            assert any(f['phase']=='cancelled' for f in value['flights']) and value['failures']==0,value
+            Upstream.release['first'].set();Upstream.release['second'].set()
+            data = b''
+            while True:
+                chunk=b.recv(65536)
+                if not chunk:break
+                data+=chunk
+            b.close();load(0,0)
+            assert b'[DONE]' in data
+            status,data,_ = send('low',False)
+            assert status==200 and json.loads(data)['model']=='first'
+            assert load(0,0)['requests']==3 and len(Upstream.calls)==3
+            Upstream.mode = 'preheaders'; Upstream.release['first'].clear()
+            before = len(Upstream.calls)
+            early = raw('low'); load(1,0)
+            deadline = time.monotonic()+5
+            while len(Upstream.calls)==before and time.monotonic()<deadline: time.sleep(.01)
+            assert len(Upstream.calls)==before+1
+            assert any(f['phase']=='connecting' for f in telemetry()['flights'])
+            early.shutdown(socket.SHUT_RDWR);early.close()
+            assert load(0,0)['failures']==0
+            Upstream.release['first'].set()
+            print('PASS: real HTTP provider isolation, bounded queue/Retry-After, queue timeout without upstream debit, queued socket withdrawal, pre-header and streaming-disconnect permit release')
+        finally:
+            for gate in Upstream.release.values(): gate.set()
+            for client in sockets: client.close()
+            for worker in workers: worker.join(timeout=10)
+            process.terminate();process.wait(timeout=10)
     try:
+        run_queue_case()
         chat = {'model':'auto','messages':[{'role':'user','content':'ping'}],'max_tokens':8,
                 'models':['paid-fallback'],'plugins':[{'id':'web'}]}
         data,calls = run_case('slow','/v1/chat/completions',dict(chat,stream=True))
