@@ -2,6 +2,91 @@
 
 本文是 Apple 官方性能文档（developer.apple.com 文档与 WWDC / Tech Talks 文字稿）的调研摘录，用于指导本项目 **ClaudeBar**（macOS 15+ / arm64 / SwiftUI + AppKit + Metal 的常驻菜单栏应用）的性能工作。每条规则按「祈使句 + 为什么 + 怎么验证」组织，并给出处链接；文中数值均为 Apple 原文口径，本项目的实测数据不在此重复（见 `docs/reviews/` 相邻报告与 `docs/DEVELOPMENT.md` 的命令约定）。
 
+## WWDC26 增补（2026-10-11 复核）
+
+2026-10-11 用 17890 代理重新抓取 Apple 官方文档时补到的新会话，逐条并入上文对应章节；本节的编号对应上文的小节号。
+
+### 1. 视图树与依赖
+
+- 视图体在每帧中按「处理事件 → 运行依赖变化的 body → 交给渲染服务器」的顺序执行，错过帧截止即产生 hitch；服务端渲染阶段在 SwiftUI 中称为 render server，GPU 帧率由它决定。[WWDC25 306](https://developer.apple.com/videos/play/wwdc2025/306/) 之外的补录：[What's new in SwiftUI（WWDC26）](https://developer.apple.com/videos/play/wwdc2026/269/)
+- Lazy 容器的尺寸与上方偏移是估算值，随滚动变化：不要用 `contentOffset`/`contentSize` 驱动 UI；不要用 `.scrollTransition` 把视图推进可见区（栈仍认为它在屏外）；不要在后置 `onGeometryChange` 里改布局（与滚动锚定冲突，改用 `Layout`）；不要在 `onAppear` 做预取（`body` 已跑过、布局已求值，且反向滚动时可能不触发）。[Dive into lazy stacks and scrolling with SwiftUI（WWDC26）](https://developer.apple.com/videos/play/wwdc2026/321/)
+- 惰性容器内每个元素应产出**恒定数量的视图**：叶视图里的条件分支、可选解包会让栈必须构建视图才能算出数量与索引，状态保留更久，无关的 environment 变化也会重估屏外视图。过滤应在数据层完成。[WWDC26 321](https://developer.apple.com/videos/play/wwdc2026/321/)
+- 技巧：给任务加 `@concurrent` 可把它从主 actor 移回全局并发执行器；Apple 演示里缩略图渲染因此从 Main Actor 轨移到全局执行器并并行渲染。[Profile, fix, and verify（WWDC26）](https://developer.apple.com/videos/play/wwdc2026/268/)
+
+### 2. 布局
+
+- `NSView.draw(_:)`、`updateConstraints()`、`layout()`、`updateLayer()` 与 `NSViewController` 的对应方法在 2026 版系统中参与 `@Observable` 追踪：在这些方法里读取模型属性即建立依赖并自动触发重绘，不必手工 `needsDisplay = true`。可通过 Info.plist 的 `NSObservationTrackingEnabled` 回部署到 macOS 15，2026 版系统中默认开启。[AppKit 与 Observation（WWDC26）](https://developer.apple.com/videos/play/wwdc2026/272/)
+
+### 4. 动画与合成
+
+- `NSView.displayLink(target:selector:)` / `NSWindow.displayLink`（macOS 14+）返回与视图/窗口所在显示器同步的 display link；**视图隐藏或不在任何显示器上时回调不会被调用**，因此隐藏的灵动岛窗口挂 display link 不产生开销；这是 `CVDisplayLink` 的现代替代。[NSView.displayLink](https://developer.apple.com/documentation/appkit/nsview/displaylink(target:selector:))
+- 自绘动画一律用 `targetTimestamp` 而非 `timestamp` 计算进度：用 `timestamp` 采样会在刷新率切换的瞬间产生可见跳动；实际可用工作时间是 `targetTimestamp - CACurrentMediaTime()`；保存**上一次的 targetTimestamp** 才能在回调被跳过时仍按正确步长推进。[Optimizing for ProMotion（WWDC21）](https://developer.apple.com/videos/play/wwdc2021/10147/)
+- 减少 display link 数量：「把时序相近的动画合并到一个 `CADisplayLink`，即使它们在不同视图上」；不要用不对齐 Core Animation 刷新周期的定时器驱动动画。[同上](https://developer.apple.com/documentation/quartzcore/optimizing-iphone-and-ipad-apps-to-support-promotion-displays)
+- 自适应刷新率（macOS）用 `NSScreen.minimumRefreshInterval != maximumRefreshInterval` 判断；Metal 提交用 `present(afterMinimumDuration:)` / `present(at:)`，把 GPU 帧时间的滑动平均喂给提交间隔可在不同 Mac 上得到均匀节奏。[WWDC21 10147](https://developer.apple.com/videos/play/wwdc2021/10147/)、[NSScreen.minimumRefreshInterval](https://developer.apple.com/documentation/appkit/nsscreen/minimumrefreshinterval)
+- `MTKView` 的 `preferredFramesPerSecond` 决定由视图驱动绘制事件（连续动画用），`enableSetNeedsDisplay = true` 则由控件驱动绘制；每次 `draw()` 都读 `contentScaleFactor`（视图换显示器时会变）。[Discover Metal enhancements for SwiftUI（WWDC22）](https://developer.apple.com/videos/play/wwdc2022/10114/)
+- `CAMetalDisplayLink`（目标为 `CAMetalLayer`，含 `preferredFrameRateRange`、`preferredFrameLatency`）是比 `CADisplayLink` 更细的控制；Apple 明确说明视觉强度不高或不使用 Metal 的应用用普通 `CADisplayLink` 即可。[CAMetalDisplayLink](https://developer.apple.com/documentation/quartzcore/cametaldisplaylink)
+
+### 5. 并发
+
+- Swift 6.2 起 `@concurrent` 强制函数在后台并发池执行；模块可开启「隐式 @MainActor」模式，让未标注的代码默认主 actor，只有显式 `@concurrent`/`nonisolated` 才离开。[WWDC25 268](https://developer.apple.com/videos/play/wwdc2025/268/)、[WWDC25 270](https://developer.apple.com/videos/play/wwdc2025/270/)、[WWDC25 266](https://developer.apple.com/videos/play/wwdc2025/266/)
+- 不要为并发而并发：Apple 原文指出「任务创建与管理的成本可能超过子任务实际做的工作」，例如只为读一个 `UserDefaults` 值而新建子任务；不大量计算的应用「全部留在主线程也没问题」。[WWDC21 10254](https://developer.apple.com/videos/play/wwdc2021/10254/)、[WWDC25 268](https://developer.apple.com/videos/play/wwdc2025/268/)
+- 优先级会**单向升级**且不可撤销：等待高优先级任务会沿任务树升级全部子任务；等待 task group 结果会升级**全部**子任务（因为不知道哪个先完成）。[TaskPriority](https://developer.apple.com/documentation/swift/taskpriority)、[WWDC23 10170](https://developer.apple.com/videos/play/wwdc2023/10170/)
+- `withDiscardingTaskGroup`（Swift 5.9+）：子任务与结果在完成时即被丢弃，避免结果累积；任一子任务抛错会自动取消其余兄弟任务。[withDiscardingTaskGroup](https://developer.apple.com/documentation/swift/withdiscardingtaskgroup(returning:isolation:body:))
+- `withTaskCancellationHandler` 的 `onCancel` **总是立即调用**，即使被取消的操作从不检查取消状态；若操作已取消，它会在操作开始**之前**运行，可用来设置原子标志。文档同时警告 `onCancel` 可能与操作**并发执行**。[withTaskCancellationHandler](https://developer.apple.com/documentation/swift/withtaskcancellationhandler(operation:oncancel:))
+- `AsyncStream` 默认缓冲上限是 `Int.max`（无界），需要背压时显式选 `.bufferingOldest(n)` / `.bufferingNewest(n)`（前者丢弃新元素，后者丢弃最旧元素）。[AsyncStream](https://developer.apple.com/documentation/swift/asyncstream)、[BufferingPolicy](https://developer.apple.com/documentation/swift/asyncstream/continuation/bufferingpolicy)
+- 需要「运行重活且不碰 actor 状态」时 Apple 给出的模式是：把函数标为 `nonisolated`，让它 `async`（对 actor 状态的访问用 `await`），再在 detached task 里运行。[WWDC22 110350](https://developer.apple.com/videos/play/wwdc2022/110350/)
+
+### 6. 内存
+
+- Swift 侧复制是主要成本之一：WWDC24/25 的性能演示中 `swift_retain` 与 `swift_release` 各占采样 **7%**，唯一性检查再占 **3%**，全部由「把 `Data`/`Array` 换成 `Span`/`RawSpan`」消除；`InlineArray`（定长、无 COW、无引用计数）去掉了 `swift_beginAccess`/`swift_endAccess` 的开销。[WWDC24 10217](https://developer.apple.com/videos/play/wwdc2024/10217/)、[WWDC25 312](https://developer.apple.com/videos/play/wwdc2025/312/)
+- `reserveCapacity` 陷阱：每次按固定增量 reserve 会让追加退化为 `values.count` 线性时间——「这几乎肯定不是你想要的」；应去掉它或自行实现几何增长。[Array.reserveCapacity](https://developer.apple.com/documentation/swift/array/reservecapacity(_:))
+- `ContiguousArray`：元素是类或 `@objc` 协议时比 `Array` 更可预测（避免桥接到 `NSArray`）；元素是 struct/enum 时两者相近。另外，对**桥接存储**的数组调用 `reserveCapacity` 即使容量够也会触发一次连续化拷贝。[ContiguousArray](https://developer.apple.com/documentation/swift/contiguousarray)、[Array.reserveCapacity](https://developer.apple.com/documentation/swift/array/reservecapacity(_:))
+- 协议存在体（existential）能在 **3 个指针**的缓冲区内内联表示，更大的值会堆分配；异构 `[any P]` 数组无法密集存放且「难以优化」，泛型（同构、可单态化）代码能特化与内联。SwiftUI 侧对应的修复案例正是「用泛型替换存在体」。[WWDC24 10217](https://developer.apple.com/videos/play/wwdc2024/10217/)、[WWDC26 268](https://developer.apple.com/videos/play/wwdc2026/268/)
+- 转义闭包需要堆分配的上下文并用 retain/release 管理；转义闭包里捕获的 `var` 也会被装箱。`withoutActuallyEscaping` 用于「传给转义 API 但实际不会逃逸」的闭包，避免这次装箱；文档明确指出在函数返回后再存储/引用/执行该闭包是未定义行为。[WWDC24 10217](https://developer.apple.com/videos/play/wwdc2024/10217/)、[withoutActuallyEscaping](https://developer.apple.com/documentation/swift/withoutactuallyescaping(_:do:))
+- 保留但不再使用的内存是泄漏工具查不到的一类问题（Apple 原文例子：随滚动无限增长的字典），修复方式是丢弃或写出旧内容。[Making changes to reduce memory use](https://developer.apple.com/documentation/xcode/making-changes-to-reduce-memory-use)
+- 长驻线程必须周期性排空并重建 autorelease pool；主线程每个事件循环由 AppKit 自动建立/排空一个池，循环或回调里产生大量临时对象时才需要自己在循环内建局部池。[NSAutoreleasePool](https://developer.apple.com/documentation/Foundation/NSAutoreleasePool)
+- 不要直接把 `NSImage` 赋给 `CALayer.contents`：应先 `recommendedLayerContentsScale(_:)` 再 `layerContents(forContentsScale:)`，并设置对应的 `contentsScale`。[NSImage](https://developer.apple.com/documentation/appkit/nsimage)
+
+### 7. 能源与硬件
+
+- `Timer.tolerance` 默认值为 **0**（无容差）；命名文档里「反复忘记停掉定时器可能是 OS X 上最大的能源浪费」。[Timer.tolerance](https://developer.apple.com/documentation/foundation/timer/tolerance)、[Minimize Timer Usage](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/Timers.html)
+- 本次新增的官方量化口径：**「理想情况下每个独立操作耗时应落在 10–100 ms」**（并发粒度），以及 **「在用户没有活动时，应用至少 90% 的时间应运行在 utility 或更低 QoS」**（用 `powermetrics` 核对）。[Scheduling CPU work efficiently](https://developer.apple.com/documentation/xcode/scheduling-cpu-work-efficiently)、[Prioritize Work at the Task Level](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheTaskLevel.html)
+- App Nap 对菜单栏应用**默认不生效**：「如果你的应用在菜单栏里有状态项，只要菜单栏可见，你的应用就被视为可见」。因此不能依赖 App Nap 自动让常驻应用进入空闲，必须自行停止不需要的工作。[App Nap](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/AppNap.html)
+- 后台/延迟工作可用 `NSBackgroundActivityScheduler`：默认 `tolerance` 为间隔的一半，默认 QoS 为 `background`，块在串行后台队列执行且系统自动包在 `beginActivity` 里；运行中要检查 `shouldDefer`，结束必须调用 completion handler（否则不会被重新调度）。它面向「周期性内容抓取」与「10 分钟以上的间隔」。[NSBackgroundActivityScheduler](https://developer.apple.com/documentation/foundation/nsbackgroundactivityscheduler)、[Schedule Background Activity](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/SchedulingBackgroundActivity.html)
+- 能耗泄漏的自检清单（可直接对照常驻代理/轮询器）：期望空闲时仍有活动、界面卡顿、主线程大量工作、**上下文切换过多**、定时器过多、**频繁的小额磁盘 I/O**、**小包高频网络通信**、阻止设备睡眠。[Signs of Energy Leaks](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/SignsofEnergyLeaks.html)
+
+### 8. I/O 与持久化
+
+- FSEvents 只告诉你「目录里有什么变了」，不告诉你是哪个文件，且会合并同一目录的多次通知；文档明确写出「**不是为了发现某个具体文件的变更**，那种用途应当用 kqueue」。注册时可指定延迟（示例 `CFAbsoluteTime latency = 3.0;`）。处理时必须能应对 `kFSEventStreamEventFlagMustScanSubDirs`（需递归重扫）、`KernelDropped`/`UserDropped`（全量重扫）、`RootChanged`、`EventIdsWrapped`——事件日志是建议性的。[FSEvents Technology Overview](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/TechnologyOverview/TechnologyOverview.html)
+- vnode 派发源的**所有权规则**：在 cancel handler 被调用之前，关闭被它跟踪的文件描述符或释放 mach port 都是非法的。[makeFileSystemObjectSource](https://developer.apple.com/documentation/dispatch/dispatchsource/makefilesystemobjectsource(filedescriptor:eventmask:queue:))、[DispatchSourceProtocol.cancel()](https://developer.apple.com/documentation/dispatch/dispatchsourceprotocol/cancel())
+- 文件读取的 Apple 建议量化：大文件用 **128 KB–256 KB** 缓冲，尽量顺序读（内核会合并 I/O）；一次性且不再重读的数据用 `Data.ReadingOptions.uncached`，且此时应使用 **4 KB 对齐**缓冲；映射文件在文件被截断/不可访问时会以 SIGBUS 崩溃。[File System Programming Guide · Performance Tips](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/PerformanceTips/PerformanceTips.html)
+- 持续增长的日志尾读可用 `FileHandle.readabilityHandler`（内部就是派发源，设为 `nil` 即取消），或用 `FileHandle.bytes`（`AsyncSequence`，文档示例 `myFileHandle.bytes.prefix(n)`）。[readabilityHandler](https://developer.apple.com/documentation/foundation/filehandle/readabilityhandler)、[FileHandle.bytes](https://developer.apple.com/documentation/foundation/filehandle/bytes)
+- 想避开全量 `VACUUM`：`PRAGMA auto_vacuum=2` 后用 `incremental_vacuum` 增量回收；同时「避免不必要地关闭 SQLite 连接」——开关连接会强制写出所有待处理变更与 journal。[Reducing disk writes](https://developer.apple.com/documentation/xcode/reducing-disk-writes)
+
+### 9. 网络
+
+- 后台重试的指数退避口径（Apple 原文示例）：首次失败后 **5 分钟**重试，再失败等 **10 分钟**，再失败 **20 分钟**，以此类推；用 `earliestBeginDate` 表达。[Reducing networking and Bluetooth power usage](https://developer.apple.com/documentation/xcode/reducing-networking-and-bluetooth-power-usage)
+- 「用**单个** `URLSession` 实例（而不是多个）以便尽可能复用连接」；小请求轮询要把 `waitsForConnectivity` 设为 `true`，非必要任务设 `allowsExpensiveNetworkAccess`/`allowsConstrainedNetworkAccess` 为 `false`。[同上](https://developer.apple.com/documentation/xcode/reducing-networking-and-bluetooth-power-usage)
+- 默认值口径：`timeoutIntervalForRequest` 默认 **60 s**（收到新数据会重置），`timeoutIntervalForResource` 默认 **7 天**，`httpMaximumConnectionsPerHost` 默认 **6** 且「**HTTP/2 及以后在单条连接上跑多请求，因此忽略该属性**」。[URLSessionConfiguration](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/timeoutintervalforrequest)、[…/httpmaximumconnectionsperhost](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/httpmaximumconnectionsperhost)
+- `URLSessionConfiguration.ephemeral` 不落盘缓存，但因不持久化，「之前取到的资源更不容易命中缓存」，可能反而降低观感性能；配置在初始化时被复制，之后的修改被忽略。[ephemeral](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/ephemeral)、[URLSessionConfiguration](https://developer.apple.com/documentation/foundation/urlsessionconfiguration)
+- 264 条款目里未收录的另一个 HTTP 观测入口：HTTP Traffic instrument 还能显示「命中磁盘缓存的请求与网络错误」，建议给任务设置 `taskDescription` 让时间线可读。[Analyzing HTTP traffic](https://developer.apple.com/documentation/foundation/analyzing-http-traffic-with-instruments)
+
+### 10. 启动与生命周期
+
+- 启动剖析用 **App Launch 模板**，它会在启动后持续录制 **5 秒**的时间剖析与线程状态；冷启动与热启动要分别测量（macOS 上系统不会在常规使用中终止进程，激活可能需要把内存从压缩/交换里调回）。[Reducing launch time](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time)
+- 启动路径上要消除的东西：静态初始化（C++ 静态构造、ObjC `+load`、`__attribute__((constructor))`）、多余的内嵌动态库；后者可用 Xcode 15+ 的 mergeable dynamic libraries 在保持动态链接构建速度的同时接近静态链接的启动表现。[同上](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time)
+- macOS 应用**没有启动时间 watchdog 限制**（iOS 有），但首帧前的同步工作仍直接体现为启动变慢。[Reduce terminations in your app](https://developer.apple.com/documentation/xcode/reduce-terminations-in-your-app)
+
+### 11. 验证与回归
+
+- 工具口径补充：Instruments 的 Processor Trace（需 iPhone 16 系列 / M4 iPad Pro 或 M 系列 Mac、macOS 15.4+、Instruments 16.3+）录制时性能损失通常 **小于 1%**，能给出精确的调用次数与每函数指令/周期数（含编译器插入的 ARC 代码）——这是唯一能量化 `swift_retain`/`swift_release` 这类成本的工具。[Analyzing CPU usage with the Processor Trace instrument](https://developer.apple.com/documentation/xcode/analyzing-cpu-usage-with-processor-trace)
+- 采样器选型：Apple 明确建议 **CPU Profiler 优先于 Time Profiler** 做 CPU 优化，因为基于定时器的采样存在混叠（恰好落在采样点上的函数被高估、高频 CPU 被低估）。[WWDC25 308](https://developer.apple.com/videos/play/wwdc2025/308/)
+- 消毒器成本与 macOS 限制：ASan 内存放大 2–3 倍、耗时 2–5 倍；TSan 内存放大 5–10 倍、耗时 2–20 倍，且**「不能用 Thread Sanitizer 诊断…运行在设备上的应用；只在你 64 位的 macOS 应用上使用」**（对本项目刚好适用）；Main Thread Checker 开销 1–2% CPU、启动时间增加不超过 100 ms 且开发方案默认开启。[Diagnosing memory, thread, and crash issues early](https://developer.apple.com/documentation/xcode/diagnosing-memory-thread-and-crash-issues-early)
+- 回归对比工具更新：Instruments 27 的 **Run Comparisons** 会交叉比对基线与优化后两次录制的全部采样、算出精确差值，把回归标红并排在最前；新增的 Swift executors instrument 可可视化 Main Actor、全局并发执行器与自定义执行器（Apple 演示里 Main Actor 上出现了单个耗时数百毫秒的渲染任务）。[WWDC26 268](https://developer.apple.com/videos/play/wwdc2026/268/)
+- 辅助工具：`-LogForEachSlowPath YES` 让 `ForEach`/`List` 打印迫使 SwiftUI 走慢路径的原因（行 ID 计算、视图数不恒定等），配合 `AnyView` 文档的说明排查标识符问题。[ForEach](https://developer.apple.com/documentation/swiftui/foreach)、[AnyView](https://developer.apple.com/documentation/swiftui/anyview)
+- Widget 预算的官方量化：常看 widget 约 **40–70 次刷新 / 24 小时**（约 15–60 分钟一次），时间线条目间隔应**至少约 5 分钟**；应用在前台、活跃音频/导航会话、正在执行动画等情况下刷新是「免费」的，系统外观或区域设置变化**不应该**由应用主动请求刷新。[Keeping a widget up to date](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date)
+
+
 - 本次工作流提供的笔记 JSON 为空数组，正文全部条目直接取自下列官方来源，未做二手转述。
 - 引用核对时间：2026-10-05 至 2026-10-06；链接均为 developer.apple.com。
 - Instruments 模板名已与本机 `xcrun xctrace list templates` 输出（xctrace 27.0）核对，包含 `SwiftUI`、`Animation Hitches`、`Time Profiler`、`Game Performance`、`Game Memory`、`App Launch`、`File Activity`、`Network`、`Power Profiler`、`CPU Counters`、`Leaks`、`Allocations` 等；`VM Tracker`、`Hangs`、`Hitches`、`Points of Interest`、`Filesystem Activity`、`Disk Usage`、`Disk I/O Latency` 是 instrument 名而非模板名（见 `xcrun xctrace list instruments`）。
