@@ -88,6 +88,7 @@ enum AppPresentation { static var allowsInterface = true }
             return
         }
         if CommandLine.arguments.contains("--motion") {
+            AppPreferences.shared.isDark = CommandLine.arguments.contains("--dark")
             model.size = CommandLine.arguments.contains("--small") ? .small : .regular
             model.isHovered = CommandLine.arguments.contains("--hover")
             let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))

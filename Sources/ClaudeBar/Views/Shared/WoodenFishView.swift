@@ -147,8 +147,7 @@ private struct WoodenFishBurstLayer: View {
     var body: some View {
         ZStack {
             ForEach(entries) { entry in
-                let rank = entries.count - 1 - (entries.firstIndex { $0.id == entry.id } ?? 0)
-                WoodenFishBurst(entry: entry, rank: rank, showsWord: !reduceMotion || entry.id == entries.last?.id,
+                WoodenFishBurst(entry: entry, showsWord: !reduceMotion || entry.id == entries.last?.id,
                                 displayScale: displayScale) { expire(entry.id) }
             }
         }
@@ -158,7 +157,6 @@ private struct WoodenFishBurstLayer: View {
 
 private struct WoodenFishBurst: View {
     let entry: WoodenFishBurstPool.Entry
-    let rank: Int
     let showsWord: Bool
     let displayScale: CGFloat
     let expire: () -> Void
@@ -168,13 +166,8 @@ private struct WoodenFishBurst: View {
     var body: some View {
         ZStack {
             if showsWord {
-                Text("Token +1")
-                    .font(.system(size: 12 / displayScale, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(hex: entry.feedback.isGolden ? 0xFFD58F : 0x8CEAFF))
-                    .padding(.horizontal, 6 / displayScale).padding(.vertical, 3 / displayScale)
-                    .background(Color.black.opacity(0.72), in: Capsule())
-                    .offset(y: reduceMotion ? 0 : WoodenFishMotion.wordRowOffset(rank: rank) / displayScale)
-                    .animation(.easeOut(duration: 0.14), value: rank / 2)
+                WoodenFishTokenLabel(isGolden: entry.feedback.isGolden, displayScale: displayScale,
+                                     progress: progress, reducedMotion: reduceMotion)
                     .modifier(WoodenFishWordFlight(progress: progress, id: entry.id, displayScale: displayScale,
                                                   reducedMotion: reduceMotion))
             }
@@ -199,6 +192,56 @@ private struct WoodenFishBurst: View {
     }
 }
 
+/// Floating lettering: a quiet word, a bold reward, and a short ink flourish.
+/// The keyline follows the glyphs rather than enclosing them in a surface.
+private struct WoodenFishTokenLabel: View {
+    let isGolden: Bool
+    let displayScale: CGFloat
+    let progress: Double
+    let reducedMotion: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var ink: Color {
+        Color(hex: colorScheme == .dark ? (isGolden ? 0xFFE1A3 : 0x91EEE2) :
+                                 (isGolden ? 0xA8652C : 0x1D7C86))
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3 / displayScale) {
+            Text("Token")
+                .font(.system(size: 10 / displayScale, weight: .semibold, design: .rounded))
+                .tracking(0.15 / displayScale)
+                .foregroundStyle(colorScheme == .dark ? ink : Color(hex: isGolden ? 0x824923 : 0x18565D))
+            Text("+1")
+                .font(.system(size: 18 / displayScale, weight: .heavy, design: .rounded))
+                .italic().monospacedDigit()
+                .overlay(alignment: .bottom) {
+                    if !reducedMotion {
+                        Path { path in
+                            path.move(to: CGPoint(x: 0, y: 3 / displayScale))
+                            path.addQuadCurve(to: CGPoint(x: 20 / displayScale, y: 0),
+                                              control: CGPoint(x: 9 / displayScale, y: 0))
+                        }
+                        .trim(from: 0, to: max(0, 1 - progress))
+                        .stroke(ink.opacity(0.65), style: StrokeStyle(lineWidth: 1.2 / displayScale, lineCap: .round))
+                        .frame(width: 20 / displayScale, height: 3 / displayScale)
+                        .offset(y: 3 / displayScale)
+                    }
+                }
+        }
+        .foregroundStyle(ink)
+        // A sub-point outline keeps bare lettering legible over desktop artwork.
+        .shadow(color: edge, radius: 0, x: 0.65 / displayScale, y: 0)
+        .shadow(color: edge, radius: 0, x: -0.65 / displayScale, y: 0)
+        .shadow(color: edge, radius: 0, x: 0, y: 0.65 / displayScale)
+        .shadow(color: edge, radius: 0, x: 0, y: -0.65 / displayScale)
+    }
+
+    private var edge: Color {
+        Color(hex: colorScheme == .dark ? 0x101D24 : 0xF6FCFA).opacity(0.95)
+    }
+}
+
 private struct WoodenFishWordFlight: AnimatableModifier {
     var progress: Double
     let id: UInt
@@ -209,7 +252,8 @@ private struct WoodenFishWordFlight: AnimatableModifier {
         set { progress = newValue }
     }
     func body(content: Content) -> some View {
-        let value = WoodenFishMotion.word(progress: progress, id: id, reducedMotion: reducedMotion)
+        let value = WoodenFishMotion.word(progress: progress, id: id, reducedMotion: reducedMotion,
+                                         displayScale: displayScale)
         return content.offset(x: value.offset.x / displayScale, y: value.offset.y / displayScale)
             .scaleEffect(value.scale).rotationEffect(.degrees(value.angle)).opacity(value.opacity)
     }

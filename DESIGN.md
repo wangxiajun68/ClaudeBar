@@ -643,26 +643,30 @@ the body width / base arc width ratio are φ. These relationships keep the
 outline round and proportionate at every size.
 
 Only the instrument appears at rest; hover slightly brightens it and reveals
-separate native tool circles and counts. The solid body, mallet, contours
-and base arc capture strikes; surrounding transparent space and tool gaps
-pass clicks through. Pressing briefly scales the instrument or tool. Space
-strikes, window-local Escape pauses and resets the manual chain, and the
-right-click and More menus share their options. There is no idle animation.
+counts. There is no button row. The solid body, mallet, contours and base
+arc capture strikes; surrounding transparent space passes clicks through.
+Pressing briefly scales the instrument. Space strikes, window-local Escape
+pauses and resets the manual chain, and the native right-click menu holds
+all options. Option-drag moves the instrument without striking. There is no idle animation.
 
-The three artwork scales are 0.60 / 0.72 / 0.88. The 26pt tools, 11pt counts,
-12pt Token labels and 24pt word-row spacing retain native dimensions.
+The three artwork scales are 0.60 / 0.72 / 0.88. The 11pt counts,
+10pt Token / 18pt +1 lettering retain native dimensions.
 Each strike emits its own Token label, including recent events coalesced in
-one frame. A bounded two-column, four-row word cloud holds up to eight
-labels between the tool row and footer. Labels drift upward by 20pt over
-1.35 seconds and clear at 1.42 seconds; six coloured particles per strike
-share the same eight-group limit. Normal labels are cyan; manual combos
-from eight onward and surprise strikes use gold.
+one frame. An eight-word spray uses independent strike-owned origins, fan angles,
+reach, curvature and launch speeds, rather than rows or columns. New strikes
+never reposition earlier words. Native bounds keep flights inside the window
+and clear of the count footer. Flights last 1.35 seconds and clear at 1.42 seconds; six coloured particles per strike
+share the same eight-group limit. Labels are transparent lettering, without a capsule or filled backdrop. A small
+Token sits beside a larger italic +1 with a short contracting ink flourish;
+sub-point keylines follow the glyphs. Teal or mint marks normal strikes,
+and warm gold marks manual combos from eight onward and surprises. Words
+follow a gently curved, decelerating rise with a small opening spring.
 
 Manual gaps of at most 0.55 seconds form a combo. Milestone and rhythm
 surprises temporarily appear in the count capsule; automatic strikes do not
 consume the session's first manual strike of the day or trigger combos and
 surprises. Every strike still adds exactly one count and changes no real
 Token usage. Reduce Motion removes particles and instrument, mallet and
-press transforms, leaving only the latest label's fixed-position fade.
+press transforms, leaving only the latest label's fixed-position fade, without its ink flourish.
 Exact rhythm messages, cooldowns, lifecycle rules and verification status are
 specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

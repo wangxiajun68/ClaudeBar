@@ -70,18 +70,18 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(WoodenFishGeometry.captures(CGPoint(x: 110, y: 150)), "wood captures taps")
         expect(WoodenFishGeometry.captures(CGPoint(x: 130, y: 229)), "bold base line captures taps")
         expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 100)), "transparent margins are click-through")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18)), "invisible tools cannot steal clicks")
         expect(!WoodenFishGeometry.captures(CGPoint(x: 70, y: 18)), "removed controls cannot capture clicks")
-        expect(!WoodenFishGeometry.captures(CGPoint(x: 85, y: 18)), "tool gaps remain click-through")
+        expect(!WoodenFishGeometry.captures(CGPoint(x: 85, y: 18)), "upper margin remains click-through")
         expect(!WoodenFishGeometry.captures(CGPoint(x: 31, y: 182.75)), "transparent outer corner cannot steal clicks")
         expect(WoodenFishGeometry.captures(CGPoint(x: 248, y: 63)), "visible mallet tip captures taps")
         for size in WoodenFishSize.allCases {
             let s = size.scale
             let wood = CGPoint(x: 110 * s, y: 36 + (150 - 36) * s)
-            expect(WoodenFishGeometry.captures(wood, scale: s), "scaled wood captures taps below native toolbar")
-            let grip = CGPoint(x: size.panelSize.width / 2 - 60, y: 18)
-            expect(!WoodenFishGeometry.captures(grip, scale: s), "removed native toolbar stays click-through at every size")
-            expect(!WoodenFishGeometry.captures(CGPoint(x: grip.x + 15, y: 18), scale: s), "native tool gaps stay click-through")
+            expect(WoodenFishGeometry.captures(wood, scale: s), "scaled wood captures taps below native upper margin")
+            for offset in [-60.0, -30.0, 0.0, 30.0, 60.0] {
+                let removedControl = CGPoint(x: size.panelSize.width / 2 + offset, y: 18)
+                expect(!WoodenFishGeometry.captures(removedControl, scale: s), "all five removed controls stay click-through at every size")
+            }
             expect(!WoodenFishGeometry.captures(CGPoint(x: 2, y: 36), scale: s), "compact transparent margin stays click-through")
         }
         var bursts = WoodenFishBurstPool()
@@ -117,19 +117,23 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         var wrapped = WoodenFishBurstPool()
         wrapped.emit(from: UInt.max - 1, through: 1, feedback: .init())
         expect(wrapped.ids == [UInt.max, 0, 1], "strike ID overflow still emits recent words")
-        let leftWord = WoodenFishMotion.word(progress: 0.5, id: 1, reducedMotion: false)
-        let rightWord = WoodenFishMotion.word(progress: 0.5, id: 2, reducedMotion: false)
-        expect(rightWord.offset.x - leftWord.offset.x >= 68, "word columns leave space for native labels")
-        expect(WoodenFishMotion.wordRowOffset(rank: 6) - WoodenFishMotion.wordRowOffset(rank: 4) <= -24, "word rows separate native labels")
+        let flights = (1...32).map { WoodenFishMotion.word(progress: 0.6, id: UInt($0), reducedMotion: false) }
+        expect(Set(flights.map { Int($0.offset.x * 100) }).count > 24, "rapid strikes spread across independent horizontal paths")
+        expect(Set(flights.map { Int($0.offset.y * 100) }).count > 24, "rapid strikes have different rise distances and speeds")
+        expect(flights.contains { $0.offset.x < -25 } && flights.contains { $0.offset.x > 25 }, "spray reaches both sides")
+        let repeatFlight = WoodenFishMotion.word(progress: 0.6, id: 7, reducedMotion: false)
+        expect(repeatFlight.offset == flights[6].offset, "a strike's trajectory stays stable across view updates")
         let stillWord = WoodenFishMotion.word(progress: 0.5, id: 3, reducedMotion: true)
         expect(stillWord.offset == .zero && stillWord.angle == 0 && stillWord.scale == 1, "reduced motion word is stationary")
         for size in WoodenFishSize.allCases {
-            for rank in 0..<8 {
-                for step in 0...10 {
-                    let word = WoodenFishMotion.word(progress: Double(step) / 10, id: UInt(rank), reducedMotion: false)
-                    let center = 36 + 91 * size.scale + word.offset.y + WoodenFishMotion.wordRowOffset(rank: rank)
-                    expect(center - 12 > 36, "eight native labels clear hovered toolbar at every size")
-                    expect(center + 12 < size.panelSize.height - 28, "labels clear count footer at every size")
+            for id in 0..<256 {
+                for step in 0...20 {
+                    let word = WoodenFishMotion.word(progress: Double(step) / 20, id: UInt(id), reducedMotion: false, displayScale: size.scale)
+                    let centerX = 130 * size.scale + word.offset.x
+                    let centerY = 36 + 91 * size.scale + word.offset.y
+                    expect(centerX - 32 >= 0 && centerX + 32 <= size.panelSize.width, "rotated bare labels remain inside every window size")
+                    expect(centerY - 20 >= 0, "rising labels stay clear of the window top")
+                    expect(centerY + 20 < size.panelSize.height - 28, "spray stays clear of the count footer")
                 }
             }
         }

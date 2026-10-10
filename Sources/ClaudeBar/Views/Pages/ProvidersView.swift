@@ -111,12 +111,8 @@ struct ProvidersView: View {
     private func workspace(_ f: Facts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Picker("模型工作区", selection: $surfaceRaw) {
-                Text("供应商").tag("providers")
-                Text("自动网关").tag("gateway")
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 240)
+            SegmentedCapsule(items: ["providers", "gateway"], selection: surfaceRaw,
+                title: { $0 == "providers" ? "供应商" : "自动网关" }, tint: Theme.Ink.cursor) { surfaceRaw = $0 }
             .padding(.horizontal, Theme.Space.s24)
             .padding(.bottom, Theme.Space.s16)
             if let error = f.error {

@@ -44,19 +44,39 @@ enum WoodenFishMotion {
         var angle: Double
     }
 
-    /// Word offsets are native points, independent of the instrument scale.
-    /// Alternating columns and a four-row stack keep rapid words distinct.
-    static func word(progress: Double, id: UInt, reducedMotion: Bool) -> Particle {
+    /// Each strike owns a stable, different flight. New strikes never reposition
+    /// existing words. Native bounds keep the spray inside the transparent window.
+    static func word(progress: Double, id: UInt, reducedMotion: Bool, displayScale: CGFloat = 0.72) -> Particle {
         let p = min(1, max(0, progress))
-        let side = id.isMultiple(of: 2) ? 1.0 : -1.0
         let opacity = min(1, p / 0.06) * max(0, min(1, (1 - p) / 0.35))
-        return Particle(offset: reducedMotion ? .zero : CGPoint(x: side * (34 + p), y: 52 - 20 * p),
-                        opacity: opacity, scale: reducedMotion ? 1 : 0.9 + 0.1 * min(1, p / 0.12),
-                        angle: reducedMotion ? 0 : side * 3 * p)
-    }
-
-    static func wordRowOffset(rank: Int) -> CGFloat {
-        -CGFloat(min(7, max(0, rank)) / 2) * 24
+        guard !reducedMotion else {
+            return Particle(offset: .zero, opacity: opacity, scale: 1, angle: 0)
+        }
+        func variation(_ salt: UInt64) -> Double {
+            var value = UInt64(id) &+ salt &+ 0x9E3779B97F4A7C15
+            value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+            value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+            value ^= value >> 31
+            return Double(value >> 11) / 9_007_199_254_740_992
+        }
+        // Low-discrepancy angles distribute a rapid sequence across the fan;
+        // per-strike variation changes origin, reach, curvature and launch speed.
+        let phase = Double(id % 65_536) * 0.61803398875 + (variation(1) - 0.5) * 0.12
+        let angle = (-160 + 140 * (phase - floor(phase))) * .pi / 180
+        let horizontalReach = max(0, 130 * Double(displayScale) - 32)
+        let origin = CGPoint(x: (variation(2) - 0.5) * horizontalReach * 1.1,
+                             y: -22 + 62 * variation(3))
+        let minimumY = 22 - (36 + 91 * Double(displayScale))
+        let destination = CGPoint(x: cos(angle) * horizontalReach * (0.72 + 0.24 * variation(4)),
+                                  y: max(minimumY, origin.y + sin(angle) * (44 + 44 * variation(5))))
+        let travel = 1 - pow(1 - p, 2.8 + 1.4 * variation(6))
+        let bend = sin(p * .pi) * (variation(7) - 0.5) * 10
+        let bloom = min(1, p / 0.18)
+        let scale = 0.76 + 0.24 * (1 - pow(1 - bloom, 3)) + 0.06 * sin(bloom * .pi)
+        return Particle(offset: CGPoint(x: origin.x + (destination.x - origin.x) * travel + bend,
+                                        y: origin.y + (destination.y - origin.y) * travel),
+                        opacity: opacity, scale: scale * (0.94 + 0.06 * variation(8)),
+                        angle: (variation(9) - 0.5) * (8 + 20 * travel))
     }
 
     /// Coordinates fit the existing transparent canvas; particles never

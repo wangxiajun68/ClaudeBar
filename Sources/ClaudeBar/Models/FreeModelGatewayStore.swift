@@ -179,6 +179,15 @@ final class FreeModelGatewayStore: ObservableObject {
         let value = await FreeModelGateway.shared.snapshot()
         if value != snapshot { snapshot = value }
     }
+    /// Owned by the visible page's .task, not by app startup. Cancellation
+    /// tears down the actor's observer as soon as the workspace disappears.
+    func observeStatus() async {
+        let updates = await FreeModelGateway.shared.updates()
+        for await value in updates {
+            guard !Task.isCancelled else { return }
+            if value != snapshot { snapshot = value }
+        }
+    }
     func resetHealth() {
         Task { await FreeModelGateway.shared.resetHealth(); await refreshStatus() }
     }

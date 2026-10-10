@@ -891,6 +891,7 @@ final class CodexProxyServer: @unchecked Sendable {
             guard let http = response as? HTTPURLResponse else { throw GatewayFailure.upstream(502) }
             retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
             guard (200..<300).contains(http.statusCode) else { throw GatewayFailure.upstream(http.statusCode) }
+            await FreeModelGateway.shared.receivedHeaders(candidate, plan: plan)
             let latency = Date().timeIntervalSince(started)
             if !streamUpstream {
                 var data = Data()
@@ -905,6 +906,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     throw GatewayFailure.upstream(502)
                 }
                 tap?.applyChat(value); totals.applyChat(value)
+                await FreeModelGateway.shared.receivedOutput(candidate, plan: plan)
                 headWritten = true
                 await respond(connection, status: "200 OK", contentType: "application/json", body: data)
             } else {
@@ -919,6 +921,7 @@ final class CodexProxyServer: @unchecked Sendable {
                 var terminal = false
                 var sawData = false
                 var accumulatedBytes = 0
+                var lastVisualOutput = Date.distantPast
                 func deliver(_ events: [[String: Any]]) async throws {
                     for event in events {
                         if adapted.stream {
@@ -952,6 +955,11 @@ final class CodexProxyServer: @unchecked Sendable {
                         try await writeMigration(connection, data: sseHead())
                     }
                     sawData = true
+                    let visualNow = Date()
+                    if visualNow.timeIntervalSince(lastVisualOutput) >= 0.125 {
+                        lastVisualOutput = visualNow
+                        await FreeModelGateway.shared.receivedOutput(candidate, plan: plan, now: visualNow)
+                    }
                     tap?.applyChat(delta); totals.applyChat(delta); log.note(tokens: totals)
                     if (delta["choices"] as? [[String: Any]] ?? []).contains(where: { $0["finish_reason"] is String }) { terminal = true }
                     switch adapted.wire {

@@ -9,6 +9,7 @@ import json
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 root = Path(__file__).resolve().parents[1]
@@ -29,7 +30,7 @@ def method(source, marker):
     end = source.index('\n    }', start) + len('\n    }')
     return source[start:end]
 
-common = [models/'FreeModelPool.swift', utils/'GatewayTaskRouter.swift', utils/'FreeModelGateway.swift', utils/'PrivateFileWriter.swift',
+common = [utils/'GatewayTopologyLayout.swift', models/'FreeModelPool.swift', utils/'GatewayTaskRouter.swift', utils/'FreeModelGateway.swift', utils/'PrivateFileWriter.swift',
           utils/'GatewayWireAdapter.swift', utils/'ConversationMedia.swift', utils/'AgentProtocolBridge.swift',
           utils/'CodexProxyTransform.swift']
 
@@ -195,6 +196,59 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         for code in [401,402,403,404,408,410,429,500,502,503,504] { precondition(FreeModelGateway.retryable(status:code)) }
         for code in [400,422,200,0] { precondition(!FreeModelGateway.retryable(status:code)) }
 
+        let liveGateway = FreeModelGateway()
+        var livePool = FreeModelPool(); livePool.enabled = true; livePool.maxConcurrent = 8
+        livePool.members = [plain, pool.members[1]]; livePool.catalog = catalog; livePool.discoveredAt = Date()
+        await liveGateway.configure(livePool,endpoints:[endpoint,other])
+        let stream = await liveGateway.updates()
+        var events = stream.makeAsyncIterator()
+        precondition((await events.next())?.active == 0)
+        let livePlan = try await liveGateway.begin(requirements)
+        _ = await events.next()
+        let liveCandidate = livePlan.candidates[0]
+        let liveNow = Date()
+        try await liveGateway.started(liveCandidate,plan:livePlan,now:liveNow)
+        precondition((await events.next())?.flights.first?.phase == .connecting)
+        await liveGateway.receivedHeaders(liveCandidate,plan:livePlan,now:liveNow)
+        precondition((await events.next())?.flights.first?.phase == .waiting)
+        await liveGateway.receivedOutput(liveCandidate,plan:livePlan,now:liveNow)
+        precondition((await events.next())?.flights.first?.phase == .streaming)
+        await liveGateway.receivedOutput(liveCandidate,plan:livePlan,now:liveNow.addingTimeInterval(0.02))
+        precondition((await liveGateway.snapshot()).flights.first?.outputPulses == 1)
+        await liveGateway.receivedOutput(liveCandidate,plan:livePlan,now:liveNow.addingTimeInterval(0.2))
+        precondition((await events.next())?.flights.first?.outputPulses == 2)
+        await liveGateway.report(liveCandidate,plan:livePlan,status:429,latency:0.1)
+        precondition((await events.next())?.flights.first?.phase == .failed)
+        let fallback = livePlan.candidates[1]
+        try await liveGateway.started(fallback,plan:livePlan)
+        precondition((await events.next())?.flights.first?.memberID == fallback.member.id)
+        await liveGateway.report(fallback,plan:livePlan,status:200,latency:0.2)
+        await liveGateway.finish(livePlan)
+        let completed = await events.next()
+        precondition(completed?.active == 0 && completed?.flights.first?.phase == .succeeded)
+        precondition(completed?.flights.last?.phase == .failed && completed?.flights.first?.attempt == 2)
+        precondition(!String(describing:completed).contains("fixture-a"))
+        await liveGateway.resetHealth()
+        let abandoned = try await liveGateway.begin(requirements)
+        try await liveGateway.started(abandoned.candidates[0],plan:abandoned)
+        livePool.maxAttempts = 2
+        await liveGateway.configure(livePool,endpoints:[endpoint,other])
+        await liveGateway.finish(abandoned)
+        precondition((await liveGateway.snapshot()).flights.first?.phase == .cancelled)
+        for width: Double in [320,480,520,640,852,1200] {
+            for count in 0...9 {
+                let g = GatewayTopologyLayout.geometry(width:width,count:count)
+                let frames = [g.source] + g.tiers + g.models
+                precondition(frames.allSatisfy { $0.minX >= 0 && $0.maxX <= g.size.width && $0.minY >= 0 && $0.maxY <= g.size.height })
+                for i in frames.indices { for j in frames.indices where i < j { precondition(!frames[i].intersects(frames[j])) } }
+            }
+        }
+        let many = (0..<200).map { i -> FreeModelPool.Member in var m = plain; m.model = "synthetic-\(i)"; return m }
+        let flights = (190..<198).map { i in FreeModelGateway.Flight(requestID:UUID(),memberID:many[i].id,routing:requirements.routing,
+            phase:.streaming,attempt:1,startedAt:Date(),updatedAt:Date()) }
+        let mapped = GatewayTopologyLayout.visibleIDs(members:many,flights:flights,selected:many[0].id,page:0)
+        precondition(mapped.count <= 9 && Set(flights.map(\.memberID)).isSubset(of:Set(mapped)))
+        print("PASS: phase push, bounded output pulses, short completion/failover, cancellation/revision cleanup, nonoverlapping topology")
         let storage = FreeModelPoolStorage(url:folder.appendingPathComponent("pool.json"))
         precondition(try await storage.load() == FreeModelPool())
         try await storage.save(pool)
@@ -250,6 +304,13 @@ class CodexProxyServer: @unchecked Sendable {
         guard let request = await readRequest(connection) else { return }
         guard isAuthorized(request) else {
             await respond(connection,status:"401 Unauthorized",contentType:"application/json",body:Data("{}".utf8)); return
+        }
+        if request.path == "/fixture/telemetry" {
+            let value = await FreeModelGateway.shared.snapshot()
+            let body: [String:Any] = ["active":value.active,"flights":value.flights.map {
+                ["phase":$0.phase.rawValue,"memberID":$0.memberID,"attempt":$0.attempt,"pulses":$0.outputPulses,"request":$0.requestID.uuidString]
+            }]
+            await respond(connection,status:"200 OK",contentType:"application/json",body:try! JSONSerialization.data(withJSONObject:body)); return
         }
         guard let data = request.body, let json = try? JSONSerialization.jsonObject(with:data) as? [String:Any] else { return }
         await forwardGateway(connection,request:request,json:json,path:request.path)
@@ -320,9 +381,13 @@ class Upstream(BaseHTTPRequestHandler):
             data = json.dumps(result).encode()
             self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(data); return
         self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+        if self.mode == 'slow':
+            self.wfile.flush(); time.sleep(0.3)
         if first and self.mode == 'sse-error':
             self.wfile.write(b'data: {"error":{"code":429,"message":"fixture unavailable"}}\n\n'); return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"fixture answer"}}]}\n\n')
+        if self.mode == 'slow':
+            self.wfile.flush(); time.sleep(0.6)
         if self.mode == 'incomplete':
             return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n')
@@ -368,14 +433,44 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                 response = connection.getresponse(); data = response.read(); status = response.status; connection.close()
                 return status,data
             status,_ = send(False); assert status == 401 and not Upstream.calls
-            status,data = send(True)
+            def telemetry():
+                connection = http.client.HTTPConnection('127.0.0.1',port,timeout=5)
+                connection.request('GET','/fixture/telemetry',headers={'Authorization':'Bearer '+token})
+                response = connection.getresponse(); value = json.loads(response.read()); connection.close()
+                return value
+            if mode == 'slow':
+                answers = []
+                worker = threading.Thread(target=lambda: answers.append(send(True)))
+                worker.start()
+                seen = set()
+                deadline = time.monotonic()+5
+                while worker.is_alive() and time.monotonic() < deadline:
+                    _t=telemetry()['flights']
+                    if _t: print('SAMPLE', round(time.monotonic()%100,3), [_f['phase'] for _f in _t], flush=True)
+                    seen.update(f['phase'] for f in _t)
+                    time.sleep(0.025)
+                worker.join(timeout=5)
+                assert not worker.is_alive() and answers
+                status,data = answers[0]
+                assert {'waiting','streaming'}.issubset(seen), seen
+            else:
+                status,data = send(True)
             assert status == expected_status, (status,data)
+            observed = telemetry()
+            assert observed['active'] == 0 and all(f['phase'] not in ('connecting','waiting','streaming') for f in observed['flights']), observed
+            if mode == 'slow':
+                assert observed['flights'][0]['phase'] == 'succeeded' and observed['flights'][0]['pulses'] > 0
+            if mode in ('429','401','sse-error') and len(Upstream.calls) == 2:
+                assert [f['phase'] for f in observed['flights']] == ['succeeded','failed']
+                assert observed['flights'][0]['request'] == observed['flights'][1]['request']
             return data, list(Upstream.calls)
         finally:
             process.terminate(); process.wait(timeout=10)
     try:
         chat = {'model':'auto','messages':[{'role':'user','content':'ping'}],'max_tokens':8,
                 'models':['paid-fallback'],'plugins':[{'id':'web'}]}
+        data,calls = run_case('slow','/v1/chat/completions',dict(chat,stream=True))
+        assert len(calls) == 1
         data,calls = run_case('429','/v1/chat/completions',chat)
         assert json.loads(data)['model'] == 'second' and len(calls) == 2
         data,calls = run_case('401','/v1/chat/completions',chat)

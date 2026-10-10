@@ -33,6 +33,7 @@ actor FreeModelGateway {
     }
     struct Route: Equatable, Identifiable, Sendable {
         var id = UUID()
+        var memberID = ""
         var date: Date
         var model: String
         var provider: String
@@ -42,11 +43,39 @@ actor FreeModelGateway {
         var difficulty: GatewayTaskDifficulty { routing.difficulty }
         var selection: String
     }
+    /// Runtime-only, bounded request telemetry. Never contains a prompt, key,
+    /// upstream URL or output text. Every phase is driven by transport events.
+    struct Flight: Equatable, Identifiable, Sendable {
+        enum Phase: String, Sendable {
+            case connecting, waiting, streaming, succeeded, failed, cancelled
+            var isActive: Bool { self == .connecting || self == .waiting || self == .streaming }
+            var title: String {
+                switch self {
+                case .connecting: return "连接上游"
+                case .waiting: return "等待输出"
+                case .streaming: return "接收输出"
+                case .succeeded: return "已完成"
+                case .failed: return "尝试失败"
+                case .cancelled: return "已中断"
+                }
+            }
+        }
+        var id = UUID()
+        var requestID: UUID
+        var memberID: String
+        var routing: GatewayTaskRouting
+        var phase: Phase
+        var attempt: Int
+        var startedAt: Date
+        var updatedAt: Date
+        var outputPulses = 0
+    }
     struct Snapshot: Equatable, Sendable {
         var health: [String: Health] = [:]
         var active = 0
         var requests = 0
         var routes: [Route] = []
+        var flights: [Flight] = []
     }
 
     private var pool = FreeModelPool()
@@ -58,6 +87,8 @@ actor FreeModelGateway {
     private var attempts: [UUID: Int] = [:]
     private var requestCount = 0
     private var routes: [Route] = []
+    private var flights: [Flight] = []
+    private var observers: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
     private var revision: UInt = 0
 
     func configure(_ pool: FreeModelPool, endpoints: [Endpoint]) {
@@ -72,6 +103,7 @@ actor FreeModelGateway {
         self.pool = pool
         self.endpoints = next
         revision &+= 1
+        publish()
     }
 
     /// `auto` is reserved even while disabled, so it cannot accidentally reach
@@ -82,6 +114,7 @@ actor FreeModelGateway {
 
     func begin(_ requirements: GatewayRequirements, now: Date = Date()) throws -> Plan {
         guard pool.enabled else { throw GatewayFailure.disabled }
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("BEGIN \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
         var routing = requirements.routing
         let levels = routing.source == .explicit ? [routing.difficulty]
             : Array(GatewayTaskDifficulty.allCases.drop { $0 != routing.difficulty })
@@ -138,6 +171,7 @@ actor FreeModelGateway {
         guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
         let id = UUID()
         admitted.append(now); active.insert(id); requestCount += 1
+        publish()
         let selection: String
         switch pool.strategy {
         case .priority: selection = "同档位 · 池内优先级"
@@ -156,6 +190,8 @@ actor FreeModelGateway {
     }
 
     func started(_ candidate: Candidate, plan: Plan, now: Date = Date()) throws {
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("BEGIN \(Date().timeIntervalSince1970) \(plan.id)\n".utf8));h.closeFile()}
+        guard active.contains(plan.id), plan.revision == revision else { throw GatewayFailure.interrupted }
         admitted.removeAll { now.timeIntervalSince($0) >= 60 }
         if (attempts[plan.id] ?? 0) > 0 {
             guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
@@ -165,10 +201,46 @@ actor FreeModelGateway {
         var value = health[candidate.member.id] ?? Health()
         value.lastUsed = now
         health[candidate.member.id] = value
+        flights.insert(.init(requestID: plan.id, memberID: candidate.member.id,
+            routing: plan.routing, phase: .connecting, attempt: attempts[plan.id] ?? 1,
+            startedAt: now, updatedAt: now), at: 0)
+        // Keep all admitted attempts and a short history for fast requests.
+        let live = flights.filter { $0.phase.isActive }
+        flights = live + Array(flights.filter { !$0.phase.isActive }.prefix(16))
+        publish()
+    }
+
+    func receivedHeaders(_ candidate: Candidate, plan: Plan, now: Date = Date()) {
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("H \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()} else {FileManager.default.createFile(atPath:"/tmp/gwdbg.txt",contents:Data("H \(Date().timeIntervalSince1970)\n".utf8))}
+        updateFlight(candidate, plan: plan, phase: .waiting, now: now)
+    }
+
+    /// Called at the first valid frame, then at most eight times per second by
+    /// the wire loop. A paused upstream does not manufacture output pulses.
+    func receivedOutput(_ candidate: Candidate, plan: Plan, now: Date = Date()) {
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("O \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
+        updateFlight(candidate, plan: plan, phase: .streaming, now: now, output: true)
+    }
+
+    private func updateFlight(_ candidate: Candidate, plan: Plan, phase: Flight.Phase,
+                              now: Date, output: Bool = false) {
+        guard plan.revision == revision, active.contains(plan.id),
+              let i = flights.firstIndex(where: { $0.requestID == plan.id && $0.memberID == candidate.member.id && $0.phase.isActive }) else { return }
+        if output, flights[i].phase == .streaming, now.timeIntervalSince(flights[i].updatedAt) < 0.125 { return }
+        flights[i].phase = phase; flights[i].updatedAt = now
+        if output { flights[i].outputPulses += 1 }
+        publish()
     }
 
     func report(_ candidate: Candidate, plan: Plan, status: Int, latency: Double,
                 retryAfter: TimeInterval? = nil, now: Date = Date()) {
+        if let i = flights.firstIndex(where: { $0.requestID == plan.id && $0.memberID == candidate.member.id && $0.phase.isActive }) {
+            flights[i].phase = status == 0 ? .cancelled : ((200..<300).contains(status) ? .succeeded : .failed)
+            flights[i].updatedAt = now
+        }
+        // Configuration changes invalidate health writes, but must still end
+        // the actual in-flight visualization; otherwise a line would glow forever.
+        defer { publish() }
         guard plan.revision == revision else { return }
         var value = health[candidate.member.id] ?? Health()
         value.lastStatus = status
@@ -189,13 +261,21 @@ actor FreeModelGateway {
             value.cooldownUntil = now.addingTimeInterval(delay)
         }
         health[candidate.member.id] = value
-        routes.insert(.init(date: now, model: candidate.member.model, provider: candidate.endpoint.name,
+        routes.insert(.init(memberID: candidate.member.id, date: now, model: candidate.member.model, provider: candidate.endpoint.name,
                             status: status, latency: latency, routing: plan.routing, selection: plan.selection), at: 0)
         if routes.count > 40 { routes.removeLast(routes.count - 40) }
     }
 
-    func finish(_ plan: Plan) { active.remove(plan.id); attempts[plan.id] = nil }
+    func finish(_ plan: Plan) {
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("FINISH \(Date().timeIntervalSince1970)\n".utf8));h.closeFile()}
+        active.remove(plan.id); attempts[plan.id] = nil
+        for i in flights.indices where flights[i].requestID == plan.id && flights[i].phase.isActive {
+            flights[i].phase = .cancelled; flights[i].updatedAt = Date()
+        }
+        publish()
+    }
     func snapshot(now: Date = Date()) -> Snapshot {
+        if let h=FileHandle(forWritingAtPath:"/tmp/gwdbg.txt"){h.seekToEndOfFile();h.write(Data("SNAP \(Date().timeIntervalSince1970) \(flights.map{$0.phase.rawValue})\n".utf8));h.closeFile()}
         for key in health.keys where (health[key]?.cooldownUntil ?? .distantFuture) <= now { health[key]?.cooldownUntil = nil }
         var displayed = health
         for member in pool.members {
@@ -205,9 +285,28 @@ actor FreeModelGateway {
                 displayed[member.id] = value
             }
         }
-        return .init(health: displayed, active: active.count, requests: requestCount, routes: routes)
+        return .init(health: displayed, active: active.count, requests: requestCount, routes: routes, flights: flights)
     }
-    func resetHealth() { health.removeAll(); providerCooldown.removeAll() }
+    func resetHealth() { health.removeAll(); providerCooldown.removeAll(); publish() }
+
+    /// Backpressure is bounded: a slow/hidden UI can retain only the newest
+    /// snapshot. Finished flights remain in it, so sub-second requests survive.
+    func updates() -> AsyncStream<Snapshot> {
+        let id = UUID()
+        let pair = AsyncStream<Snapshot>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        observers[id] = pair.continuation
+        pair.continuation.yield(snapshot())
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeObserver(id) }
+        }
+        return pair.stream
+    }
+    private func removeObserver(_ id: UUID) { observers[id] = nil }
+    private func publish() {
+        guard !observers.isEmpty else { return }
+        let value = snapshot()
+        for observer in observers.values { observer.yield(value) }
+    }
 
     func advertisedModels() -> [String] {
         guard pool.enabled else { return [] }
