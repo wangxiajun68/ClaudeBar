@@ -78,8 +78,11 @@ statistics live in historical analytics, avoiding mixed single-line/three-line c
 
 A dedicated fourth tab, with today / 7 days / 30 days / all. A neutral typographic
 reading strip gives the selected period's total, upload/download, and lifetime total
-with its recording start date. A full-width 200pt trend chart uses a quiet total
-line with a restrained area fill, a blue proxy curve and a green direct curve.
+with its recording start date. A full-width 260pt trend chart uses a saturated blue total silhouette and a
+green direct silhouette with translucent area fills; proxy samples use a
+darker dashed blue curve. Section titles are 18pt semibold rounded, legends
+13pt medium and axes 12pt with single-line byte labels. The total reading is
+40pt; units and supporting numbers remain readable in narrow windows.
 Hover or select reveals the nearest bucket; scales carry byte units and calendar
 dates. Rounded SF readings, neutral surfaces and native capsule controls match
 the rest of the workspace; this is product UI, not a research-figure layout.
@@ -88,7 +91,10 @@ A second section compares observed proxy and direct routes, with full numeric
 upload/download, paths, a shared proportion track and compact paired horizontal
 bars. The unclassified gap between root totals and route samples is explicit.
 A simple 24-hour bar chart combines the selected period's latest seven days;
-its native selection exposes exact byte values. There is no heatmap or separate
+its native selection exposes exact byte values. The hourly plot is 174pt tall
+with blue gradient columns, while route comparison uses a 12pt proportion
+track and 138pt paired bars. Color describes measured quantities; it is not
+a decorative background. There is no heatmap or separate
 ratio facet. Domain rankings use aligned 52pt rows, proportional bars, full
 values, route sorting and long-name tooltips. Top 20 is a display limit;
 it never limits storage or totals.
@@ -109,7 +115,15 @@ and the analytics page owns its own archive revision; live byte ticks do not rer
 replaces slots instead of shifting the head of an Array. Each publish produces an
 immutable bounded snapshot for readers. Historical and live-connection search/counting execute off-main;
 query task identity cancels stale publication and work on disappearance or
-when the narrow workspace hides traffic. Query loops cooperate with cancellation. Typing
+when the narrow workspace hides traffic. Query loops cooperate with cancellation. The complete connection JSON decoder,
+row preparation and old-core total accumulation run in a cancellable detached
+task; only a typed Sendable snapshot crosses back to the main actor. Malformed
+payloads preserve the last live snapshot, while an explicit empty connection
+array clears it. Trend and hourly selection state belongs to their individual
+views, so pointer movement never re-evaluates the totals, route comparison or
+domain ranking. Hover dates snap to the nearest sorted calendar bucket with
+binary search, suppressing redundant updates within the same bucket. The
+inspection row has a fixed height so hover never changes scroll geometry. Typing
 uses 150ms debounce. Domain folding and sorting run only in summary mode, in the
 background. Detail/node rows are lazy; historic updates never replace the entire
 scroll-view identity. Both workspace view identities survive width changes and

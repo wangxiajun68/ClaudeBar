@@ -6,7 +6,7 @@ import Combine
 /// Three buckets, because the interesting question on the VPN page is exactly
 /// this split: a domain that *should* go through a node but is in `direct` is
 /// the one thing this log can tell the user that the node mosaic cannot.
-enum VpnDomainRoute: String {
+enum VpnDomainRoute: String, Sendable {
     case proxied, direct, reject
 
     var label: String {
@@ -56,7 +56,7 @@ struct VpnDomainEntry: Identifiable, Equatable {
 
 /// A sampled live connection. Counters belong to this connection ID only;
 /// they must not be assigned to older log lines that share the same hostname.
-struct VpnDomainConnection: Identifiable, Equatable {
+struct VpnDomainConnection: Identifiable, Equatable, Sendable {
     let id: String
     let endpoint: String
     let process: String

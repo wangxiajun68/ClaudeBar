@@ -232,6 +232,9 @@ WATCHLIST
 FILTER_HARNESS
 ASYNC_HARNESS
 
+typealias VpnDomainLog = ConnectionsFixture
+CONNECTION_SNAPSHOT
+
 @main struct Regression {
     static func feedAll(_ lines: [String]) -> [VpnDomainEntry] {
         let feed = VpnDomainFeed()
@@ -246,6 +249,46 @@ ASYNC_HARNESS
     }
 
     @MainActor static func main() async {
+        // Complete raw-data decode, including the old-core counters, is the
+        // production worker. Invalid responses must preserve the live snapshot.
+        let raw: [[String: Any]] = (0..<5000).map { i in
+            ["id": "id-\(i)", "metadata": ["host": "host\(i).example", "destinationPort": "443", "process": "fixture"],
+             "chains": [i % 2 == 0 ? "DIRECT" : "Proxy"], "rule": "Domain", "upload": 10, "download": 20]
+        }
+        let payload = try! JSONSerialization.data(withJSONObject: ["connections": raw, "uploadTotal": 70, "downloadTotal": 90])
+        let decoded = VpnConnectionSnapshot.decode(payload)!
+        precondition(decoded.rows.count == 5000 && decoded.activeCount == 5000)
+        precondition(decoded.hasRootTotals && decoded.totalUp == 70 && decoded.totalDown == 90)
+        let oldCore = VpnConnectionSnapshot.decode(try! JSONSerialization.data(withJSONObject: ["connections": raw]))!
+        precondition(!oldCore.hasRootTotals && oldCore.totalUp == 50_000 && oldCore.totalDown == 100_000)
+        precondition(VpnConnectionSnapshot.decode(Data("broken".utf8)) == nil)
+        precondition(VpnConnectionSnapshot.decode(Data("{}".utf8)) == nil)
+        precondition(VpnConnectionSnapshot.decode(Data("{\"connections\":[]}".utf8))?.activeCount == 0)
+        let extremeCounters: [[String: Any]] = [["upload": Int64.max, "download": Int64.max], ["upload": Int64.max, "download": -1]]
+        let rail = VpnConnectionSnapshot.decode(try! JSONSerialization.data(withJSONObject: ["connections": extremeCounters]))!
+        precondition(rail.totalUp == .max && rail.totalDown == .max)
+        let cancelled = Task.detached {
+            while !Task.isCancelled { await Task.yield() }
+            return VpnConnectionSnapshot.decode(payload)
+        }
+        cancelled.cancel()
+        let cancelledResult = await cancelled.value
+        precondition(cancelledResult == nil)
+        var decodeMs: [Double] = [], jsonMs: [Double] = [], applyMs: [Double] = []
+        let decodeFixture = ConnectionsFixture()
+        for _ in 0..<20 {
+            var start = ProcessInfo.processInfo.systemUptime
+            _ = try! JSONSerialization.jsonObject(with: payload)
+            jsonMs.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            start = ProcessInfo.processInfo.systemUptime
+            let snapshot = await Task.detached { VpnConnectionSnapshot.decode(payload)! }.value
+            decodeMs.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            start = ProcessInfo.processInfo.systemUptime
+            decodeFixture.applyConnections(snapshot.rows)
+            applyMs.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+        }
+        jsonMs.sort(); decodeMs.sort(); applyMs.sort()
+        print("VPN 5000 connections / \(payload.count) bytes: formerly-main JSON median \(jsonMs[10])ms; worker decode+map median \(decodeMs[10])ms; main apply median \(applyMs[10])ms")
         // 1. Proxied: the shape that dominates a real log (11141 of 13141 lines
         //    in a 2.2 MB sample).
         guard let proxied = parse("time=\"2026-09-29T11:41:02.432485000+08:00\" level=info "
@@ -787,7 +830,8 @@ swift = (swift
          .replace('CADENCE', cadence)
          .replace('WATCHLIST', watchlist)
          .replace('FILTER_HARNESS', filter_harness)
-         .replace('ASYNC_HARNESS', async_harness))
+         .replace('ASYNC_HARNESS', async_harness)
+         .replace('CONNECTION_SNAPSHOT', (root / 'Sources/ClaudeBar/Utils/VpnConnectionSnapshot.swift').read_text()))
 
 with tempfile.TemporaryDirectory() as tmp:
     temporary = Path(tmp)

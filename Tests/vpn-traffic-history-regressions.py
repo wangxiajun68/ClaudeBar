@@ -34,6 +34,14 @@ func connection(_ id: String, _ route: VpnDomainRoute, _ up: Int64, _ down: Int6
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = NSTimeZone.default
         let today = calendar.date(from: DateComponents(year: 2026, month: 10, day: 11, hour: 15))!
+        let selections = (0..<1000).map { VpnTrafficPoint(date: today.addingTimeInterval(Double($0) * 3600), traffic: .init()) }
+        check(VpnTrafficSelection.nearest(to: today, in: []) == nil, "empty selection")
+        for offset in stride(from: -5000, through: 3_605_000, by: 713) {
+            let date = today.addingTimeInterval(Double(offset))
+            let oracle = selections.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }!
+            check(VpnTrafficSelection.nearest(to: date, in: selections)?.date == oracle.date, "snapped hover agrees with exhaustive oracle")
+        }
+        check(VpnTrafficSelection.nearest(to: today.addingTimeInterval(1800), in: selections)?.date == today, "ties prefer earlier bucket")
         var sampler = VpnTrafficHistorySampler()
         let first = [connection("p", .proxied, 10, 20), connection("d", .direct, 5, 15), connection("r", .reject, 99, 99)]
         let a = sampler.sample(first + [first[0]], root: .init(upload: 20, download: 50))

@@ -959,14 +959,21 @@ final class VpnManager: ObservableObject {
     private func api(_ method: String, _ path: String,
                      body: Data? = nil, query: [String: String] = [:],
                      timeout: TimeInterval = 20) async throws -> [String: Any] {
+        let data = try await apiData(method, path, body: body, query: query, timeout: timeout)
+        guard !data.isEmpty else { return [:] }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private func apiData(_ method: String, _ path: String,
+                         body: Data? = nil, query: [String: String] = [:],
+                         timeout: TimeInterval = 20) async throws -> Data {
         let req = makeRequest(method, path, body: body, query: query, timeout: timeout)
         let (data, response) = try await VpnHTTP.session().data(for: req)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
-        guard !data.isEmpty else { return [:] }
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return data
     }
 
     private func apiResponse(_ method: String, _ path: String,
@@ -1516,43 +1523,20 @@ extension VpnManager {
     }
 
     private func pollConnections() async {
-        guard let c = try? await api("GET", "/connections"),
+        guard let data = try? await apiData("GET", "/connections"),
               !Task.isCancelled, isRunning else { return }
-        let conns = c["connections"] as? [[String: Any]] ?? []
-        // The 0.1–2 MB snapshot is mapped into rows off the main actor — the
-        // same shape `parseProxyTree` uses for /proxies. Only the finished
-        // `[VpnDomainConnection]` crosses back.
-        let prepared = await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                cont.resume(returning: VpnDomainLog.preparedConnections(conns))
-            }
+        let decode = Task.detached(priority: .userInitiated) { VpnConnectionSnapshot.decode(data) }
+        let snapshot = await withTaskCancellationHandler {
+            await decode.value
+        } onCancel: {
+            decode.cancel()
         }
-        guard !Task.isCancelled, isRunning else { return }
+        guard !Task.isCancelled, isRunning, let snapshot else { return }
+        let prepared = snapshot.rows
         VpnDomainLog.shared.applyConnections(prepared)
-        let activeConnections = conns.count
-
-        // Root totals survive closed connections; summing the live array
-        // drops to 0 whenever the pipe is idle.
-        let hasRootTotals = c["downloadTotal"] != nil || c["uploadTotal"] != nil
-        let totalDown: Int64
-        let totalUp: Int64
-        if hasRootTotals {
-            totalDown = JSONCoerce.int64Val(c["downloadTotal"])
-            totalUp = JSONCoerce.int64Val(c["uploadTotal"])
-        } else {
-            // Saturating accumulation: the per-connection counters come out of
-            // the core's JSON as `Int64`, so a malformed payload full of
-            // extreme values could overflow the sum — and Swift's `+` traps
-            // even under -O. The clamp is the honest reading anyway: a total
-            // in the exabyte range is a broken payload, not a measurement.
-            var up: Int64 = 0, down: Int64 = 0
-            for conn in conns {
-                down = VpnFormat.saturatingAdd(down, JSONCoerce.int64Val(conn["download"]))
-                up = VpnFormat.saturatingAdd(up, JSONCoerce.int64Val(conn["upload"]))
-            }
-            totalDown = down
-            totalUp = up
-        }
+        let activeConnections = snapshot.activeCount
+        let totalUp = snapshot.totalUp, totalDown = snapshot.totalDown
+        let hasRootTotals = snapshot.hasRootTotals
         VpnLiveRates.shared.applyTotals(
             totalUp: totalUp, totalDown: totalDown, connections: activeConnections)
         await VpnTrafficHistory.shared.record(prepared, root: hasRootTotals

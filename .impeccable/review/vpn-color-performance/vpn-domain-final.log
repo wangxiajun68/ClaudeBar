@@ -1,0 +1,7 @@
+.venv/bin/python Tests/run-tests.py
+RUN vpn-domain-log
+VPN 5000 connections / 805333 bytes: formerly-main JSON median 7.370166655164212ms; worker decode+map median 32.324458326911554ms; main apply median 4.639791673980653ms
+VPN query 10000 rows × 100: 3856.51 ms (checksum 0)
+VPN query 2000 rows × 100: 815.84 ms (checksum 0)
+vpn domain log OK · query + connections + 200-row pages + 2,000-row ring
+PASS: 1 suites in 13.76s

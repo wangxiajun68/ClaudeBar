@@ -1,0 +1,1 @@
+HOVER 120 selections; unrelated sections=["trend": 120, "routeComparison": 120, "hourlyActivity": 120, "domainRanking": 120, "totals": 120]; commit wall median=13.542666667490266ms p95=15.669541666284204ms (includes 1ms scheduling; not FPS)

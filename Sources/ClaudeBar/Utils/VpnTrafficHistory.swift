@@ -48,6 +48,23 @@ struct VpnTrafficPoint: Identifiable, Sendable {
     var id: Date { date }
 }
 
+/// Charts receive sorted calendar buckets. Snap pointer motion to one bucket;
+/// moving within it must not schedule another SwiftUI chart rebuild.
+enum VpnTrafficSelection {
+    static func nearest(to date: Date, in points: [VpnTrafficPoint]) -> VpnTrafficPoint? {
+        guard !points.isEmpty else { return nil }
+        var low = 0, high = points.count
+        while low < high {
+            let middle = (low + high) / 2
+            if points[middle].date < date { low = middle + 1 } else { high = middle }
+        }
+        if low == 0 { return points[0] }
+        if low == points.count { return points[low - 1] }
+        return date.timeIntervalSince(points[low - 1].date) <= points[low].date.timeIntervalSince(date)
+            ? points[low - 1] : points[low]
+    }
+}
+
 struct VpnTrafficDomain: Identifiable, Sendable {
     var host: String
     var traffic: VpnTrafficSplit
