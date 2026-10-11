@@ -366,7 +366,7 @@ private struct SessionContextReadout: View {
                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     .help("上下文占用")
                 RollingNumberText(hasData ? label : "—")
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundColor(hasData ? Theme.contextInk(ratio) : Theme.textSecondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
@@ -520,10 +520,10 @@ private struct SessionTileFull: View {
 
             // Keep the capacity and live activity visible without reserving
             // empty title or readout rows.
+            SessionUsageReadout(source: .claude, sessionId: session.sessionId)
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextTokens > 0,
                                   updated: session.relativeUpdated, messages: session.messageCount)
-            SessionUsageReadout(source: .claude, sessionId: session.sessionId)
 
             HStack(spacing: 8) {
                 ActivityLine(activity: isWaiting ? waitingActivity : session.displayActivity,
@@ -701,10 +701,10 @@ private struct CursorTileFull: View {
                                active: isActive, waiting: isWaiting, status: status)
 
             // Compact capacity and live activity, shared with the other clients.
+            SessionUsageReadout(source: nil, sessionId: session.composerId)
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextPercent >= 0,
                                   updated: session.relativeUpdated)
-            SessionUsageReadout(source: nil, sessionId: session.composerId)
 
             HStack(spacing: 8) {
                 ActivityLine(activity: isWaiting ? "等待你确认计划" : session.displayActivity,
@@ -893,7 +893,7 @@ private struct ExternalSessionTile: View {
     /// poll, and the cluster packs smaller cards to fit whatever it is given.
     private static let swarmWidthEstimate = AgentSwarmView.SwarmGrid.tileEstimateWidth
     /// Height of the readout column — cwd, model, context bar, session id.
-    private static let readoutHeight: CGFloat = 184
+    private static let readoutHeight: CGFloat = 204
 
     /// Height for this session: the readout column's height, or the cluster's,
     /// whichever is taller. A session whose fan-out is small stays as short as
@@ -929,10 +929,10 @@ private struct ExternalSessionTile: View {
                     }
                 }
 
+                SessionUsageReadout(source: .codex, sessionId: session.sessionId)
                 SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                       hasData: session.contextLimit > 0 || session.contextTokens > 0,
                                       updated: session.relativeUpdated)
-                SessionUsageReadout(source: .codex, sessionId: session.sessionId)
 
                 HStack(spacing: 6) {
                 Image(systemName: "gauge.with.dots.needle.33percent").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -1109,10 +1109,10 @@ private struct ExternalSessionGridCard: View {
             }
 
             // Capacity and recency share one compact readout.
+            SessionUsageReadout(source: .codex, sessionId: session.sessionId)
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextLimit > 0 || session.contextTokens > 0,
                                   updated: session.relativeUpdated)
-            SessionUsageReadout(source: .codex, sessionId: session.sessionId)
 
             HStack(spacing: 8) {
                 ActivityLine(activity: session.currentActivity, isBusy: isActive || isWaiting,

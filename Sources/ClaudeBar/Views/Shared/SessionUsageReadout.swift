@@ -27,17 +27,39 @@ struct SessionUsageReadout: View {
     var body: some View {
         let usage = summary
         let shown = usage.map { ModelPricing.present($0.cost.cost, display: costDisplay, rate: fx.effectiveRate) }
-        return HStack(spacing: 8) {
-            Label(usage.map { "Token " + TokenMagnitude.format($0.total, style: tokenUnit.rawValue) }
-                  ?? (source == nil ? "Token 未提供" : "Token —"), systemImage: "sum")
-                .foregroundColor(Theme.textSecondary)
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Label("Token", systemImage: "sum")
+                    .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                    .fixedSize()
+                RollingNumberText(usage.map { TokenMagnitude.format($0.total, style: tokenUnit.rawValue) }
+                                  ?? (source == nil ? "未提供" : "—"))
+                    .font(usage == nil ? Theme.Font.caption : .system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(usage == nil ? Theme.textSecondary : Theme.Ink.claude)
+                    .monospacedDigit()
+            }
             Spacer(minLength: 0)
-            Label(costLabel(usage, shown), systemImage: "creditcard")
-                .foregroundColor(shown?.primary == nil ? Theme.textSecondary : Theme.textPrimary)
-                .layoutPriority(1)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Label(shown?.primary == nil ? "花费" : "估算", systemImage: "creditcard")
+                    .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                    .fixedSize()
+                VStack(alignment: .trailing, spacing: 2) {
+                    RollingNumberText(costLabel(usage, shown))
+                        .font(shown?.primary == nil ? Theme.Font.caption : .system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundColor(shown?.primary == nil ? Theme.textSecondary : Theme.textPrimary)
+                        .monospacedDigit()
+                    if let usage, let shown {
+                        let parts = shown.secondary.map { "+ " + ModelPricing.format($0.amount, currency: $0.currency) }
+                        let caveat = [parts, usage.cost.unpricedModels > 0 && shown.primary != nil ? "部分未计价" : nil]
+                            .compactMap { $0 }.joined(separator: " · ")
+                        if !caveat.isEmpty {
+                            Text(caveat).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                        }
+                    }
+                }
+            }
         }
-        .font(.system(size: 12, weight: .medium)).monospacedDigit()
-        .lineLimit(1).minimumScaleFactor(0.8)
+        .lineLimit(1).minimumScaleFactor(0.85)
         .help(detail(usage, shown))
         .accessibilityElement(children: .combine)
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
@@ -45,14 +67,9 @@ struct SessionUsageReadout: View {
     }
 
     private func costLabel(_ usage: SessionUsageSummary?, _ shown: ModelPricing.Presented?) -> String {
-        guard let usage, let shown else { return source == nil ? "花费未提供" : "估算 —" }
-        guard let primary = shown.primary else { return "花费未计价" }
-        var label = "估算 " + ModelPricing.format(primary.amount, currency: primary.currency)
-        if let secondary = shown.secondary {
-            label += " + " + ModelPricing.format(secondary.amount, currency: secondary.currency)
-        }
-        if usage.cost.unpricedModels > 0 { label += " · 部分" }
-        return label
+        guard usage != nil, let shown else { return source == nil ? "未提供" : "—" }
+        guard let primary = shown.primary else { return "未计价" }
+        return ModelPricing.format(primary.amount, currency: primary.currency)
     }
 
     private func detail(_ usage: SessionUsageSummary?, _ shown: ModelPricing.Presented?) -> String {
