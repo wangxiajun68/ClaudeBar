@@ -1,4 +1,0 @@
-.venv/bin/python Tests/run-tests.py
-RUN vpn-traffic-history
-PASS: total/root sampling, route/domain deltas, reset, local periods, >2,000 domains, retention, restore, private archive, corruption and failed-write recovery
-PASS: 1 suites in 8.98s

@@ -1,2 +1,0 @@
-HOVER 120 selections; section evaluations=["trend": 120]; commit wall median=5.081291659735143ms p95=6.061708336346783ms (includes 1ms scheduling; not FPS)
-WITHIN-BUCKET 120 pointer positions; section evaluations=[:]

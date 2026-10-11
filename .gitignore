@@ -34,6 +34,15 @@ DerivedData/
 # Design source (binary, edited via Pencil)
 *.pen
 
+# Impeccable design-tool state: working scratch and per-build review evidence.
+# Neither is source that belongs in the repo — the review evidence (screenshots,
+# build/test logs) is regenerable and was previously committed only because
+# nothing ignored it. The approved direction mocks under .impeccable/mocks/ are
+# input, not output, and stay tracked.
+.impeccable/build/
+.impeccable/review/
+.impeccable/questions/
+
 # Accidental screenshots dropped at repo root
 /screenshot-*.png
 /ClaudeBar-*.png
