@@ -38,6 +38,43 @@ enum AppPresentation { static var allowsInterface = true }
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = WoodenFishModel(defaults: defaults)
+        if CommandLine.arguments.contains("--measure") {
+            model.muted = true
+            let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
+            host.frame = CGRect(origin: .zero, size: model.size.panelSize)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            window.setFrameOrigin(CGPoint(x: screen.maxX - host.frame.width - 24, y: screen.minY + 24))
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            func cpu() -> Double { Double(clock()) / Double(CLOCKS_PER_SEC) }
+            let idleStart = cpu()
+            RunLoop.current.run(until: Date().addingTimeInterval(3))
+            let idleCPU = cpu() - idleStart
+            let activeStart = cpu()
+            let start = Date()
+            for frame in 0..<180 {
+                RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 60))
+                if frame.isMultiple(of: 5) { model.strike() }
+            }
+            let activeCPU = cpu() - activeStart
+            RunLoop.current.run(until: Date().addingTimeInterval(2))
+            let settledStart = cpu()
+            RunLoop.current.run(until: Date().addingTimeInterval(3))
+            let settledCPU = cpu() - settledStart
+            let hitStart = cpu()
+            var hits = 0
+            for index in 0..<100_000 {
+                if WoodenFishGeometry.captures(CGPoint(x: index % 188, y: index % 222), scale: 0.72) { hits += 1 }
+            }
+            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total)")
+            window.orderOut(nil)
+            window.contentView = nil
+            return
+        }
         if CommandLine.arguments.contains("--exercise") {
             model.enabled = true
             model.muted = true
@@ -57,6 +94,23 @@ enum AppPresentation { static var allowsInterface = true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.7))
             precondition(model.total == afterChange, "old cadence was invalidated")
             if let panel = NSApp.windows.first {
+                let point = CGPoint(x: 110 * model.size.scale,
+                                    y: panel.frame.height - (36 + 114 * model.size.scale))
+                func mouse(_ type: NSEvent.EventType, _ location: CGPoint) {
+                    panel.sendEvent(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+                }
+                let beforeClick = model.total
+                mouse(.leftMouseDown, point)
+                precondition(model.isPressed && model.total == beforeClick, "press prepares without counting")
+                mouse(.leftMouseUp, point)
+                precondition(!model.isPressed && model.total == beforeClick + 1, "release strikes exactly once")
+                mouse(.leftMouseUp, point)
+                precondition(model.total == beforeClick + 1, "duplicate release cannot strike")
+                mouse(.leftMouseDown, point)
+                mouse(.leftMouseUp, CGPoint(x: point.x + 10, y: point.y))
+                precondition(model.total == beforeClick + 1, "movement without drag delivery still cannot strike")
                 panel.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
                 panel.makeKey()
                 panel.makeFirstResponder(panel.contentView)
@@ -130,7 +184,7 @@ enum AppPresentation { static var allowsInterface = true }
             AppPreferences.shared.isDark = dark
             for size in WoodenFishSize.allCases {
                 model.size = size
-                model.isAutomatic = false
+                model.isAutomatic = CommandLine.arguments.contains("--auto")
                 model.isHovered = CommandLine.arguments.contains("--hover")
                 let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
                 host.frame = CGRect(origin: .zero, size: size.panelSize)
@@ -144,7 +198,7 @@ enum AppPresentation { static var allowsInterface = true }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
                 guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("bitmap") }
                 host.cacheDisplay(in: host.bounds, to: rep)
-                let suffix = model.isHovered ? "-hover" : ""
+                let suffix = model.isAutomatic ? "-auto" : model.isHovered ? "-hover" : ""
                 let name = "\(size.rawValue)-\(dark ? "dark" : "light")\(suffix).png"
                 try rep.representation(using: .png, properties: [:])!.write(
                     to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(name))

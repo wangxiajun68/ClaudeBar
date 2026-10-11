@@ -631,49 +631,41 @@ those checks.
 
 ## Desktop wooden fish
 
-The desktop wooden fish is a compact solid-colour native vector instrument
-on a transparent desktop window. Opaque jade (`#BDDCD1` / `#245D60`) fills
-the body; teal (`#23828C` / `#68CDC7`) carries its bold contour and the solid
-mallet handle. Coral (`#B85B49` / `#F29B86`) marks the mouth and solid eye;
-warm gold (`#AD7A32` / `#E4BF77`) identifies the solid round mallet head.
-Quieter green (`#478C82` / `#9ECFC3`) carries the inner and base arcs.
-Round caps, round joins and 16 / 10 / 8 foreground stroke widths establish
-the broad, rounded drawing. A narrow contrasting keyline follows the same
-paths. The instrument uses flat opaque fills without texture, shadow or
-cushion; this local accessory language does not change the app's card system.
+The desktop wooden fish is a native vector object on a transparent window.
+A warm apricot asymmetric resonator replaces the regular jade ellipse:
+light / dark fills are `#F5CC91` / `#D99558`, with cocoa / pale-gold contours
+(`#764426` / `#FFE1AA`). A single continuous carved curl connects the mouth;
+a warm wooden mallet and short base arc complete the silhouette. The body
+outline is 6 artwork points, with round joins and a narrow contrasting keyline.
+Opaque flat fills and restrained curves supply the detail. This accessory's
+local palette and form do not change the broader app's card system.
 
-The body's visible ellipse, including its keyline, is 178 × (178 / φ) in
-artwork coordinates, where φ is the golden ratio. Both axes use the same
-projection scale. The eye's centre sits at 1 / φ of the width and 1 / φ² of
-the height; the visible mallet head diameter / handle thickness ratio and
-the body width / base arc width ratio are φ. These relationships keep the
-outline round and proportionate at every size.
+Only the object appears at rest. There are no visible buttons, toolbar or
+context menu. A click strikes on release only while still inside the shape;
+moving at least 5 native points starts a drag and cancels the strike.
+Direct dragging saves position; Option-drag remains compatible. Settings owns
+sound, volume, automatic tapping, tempo, size, reset confirmation and hiding.
+The object retains an accessible activation action, Space to strike and
+window-local Escape to pause and reset the manual chain.
 
-Only the instrument appears at rest; hover slightly brightens it and reveals
-counts. There is no button row. The solid body, mallet, contours and base
-arc capture strikes; surrounding transparent space passes clicks through.
-Pressing briefly scales the instrument. Space strikes, window-local Escape
-pauses and resets the manual chain, and the native right-click menu holds
-all options. Option-drag moves the instrument without striking. There is no idle animation.
+The artwork scales are 0.60 / 0.72 / 0.88; the transparent panel measures
+260 × scale by 78 + 200 × scale. Counts appear only on shape hover, during
+strike feedback or while automatic tapping runs. The noninteractive readout
+uses a 13pt rounded daily number with 10pt supporting text on a small warm-dark
+rounded surface. Transparent margins and counts pass pointer events through.
 
-The three artwork scales are 0.60 / 0.72 / 0.88. The 11pt counts,
-10pt Token / 18pt +1 lettering retain native dimensions.
-Each strike emits its own Token label, including recent events coalesced in
-one frame. An eight-word spray uses independent strike-owned origins, fan angles,
-reach, curvature and launch speeds, rather than rows or columns. New strikes
-never reposition earlier words. Native bounds keep flights inside the window
-and clear of the count footer. Flights last 1.35 seconds and clear at 1.42 seconds; six coloured particles per strike
-share the same eight-group limit. Labels are transparent lettering, without a capsule or filled backdrop. A small
-Token sits beside a larger italic +1 with a short contracting ink flourish;
-sub-point keylines follow the glyphs. Teal or mint marks normal strikes,
-and warm gold marks manual combos from eight onward and surprises. Words
-follow a gently curved, decelerating rise with a small opening spring.
+Each strike emits transparent 功德 +1 lettering, using native 10pt / 18pt type.
+Independent curved flights last 1.35 seconds and clear at approximately
+1.42 seconds. The pool holds at most four groups, evicting the oldest when
+full. Only manual combos of eight or more emit particles, three per group.
+Reduce Motion removes all object transforms, particles and curved flights,
+leaving only the latest fixed-position label fade. There is no idle animation.
+Cached immutable capture paths and an outside-window rectangle rejection
+bound pointer work; these are implementation constraints, not measured CPU
+or energy claims.
 
-Manual gaps of at most 0.55 seconds form a combo. Milestone and rhythm
-surprises temporarily appear in the count capsule; automatic strikes do not
-consume the session's first manual strike of the day or trigger combos and
-surprises. Every strike still adds exactly one count and changes no real
-Token usage. Reduce Motion removes particles and instrument, mallet and
-press transforms, leaving only the latest label's fixed-position fade, without its ink flourish.
-Exact rhythm messages, cooldowns, lifecycle rules and verification status are
-specified in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).
+Every strike adds one count and changes no actual model Token usage.
+Automatic tapping is session-only, does not form combos or trigger surprises,
+and stops on hiding, sleep, exit or performance mode. Exact palette values,
+rhythm messages, geometry, lifecycle and verification boundaries are recorded
+in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

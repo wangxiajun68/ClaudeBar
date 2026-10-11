@@ -23,6 +23,7 @@ final class WoodenFishModel: ObservableObject {
     }
     @Published var isAutomatic = false { didSet { endInteraction() } }
     @Published var isHovered = false
+    @Published var isPressed = false
     @Published private(set) var today: Int
     @Published private(set) var total: Int
     @Published private(set) var strikeID: UInt = 0
@@ -106,7 +107,7 @@ enum WoodenFishSize: String, CaseIterable, Identifiable {
     var scale: CGFloat {
         switch self { case .small: return 0.60; case .regular: return 0.72; case .large: return 0.88 }
     }
-    var panelSize: CGSize { CGSize(width: 260 * scale, height: 70 + 200 * scale) }
+    var panelSize: CGSize { CGSize(width: 260 * scale, height: 78 + 200 * scale) }
 }
 
 enum WoodenFishPlacement {

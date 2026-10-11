@@ -7,7 +7,7 @@ enum WoodenFishGeometry {
     static let goldenRatio: CGFloat = (1 + sqrt(5)) / 2
     // Visible bounds include the keyline; the Canvas uses a uniform projection.
     static let bodyBounds = CGRect(x: 21, y: 38, width: 178, height: 178 / goldenRatio)
-    static let bodyStrokeWidth: CGFloat = 16
+    static let bodyStrokeWidth: CGFloat = 6
     static let baseStrokeWidth: CGFloat = 8
     static let malletStrokeWidth: CGFloat = 10
     static let keylineWidth: CGFloat = 1.8
@@ -41,8 +41,28 @@ enum WoodenFishGeometry {
     }
 
     static func bodyPath() -> CGPath {
-        CGPath(ellipseIn: bodyBounds.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2), transform: nil)
+        let r = bodyBounds.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2)
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: r.minX + x * r.width, y: r.minY + y * r.height)
+        }
+        let path = CGMutablePath()
+        path.move(to: p(0, 0.55))
+        path.addCurve(to: p(0.43, 0), control1: p(0, 0.24), control2: p(0.19, 0))
+        path.addCurve(to: p(1, 0.52), control1: p(0.75, 0), control2: p(1, 0.20))
+        path.addCurve(to: p(0.51, 1), control1: p(1, 0.83), control2: p(0.78, 1))
+        path.addCurve(to: p(0, 0.55), control1: p(0.20, 1), control2: p(0, 0.86))
+        path.closeSubpath()
+        return path
     }
+
+    // Immutable outlines are prepared once, never allocated on each mouse move.
+    private static let captureBody = bodyPath()
+    private static let captureBodyEdge = bodyPath().copy(strokingWithWidth: outlineWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
+    private static let captureBase = basePath().copy(strokingWithWidth: baseWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
+    private static let captureHandle = malletHandlePath()
+    private static let captureHead = malletHeadPath()
+    private static let captureHandleEdge = malletHandlePath().copy(strokingWithWidth: malletWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
+    private static let captureHeadEdge = malletHeadPath().copy(strokingWithWidth: malletWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
 
     static func captures(_ point: CGPoint, scale: CGFloat = 1) -> Bool {
         guard scale.isFinite, scale > 0 else { return false }
@@ -50,17 +70,31 @@ enum WoodenFishGeometry {
         let point = CGPoint(x: point.x / scale, y: 36 + (point.y - 36) / scale)
         let art = CGPoint(x: (point.x - 10) * 220 / 240, y: (point.y - 56) * 220 / 240)
         // The solid instrument's enclosed interior remains an easy tap target.
-        if bodyPath().contains(art)
-            || bodyPath().copy(strokingWithWidth: outlineWidth, lineCap: .round, lineJoin: .round, miterLimit: 10).contains(art) { return true }
-        if basePath().copy(strokingWithWidth: baseWidth, lineCap: .round, lineJoin: .round, miterLimit: 10).contains(art) { return true }
+        if captureBody.contains(art) || captureBodyEdge.contains(art) || captureBase.contains(art) { return true }
         // Invert the view's exact 74×23 top-trailing mallet transform:
         // artwork origin (10,56), offset (7,18), rotation −38° about (37,11.5).
         let relative = CGPoint(x: point.x - 10 - 173 - 37, y: point.y - 56 - 18 - 11.5)
         let angle = 38.0 * Double.pi / 180
         let local = CGPoint(x: cos(angle) * relative.x - sin(angle) * relative.y + 37,
                             y: sin(angle) * relative.x + cos(angle) * relative.y + 11.5)
-        return malletHandlePath().contains(local) || malletHeadPath().contains(local)
-            || malletHandlePath().copy(strokingWithWidth: malletWidth, lineCap: .round, lineJoin: .round, miterLimit: 10).contains(local)
-            || malletHeadPath().copy(strokingWithWidth: malletWidth, lineCap: .round, lineJoin: .round, miterLimit: 10).contains(local)
+        return captureHandle.contains(local) || captureHead.contains(local)
+            || captureHandleEdge.contains(local) || captureHeadEdge.contains(local)
     }
+}
+
+/// Native-point slop distinguishes a relaxed click from repositioning at every size.
+struct WoodenFishPointerGesture {
+    private var origin: CGPoint?
+    var isTracking: Bool { origin != nil }
+    mutating func begin(at point: CGPoint) { origin = point }
+    func shouldDrag(to point: CGPoint) -> Bool {
+        guard let origin else { return false }
+        return hypot(point.x - origin.x, point.y - origin.y) >= 5
+    }
+    mutating func end(at point: CGPoint) -> Bool {
+        let strike = isTracking && !shouldDrag(to: point)
+        cancel()
+        return strike
+    }
+    mutating func cancel() { origin = nil }
 }

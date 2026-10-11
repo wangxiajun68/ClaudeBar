@@ -1,19 +1,12 @@
 import SwiftUI
 import AppKit
 
-/// THESIS: the vector instrument itself floats on the desktop, without a card.
-/// OWN-WORLD: jade fill, broad round contours and golden proportions; coral and gold details.
-/// STORY: tap to strike; rapid manual taps reveal a word cloud and rhythm surprises.
-/// FIRST VIEWPORT: wood/mallet only at rest; counts appear on hover; options live in the context menu.
-/// FORM: a transparent, shaped desktop accessory; no idle decorative animation.
-/// FINISH: unreviewed and undocumented is unfinished; this build ends with
-/// the finish review, the verdict, and DESIGN.md.
+/// A tactile desktop object with only two pointer actions: strike and drag.
 struct WoodenFishView: View {
     @ObservedObject var model: WoodenFishModel
     @ObservedObject private var prefs = AppPreferences.shared
     let strike: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var confirmReset = false
     @State private var bursts = WoodenFishBurstPool()
 
     private var showsCounts: Bool { model.isHovered || model.isAutomatic }
@@ -25,41 +18,14 @@ struct WoodenFishView: View {
             instrument
             counts
         }
-        .frame(width: model.size.panelSize.width, height: model.size.panelSize.height, alignment: .topLeading)
+        .frame(width: model.size.panelSize.width, height: model.size.panelSize.height, alignment: .top)
         .preferredColorScheme(Theme.isDark ? .dark : .light)
-        .alert("清空功德记录？", isPresented: $confirmReset) {
-            Button("取消", role: .cancel) { }
-            Button("清空记录", role: .destructive) { bursts = .init(); model.resetCounts() }
-        } message: { Text("今日与累计功德将归零，无法撤销。") }
         .onChange(of: model.strikeID) { previous, id in
             bursts.emit(from: previous, through: id, feedback: model.feedback)
         }
         .onExitCommand { model.isAutomatic = false; model.endInteraction() }
-    }
-
-    @ViewBuilder private var options: some View {
-        Section("敲击控制") {
-            Button(model.muted ? "开启音效" : "静音") { model.muted.toggle() }
-            Button(model.isAutomatic ? "暂停自动敲击" : "开始自动敲击") { model.isAutomatic.toggle() }
-        }
-        Section("自动敲击间隔") {
-            ForEach(WoodenFishModel.intervals, id: \.self) { interval in
-                Button { model.interval = interval } label: {
-                    Label("\(interval.formatted()) 秒", systemImage: model.interval == interval ? "checkmark" : "clock")
-                }
-            }
-        }
-        Section("木鱼大小") {
-            ForEach(WoodenFishSize.allCases) { size in
-                Button { model.size = size } label: {
-                    Label(size.label, systemImage: model.size == size ? "checkmark" : "rectangle")
-                }
-            }
-        }
-        Divider()
-        Button("清空功德记录…", role: .destructive) { confirmReset = true }
-        Divider()
-        Button("隐藏木鱼") { model.enabled = false }
+        .onChange(of: model.isAutomatic) { _, _ in bursts = .init() }
+        .onChange(of: model.total) { _, count in if count == 0 { bursts = .init() } }
     }
 
     private var instrument: some View {
@@ -69,6 +35,8 @@ struct WoodenFishView: View {
                 WoodenFishArtwork(strikeID: model.strikeID)
                     .frame(width: 240, height: 180)
                     .padding(.top, 20)
+                    .scaleEffect(model.isPressed && !reducedMotion ? 0.94 : 1, anchor: .bottom)
+                    .animation(.easeOut(duration: 0.08), value: model.isPressed)
                     .brightness(model.isHovered ? 0.025 : 0)
                     .animation(.easeOut(duration: 0.16), value: model.isHovered)
                     .keyframeAnimator(initialValue: Impact(), trigger: model.strikeID) { view, value in
@@ -76,8 +44,8 @@ struct WoodenFishView: View {
                             .rotationEffect(.degrees(reducedMotion ? 0 : value.angle), anchor: .bottom)
                     } keyframes: { _ in
                         KeyframeTrack(\.scale) {
-                            LinearKeyframe(0.94, duration: 0.07)
-                            SpringKeyframe(1, duration: 0.28, spring: .snappy)
+                            LinearKeyframe(0.88, duration: 0.045)
+                            SpringKeyframe(1, duration: 0.34, spring: .bouncy)
                         }
                         KeyframeTrack(\.angle) {
                             LinearKeyframe(-2, duration: 0.07)
@@ -93,36 +61,35 @@ struct WoodenFishView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(WoodenFishPressStyle(scale: 0.98))
-        .contextMenu { options }
         .keyboardShortcut(.space, modifiers: [])
         .accessibilityLabel("敲一下木鱼")
-        .accessibilityHint("每次敲击增加一份功德。空格敲击，按住 Option 拖动可移动，右键打开选项。")
-        .help("点击或空格敲击 · ⌥拖动移动 · 右键选项 · Esc 暂停")
+        .accessibilityHint("每次敲击增加一份功德。拖动木鱼可移动，空格敲击，Esc 暂停。音效和节奏在应用设置中调整。")
+        .help("点击敲击 · 直接拖动移动 · 空格敲击 · Esc 暂停")
     }
 
     private var counts: some View {
-        let celebration = bursts.celebration
         let combo = bursts.entries.last?.feedback.combo ?? 0
-        return HStack(spacing: 5) {
-            if let celebration {
-                Text(celebration.message).foregroundStyle(Color(hex: 0xFFD58F))
-            } else if combo >= 2 {
-                Text("连击 \(combo) · 今日 \(model.today.formatted())")
-            } else {
-                Text("今日 \(model.today.formatted()) · 累计 \(model.total.formatted())")
+        return VStack(spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("今日").font(.system(size: 10, weight: .medium))
+                Text(model.today.formatted()).font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .monospacedDigit().contentTransition(.numericText())
             }
-            if !model.soundAvailable {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(hex: 0xFFD58F))
-            }
+            Text(bursts.celebration?.message ?? (combo >= 2 ? "连击 ×\(combo)" :
+                 !model.soundAvailable ? "音效不可用 · 请检查输出" : model.isAutomatic ? "自动 · 每 \(model.interval.formatted()) 秒" : "累计 \(model.total.formatted())"))
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(Color(hex: 0xFFE0A6))
         }
-        .font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
-        .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.7)
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(Color.black.opacity(0.72), in: Capsule())
-        .frame(width: model.size.panelSize.width - 8, height: 28)
-        .opacity(showsCounts || celebration != nil || combo >= 2 ? 1 : 0)
-        .accessibilityLabel("今日功德 \(model.today)，累计功德 \(model.total)，连击 \(combo)" + (celebration.map { "，" + $0.message } ?? ""))
-        .help(model.soundAvailable ? "连续手动敲击有连击彩蛋；每次只增加一份功德" : "音效不可用，请检查系统声音输出；仍可敲击计数")
+        .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.75)
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(Color(hex: 0x29221C).opacity(0.94), in: RoundedRectangle(cornerRadius: 10))
+        .frame(width: model.size.panelSize.width - 8, height: 36)
+        .opacity(showsCounts || !bursts.entries.isEmpty ? 1 : 0)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("今日功德 \(model.today)，累计功德 \(model.total)")
+        .accessibilityHidden(!showsCounts && bursts.entries.isEmpty)
     }
 
     private struct Impact { var scale = 1.0; var angle = 0.0 }
@@ -171,11 +138,11 @@ private struct WoodenFishBurst: View {
                     .modifier(WoodenFishWordFlight(progress: progress, id: entry.id, displayScale: displayScale,
                                                   reducedMotion: reduceMotion))
             }
-            if !reduceMotion {
-                ForEach([0, 2, 3, 4, 5, 6], id: \.self) { lane in
+            if !reduceMotion && entry.feedback.combo >= 8 {
+                ForEach([0, 2, 4], id: \.self) { lane in
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(lane.isMultiple(of: 3) ? Color(hex: 0xE3B8FF) :
-                              lane.isMultiple(of: 2) ? Color(hex: 0x8CEAFF) : Color(hex: 0xFFD58F))
+                        .fill(lane.isMultiple(of: 3) ? Color(hex: 0xFFAC7D) :
+                              lane.isMultiple(of: 2) ? Color(hex: 0xFFF2CD) : Color(hex: 0xFFD58F))
                         .frame(width: 3 / displayScale, height: 3 / displayScale).rotationEffect(.degrees(45))
                         .modifier(WoodenFishParticleFlight(progress: progress, lane: lane, reducedMotion: false))
                 }
@@ -202,16 +169,16 @@ private struct WoodenFishTokenLabel: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var ink: Color {
-        Color(hex: colorScheme == .dark ? (isGolden ? 0xFFE1A3 : 0x91EEE2) :
-                                 (isGolden ? 0xA8652C : 0x1D7C86))
+        Color(hex: colorScheme == .dark ? (isGolden ? 0xFFE1A3 : 0xFFE9C6) :
+                                 (isGolden ? 0xA8652C : 0x88451E))
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 3 / displayScale) {
-            Text("Token")
+            Text("功德")
                 .font(.system(size: 10 / displayScale, weight: .semibold, design: .rounded))
                 .tracking(0.15 / displayScale)
-                .foregroundStyle(colorScheme == .dark ? ink : Color(hex: isGolden ? 0x824923 : 0x18565D))
+                .foregroundStyle(colorScheme == .dark ? ink : Color(hex: isGolden ? 0x824923 : 0x713517))
             Text("+1")
                 .font(.system(size: 18 / displayScale, weight: .heavy, design: .rounded))
                 .italic().monospacedDigit()
@@ -274,8 +241,8 @@ private struct WoodenFishParticleFlight: AnimatableModifier {
     }
 }
 
-/// A solid-colour vector instrument with broad round contours, a split lip
-/// and a mallet. Only the surrounding desktop remains transparent.
+/// Warm lacquer colours and a single recessed curl give the toy its identity.
+/// The shared outer path is also the native pointer capture boundary.
 struct WoodenFishArtwork: View {
     var strikeID: UInt = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -288,20 +255,23 @@ struct WoodenFishArtwork: View {
             WoodenFishLineStyle.stroke(Path(WoodenFishGeometry.bodyPath()), in: &context,
                                        ink: WoodenFishLineStyle.body, width: WoodenFishGeometry.bodyStrokeWidth,
                                        fill: WoodenFishLineStyle.bodyFill)
-            var lip = Path()
-            lip.move(to: CGPoint(x: 151, y: 83))
-            lip.addCurve(to: CGPoint(x: 170, y: 91),
-                         control1: CGPoint(x: 167, y: 83), control2: CGPoint(x: 176, y: 86))
-            lip.addCurve(to: CGPoint(x: 151, y: 110),
-                         control1: CGPoint(x: 166, y: 98), control2: CGPoint(x: 157, y: 106))
-            WoodenFishLineStyle.stroke(lip, in: &context, ink: WoodenFishLineStyle.carving, width: 10)
-            var incision = Path()
-            incision.move(to: CGPoint(x: 62, y: 88))
-            incision.addCurve(to: CGPoint(x: 109, y: 68),
-                              control1: CGPoint(x: 73, y: 70), control2: CGPoint(x: 88, y: 66))
-            WoodenFishLineStyle.stroke(incision, in: &context, ink: WoodenFishLineStyle.accent, width: 8)
-            WoodenFishLineStyle.stroke(Path(WoodenFishGeometry.eyePath()),
-                                       in: &context, ink: WoodenFishLineStyle.carving, width: 5.2, fill: WoodenFishLineStyle.carving)
+            // One continuous recessed carving connects the mouth and its curl.
+            var carving = Path()
+            carving.move(to: CGPoint(x: 186, y: 99))
+            carving.addCurve(to: CGPoint(x: 120, y: 110),
+                             control1: CGPoint(x: 166, y: 96), control2: CGPoint(x: 145, y: 117))
+            carving.addCurve(to: CGPoint(x: 128, y: 77),
+                             control1: CGPoint(x: 94, y: 100), control2: CGPoint(x: 104, y: 77))
+            carving.addCurve(to: CGPoint(x: 139, y: 98),
+                             control1: CGPoint(x: 151, y: 76), control2: CGPoint(x: 155, y: 99))
+            context.stroke(carving, with: .color(WoodenFishLineStyle.carving),
+                           style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+            var grain = Path()
+            grain.move(to: CGPoint(x: 54, y: 82))
+            grain.addCurve(to: CGPoint(x: 101, y: 61),
+                           control1: CGPoint(x: 64, y: 66), control2: CGPoint(x: 82, y: 60))
+            context.stroke(grain, with: .color(WoodenFishLineStyle.accent),
+                           style: StrokeStyle(lineWidth: 3, lineCap: .round))
 
         }
         .overlay(alignment: .topTrailing) {
@@ -312,14 +282,12 @@ struct WoodenFishArtwork: View {
                         .offset(y: reducedMotion ? 0 : value.drop)
                 } keyframes: { _ in
                     KeyframeTrack(\.angle) {
-                        CubicKeyframe(20, duration: 0.08)
-                        LinearKeyframe(-24, duration: 0.075)
+                        LinearKeyframe(-24, duration: 0.045)
                         SpringKeyframe(7, duration: 0.16, spring: .snappy, startVelocity: 0)
                         CubicKeyframe(0, duration: 0.14)
                     }
                     KeyframeTrack(\.drop) {
-                        CubicKeyframe(-7, duration: 0.08)
-                        LinearKeyframe(6, duration: 0.075)
+                        LinearKeyframe(6, duration: 0.045)
                         SpringKeyframe(-2, duration: 0.16, spring: .snappy, startVelocity: 0)
                         CubicKeyframe(0, duration: 0.14)
                     }
@@ -355,11 +323,11 @@ private struct WoodenFishMallet: View {
 /// A narrow contrasting keyline keeps the drawing visible on wallpapers.
 /// Both strokes follow one path; the solid instrument has no shadow or panel.
 private enum WoodenFishLineStyle {
-    static var bodyFill: Color { Theme.isDark ? Color(hex: 0x245D60) : Color(hex: 0xBDDCD1) }
-    static var body: Color { Theme.isDark ? Color(hex: 0x68CDC7) : Color(hex: 0x23828C) }
-    static var accent: Color { Theme.isDark ? Color(hex: 0x9ECFC3) : Color(hex: 0x478C82) }
-    static var carving: Color { Theme.isDark ? Color(hex: 0xF29B86) : Color(hex: 0xB85B49) }
-    static var malletHead: Color { Theme.isDark ? Color(hex: 0xE4BF77) : Color(hex: 0xAD7A32) }
+    static var bodyFill: Color { Theme.isDark ? Color(hex: 0xD99558) : Color(hex: 0xF5CC91) }
+    static var body: Color { Theme.isDark ? Color(hex: 0xFFE1AA) : Color(hex: 0x764426) }
+    static var accent: Color { Theme.isDark ? Color(hex: 0xFCE0AD) : Color(hex: 0xB57B40) }
+    static var carving: Color { Theme.isDark ? Color(hex: 0x69361F) : Color(hex: 0x884725) }
+    static var malletHead: Color { Theme.isDark ? Color(hex: 0xF5D09B) : Color(hex: 0xDB9B52) }
     private static var keyline: Color {
         Theme.isDark ? Color(hex: 0x101D24, opacity: 0.90) : Color(hex: 0xF6FCFA, opacity: 0.90)
     }

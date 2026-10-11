@@ -66,6 +66,9 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard AppPresentation.allowsInterface, panel == nil else { return }
         model.refreshDay()
         let panel = WoodenFishPanel(contentRect: placedFrame(size: model.size.panelSize))
+        panel.onStrike = { [weak self] in self?.strike() }
+        panel.onPress = { [weak self] pressed in self?.model.isPressed = pressed }
+        panel.onDragEnd = { [weak self] in self?.reposition() }
         panel.onEscape = { [weak self] in
             self?.model.isAutomatic = false
             self?.model.endInteraction()
@@ -88,6 +91,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         globalMouseMonitor = nil; localMouseMonitor = nil
         model.isHovered = false
+        model.isPressed = false
         automaticTimer?.invalidate(); automaticTimer = nil
         dayTimer?.invalidate(); dayTimer = nil
         model.isAutomatic = false
@@ -142,9 +146,11 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         let scale = panel.frame.width / 260
         let point = CGPoint(x: mouse.x - panel.frame.minX,
                             y: panel.frame.maxY - mouse.y)
-        let hovered = panel.frame.contains(mouse)
+        // Outside the tiny panel, only this rectangle check runs. No path work,
+        // allocations or SwiftUI publications follow ordinary desktop movement.
+        let hovered = panel.frame.contains(mouse) && WoodenFishGeometry.captures(point, scale: scale)
         if model.isHovered != hovered { model.isHovered = hovered }
-        let capture = WoodenFishGeometry.captures(point, scale: scale)
+        let capture = panel.isTrackingStrike || hovered
         if panel.ignoresMouseEvents == capture { panel.ignoresMouseEvents = !capture }
     }
 
@@ -166,6 +172,11 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         syncPointer()
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        panel?.cancelStrike()
+        syncPointer()
+    }
+
     func windowDidMove(_ notification: Notification) {
         syncPointer()
         positionSave?.cancel()
@@ -181,20 +192,51 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
 
 private final class WoodenFishPanel: NSPanel {
     var onEscape: (() -> Void)?
+    var onStrike: (() -> Void)?
+    var onPress: ((Bool) -> Void)?
+    var onDragEnd: (() -> Void)?
+    private var gesture = WoodenFishPointerGesture()
+    var isTrackingStrike: Bool { gesture.isTracking }
 
-    // This accessory can become key without a focused SwiftUI control.
-    // Handle Escape in its own window; never install a global key listener.
+    func cancelStrike() {
+        gesture.cancel()
+        onPress?(false)
+    }
+
     override func sendEvent(_ event: NSEvent) {
+        let point = CGPoint(x: event.locationInWindow.x, y: frame.height - event.locationInWindow.y)
         if event.type == .keyDown, event.keyCode == 53 {
+            cancelStrike()
             onEscape?()
             return
         }
-        if event.type == .leftMouseDown, event.modifierFlags.contains(.option) {
-            let point = CGPoint(x: event.locationInWindow.x, y: frame.height - event.locationInWindow.y)
-            if WoodenFishGeometry.captures(point, scale: frame.width / 260) {
+        if event.type == .leftMouseDown,
+           WoodenFishGeometry.captures(point, scale: frame.width / 260) {
+            if event.modifierFlags.contains(.option) {
+                cancelStrike()
                 performDrag(with: event)
-                return
+                onDragEnd?()
+            } else {
+                makeKey()
+                gesture.begin(at: point)
+                onPress?(true)
             }
+            return
+        }
+        if event.type == .leftMouseDragged, gesture.isTracking {
+            if gesture.shouldDrag(to: point) {
+                cancelStrike()
+                performDrag(with: event)
+                onDragEnd?()
+            }
+            return
+        }
+        if event.type == .leftMouseUp, gesture.isTracking {
+            let shouldStrike = gesture.end(at: point)
+                && WoodenFishGeometry.captures(point, scale: frame.width / 260)
+            onPress?(false)
+            if shouldStrike { onStrike?() }
+            return
         }
         super.sendEvent(event)
     }

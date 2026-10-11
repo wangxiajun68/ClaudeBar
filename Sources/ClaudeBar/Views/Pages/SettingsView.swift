@@ -11,6 +11,7 @@ struct SettingsView: View {
     @ObservedObject private var woodenFish = WoodenFishModel.shared
 
     @ObservedObject var state = SettingsState()
+    @State private var confirmWoodenFishReset = false
     @State private var fontBrowserExpanded = false
     @State private var fontSearch = ""
     @State private var installedTerminals: Set<ResumeTerminal> = []
@@ -51,6 +52,10 @@ struct SettingsView: View {
             }
         }
         .background(Theme.bgPrimary)
+        .alert("清空功德记录？", isPresented: $confirmWoodenFishReset) {
+            Button("取消", role: .cancel) { }
+            Button("清空记录", role: .destructive) { woodenFish.resetCounts() }
+        } message: { Text("今日与累计功德将归零，无法撤销。") }
         .onAppear {
             if !state.initialized {
                 state.codexPortDraft = String(prefs.codexProxyPort)
@@ -188,7 +193,7 @@ struct SettingsView: View {
                 }
             }
             SettingsGroup(title: "桌面木鱼", symbol: "hand.tap") {
-                SettingsToggleRow(title: "显示悬浮木鱼", caption: "点击木鱼积攒功德；拖动顶部把手移动。支持音效、自动敲击与位置记忆，性能模式下暂停。",
+                SettingsToggleRow(title: "显示悬浮木鱼", caption: "桌面上只有木鱼：点击敲击，直接拖动移动。音效和节奏在这里调整，性能模式下暂停。",
                                   isOn: $woodenFish.enabled)
                 if woodenFish.enabled {
                     SettingsDivider()
@@ -203,7 +208,10 @@ struct SettingsView: View {
                             .monospacedDigit().font(Theme.Font.bodySmall).frame(width: 38, alignment: .trailing)
                     }
                     SettingsDivider()
-                    SettingsRow(title: "自动敲击间隔", caption: "在悬浮窗点击自动敲击开始；隐藏、休眠或切换性能模式会停止。") {
+                    SettingsToggleRow(title: "自动敲击", caption: "仅本次开启；隐藏、休眠或切换性能模式会停止。木鱼获得焦点后，Esc 可暂停。",
+                                      isOn: $woodenFish.isAutomatic)
+                    SettingsDivider()
+                    SettingsRow(title: "自动敲击间隔") {
                         Picker("自动敲击间隔", selection: $woodenFish.interval) {
                             ForEach(WoodenFishModel.intervals, id: \.self) { interval in
                                 Text("\(interval.formatted()) 秒").tag(interval)
@@ -214,6 +222,10 @@ struct SettingsView: View {
                     SettingsRow(title: "悬浮窗大小") {
                         SegmentedCapsule(items: WoodenFishSize.allCases, selection: woodenFish.size,
                                          title: { $0.label }, onSelect: { woodenFish.size = $0 })
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: "功德记录", caption: "今日 \(woodenFish.today.formatted()) · 累计 \(woodenFish.total.formatted())") {
+                        Button("清空记录…", role: .destructive) { confirmWoodenFishReset = true }
                     }
                 }
             }

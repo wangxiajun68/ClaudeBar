@@ -4,7 +4,7 @@ import CoreGraphics
 /// A bounded, view-owned pool lets quick taps overlap without accumulating
 /// views or keeping an idle display loop alive.
 struct WoodenFishBurstPool {
-    static let capacity = 8
+    static let capacity = 4
     struct Entry: Identifiable {
         let id: UInt
         let feedback: WoodenFishStrikeFeedback
