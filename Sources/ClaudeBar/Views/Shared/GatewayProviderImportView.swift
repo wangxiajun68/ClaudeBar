@@ -77,7 +77,7 @@ struct GatewayProviderImportView: View {
                         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Theme.fieldWell, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
                     }
-                    Text("仅加入已确认免费的模型。复用供应商的 HTTPS Chat 接口与 Key；OpenRouter 按免费目录校验。")
+                    Text("仅加入已确认免费的模型。复用供应商已保存的 Chat 接口与 Key；OpenRouter 按免费目录校验。")
                         .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {

@@ -61,7 +61,7 @@ struct CodexProvider: Identifiable, Equatable {
     var id: UUID; var name: String; var baseURL: String; var apiKey = "preview-key"; var models: [CodexModelConfig]
     var activeModel: CodexModelConfig? { models.first }
 }
-enum PreviewScreen { static var discovery = false; static var editor = false; static var settings = false; static var admission = false; static var importSelected = false; static var routes = false }
+enum PreviewScreen { static var discovery = false; static var editor = false; static var settings = false; static var admission = false; static var importSelected = false; static var routes = false; static var connections = false; static var queue = false }
 enum PreviewMotion { static var reduce = false }
 enum PreviewCounts { static var rows = 0 }
 @MainActor final class FreeModelGatewayStore: ObservableObject {
@@ -75,12 +75,14 @@ enum PreviewCounts { static var rows = 0 }
     @Published var error: String?
     @Published var snapshot = FreeModelGateway.Snapshot()
     var connections: [CodexProvider] = []
+    var connectionSources: [UUID:String] = [:]
     let first = UUID(uuidString:"11111111-1111-1111-1111-111111111111")!
     let second = UUID(uuidString:"22222222-2222-2222-2222-222222222222")!
     func seed(count: Int, live: Bool, long: Bool = false) {
         pool = FreeModelPool(); pool.enabled = true
         connections = [.init(id:first,name:"示例供应商 A",baseURL:"https://example.test/v1",models:[]),
                        .init(id:second,name:"示例供应商 B",baseURL:"https://example.test/v1",models:[])]
+        connectionSources = [first:"Codex",second:"Claude Code"]
         let names = ["Swift Light", "Atlas Tools", "Reasoning Pro", "Vision Free", "Standby Model"]
         pool.members = (0..<count).map { i in
             .init(providerID:i % 2 == 0 ? first : second,model:"example/\(i)-free",name:names[i % 5] + (i >= 5 ? " \(i)" : ""),
@@ -117,6 +119,7 @@ enum PreviewCounts { static var rows = 0 }
 }
 '''
 for path in ['Sources/ClaudeBar/Views/Shared/GatewayTopologyView.swift',
+             'Sources/ClaudeBar/Views/Shared/GatewayQueueView.swift',
              'Sources/ClaudeBar/Views/Shared/GatewayInventoryRow.swift',
              'Sources/ClaudeBar/Views/Shared/GatewayCatalogCard.swift',
              'Sources/ClaudeBar/Views/Shared/GatewayProviderImportView.swift',
@@ -126,13 +129,15 @@ for path in ['Sources/ClaudeBar/Views/Shared/GatewayTopologyView.swift',
         text = text.replace('@Environment(\\.accessibilityReduceMotion) private var reduceMotion', 'private var reduceMotion: Bool { PreviewMotion.reduce }')
     if 'FreeModelGatewayView.swift' in path:
         text = text.replace('@State private var workspace = Workspace.pool', '@State private var workspace = PreviewScreen.discovery ? Workspace.discovery : (PreviewScreen.routes ? Workspace.routes : Workspace.pool)')
-        text = text.replace('var body: some View {\n        ScrollViewReader', 'var body: some View {\n        if PreviewScreen.admission { ScrollView { admissionControls.padding(16) } } else if PreviewScreen.editor { modelEditor } else if PreviewScreen.settings { ScrollView { VStack(spacing:16) { controls; admissionControls; discoveryControls }.padding(16) } } else {\n        ScrollViewReader')
+        text = text.replace('var body: some View {\n        ScrollViewReader', 'var body: some View {\n        if PreviewScreen.connections { discoveryConnectionChoices } else if PreviewScreen.queue { ScrollView { GatewayQueueView(snapshot:gateway.snapshot,pool:gateway.pool,connections:gateway.connections).padding(24) } } else if PreviewScreen.admission { ScrollView { admissionControls.padding(16) } } else if PreviewScreen.editor { modelEditor } else if PreviewScreen.settings { ScrollView { VStack(spacing:16) { controls; admissionControls; discoveryControls }.padding(16) } } else {\n        ScrollViewReader')
         text = text.replace('.sheet(isPresented: $showAdd) { modelEditor }\n    }', '.sheet(isPresented: $showAdd) { modelEditor }\n        }\n    }')
     if 'GatewayProviderImportView.swift' in path:
         text = text.replace('@State private var selected: Set<String> = []', '@State private var selected: Set<String> = PreviewScreen.importSelected ? ["11111111-1111-1111-1111-111111111111:example/1-free", "11111111-1111-1111-1111-111111111111:example/2-free"] : []')
         text = text.replace('@State private var confirmedFree = false', '@State private var confirmedFree = PreviewScreen.importSelected')
     if 'GatewayInventoryRow.swift' in path:
         text = text.replace('    var body: some View {\n        VStack', '    var body: some View {\n        PreviewCounts.rows += 1\n        return VStack')
+    if 'GatewayQueueView.swift' in path:
+        text = text.replace('@State private var expanded = false', '@State private var expanded = PreviewScreen.queue')
     source += '\n' + text
 source += "\n" + read('Sources/ClaudeBar/Models/Provider.swift')
 catalog = read('Sources/ClaudeBar/Models/ProviderCatalog.swift')
@@ -206,8 +211,24 @@ private final class VisibleFixtureWindow: NSWindow {
         visible.contentView = nil
         paint(flight); precondition(animations() == 0, "detached must have no animation")
         print("PASS: native idle, active travel, streaming direction, terminal pulse, reduce-motion and detach lifecycle")
+        let output = GatewayOutputDot(frame:CGRect(x:0,y:0,width:8,height:8))
+        visible.contentView = output
+        output.update(pulses:0,moving:true)
+        precondition(output.layer?.animation(forKey:"output") == nil, "open stream alone cannot invent an output pulse")
+        output.update(pulses:1,moving:true)
+        precondition(output.layer?.animation(forKey:"output") != nil, "received output must pulse")
+        output.update(pulses:2,moving:false)
+        precondition(output.layer?.animationKeys() == nil, "offscreen/reduce-motion stops output pulses")
+        output.update(pulses:3,moving:true); visible.contentView = nil
+        precondition(output.layer?.animationKeys() == nil, "detaching must stop output pulses")
+        print("PASS: queue pulses require real output and stop offscreen/reduced/detached")
         let store = FreeModelGatewayStore.shared
         for (name,width,height,dark,count,live,long) in [
+            ("queue",900.0,500.0,false,5,true,false),
+            ("queue-dark",900.0,500.0,true,5,true,false),
+            ("queue-compact",560.0,760.0,false,5,true,false),
+            ("connections",350.0,410.0,false,1,false,false),
+            ("connections-dark",350.0,410.0,true,1,false,false),
             ("editor",600.0,680.0,false,1,false,false),
             ("editor-dark",600.0,680.0,true,1,false,false),
             ("settings",520.0,1300.0,false,1,false,false),
@@ -232,9 +253,34 @@ private final class VisibleFixtureWindow: NSWindow {
             PreviewScreen.admission = name.hasPrefix("admission")
             PreviewScreen.routes = name == "routes"
             PreviewScreen.discovery = name.hasPrefix("discovery")
+            PreviewScreen.connections = name.hasPrefix("connections")
+            PreviewScreen.queue = name.hasPrefix("queue")
             PreviewMotion.reduce = name == "reduced"
             AppPreferences.shared.isDark = dark
             store.seed(count:count,live:live,long:long)
+            if PreviewScreen.queue {
+                let routing = GatewayTaskRouting(kind:.coding,difficulty:.medium,source:.automatic,reason:"fixture")
+                store.snapshot.active = 3; store.snapshot.queued = 5
+                store.snapshot.queue = (0..<5).map { i in
+                    var task = routing; task.kind = [.coding,.writing,.reasoning,.extraction,.vision][i]
+                    return .init(id:UUID(),providerID:store.first,routing:task,
+                        enqueuedAt:Date().addingTimeInterval(Double(-18 + i)),deadline:Date().addingTimeInterval(30),attempt:i == 4 ? 1 : 0)
+                }
+                store.snapshot.flights = [FreeModelGateway.Flight.Phase.connecting,.waiting,.streaming].enumerated().map { index, phase in
+                    .init(requestID:UUID(),memberID:store.pool.members[index].id,routing:routing,phase:phase,attempt:1,
+                          startedAt:Date().addingTimeInterval(-8),updatedAt:Date(),outputPulses:phase == .streaming ? 1 : 0)
+                }
+                store.snapshot.flights.append(.init(requestID:UUID(),memberID:store.pool.members[0].id,routing:routing,phase:.succeeded,
+                    attempt:1,startedAt:Date().addingTimeInterval(-10),updatedAt:Date().addingTimeInterval(-2)))
+            }
+            if PreviewScreen.connections {
+                store.connections[0].name = "OpenRouter"; store.connections[0].baseURL = "https://openrouter.ai/api/v1"
+                var alias = store.connections[0]; alias.id = store.second
+                var account = alias; account.id = UUID(); account.apiKey = "fixture-other-account"
+                store.connections = [store.connections[0],alias,account]
+                store.connectionSources[account.id] = "Codex"
+                store.pool.openRouterProviderID = store.second
+            }
             if PreviewScreen.admission {
                 store.pool.maxConcurrent = 2; store.pool.defaultProviderConcurrent = 1
                 store.pool.providerConcurrent[store.first.uuidString] = 1
@@ -284,12 +330,12 @@ private final class VisibleFixtureWindow: NSWindow {
             }
             window.contentView = nil
         }
-        PreviewScreen.discovery = false; PreviewScreen.editor = false; PreviewScreen.settings = false; PreviewScreen.routes = false; PreviewScreen.admission = false
+        PreviewScreen.discovery = false; PreviewScreen.editor = false; PreviewScreen.settings = false; PreviewScreen.routes = false; PreviewScreen.admission = false; PreviewScreen.connections = false; PreviewScreen.queue = false
         store.seed(count:1,live:false)
         store.connections[0].models = (0..<8).map { .init(name:"example/\($0)-free") }
         for (name,dark,selection) in [("import",false,false),("import-selected",false,true),("import-dark",true,true),("import-blocked",false,true)] {
             AppPreferences.shared.isDark = dark; PreviewScreen.importSelected = selection
-            store.connections[0].baseURL = name == "import-blocked" ? "http://example.test/v1" : "https://example.test/v1"
+            store.connections[0].baseURL = name == "import-blocked" ? "ftp://example.test/v1" : "http://example.test/v1"
             let importHost = NSHostingView(rootView:GatewayProviderImportView(providerIDs:[store.first]).environment(\.colorScheme,dark ? .dark : .light))
             importHost.appearance = NSAppearance(named:dark ? .darkAqua : .aqua)
             importHost.frame = CGRect(x:0,y:0,width:620,height:680)

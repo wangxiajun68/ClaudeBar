@@ -78,6 +78,15 @@ actor FreeModelGateway {
         var queued = 0
         var limit = 2
     }
+    /// Bounded, in-memory queue telemetry. No request body or credentials.
+    struct QueueEntry: Equatable, Identifiable, Sendable {
+        var id: UUID
+        var providerID: UUID
+        var routing: GatewayTaskRouting
+        var enqueuedAt: Date
+        var deadline: Date
+        var attempt: Int
+    }
     struct Snapshot: Equatable, Sendable {
         var health: [String: Health] = [:]
         var active = 0
@@ -87,6 +96,7 @@ actor FreeModelGateway {
         var providers: [UUID: ProviderLoad] = [:]
         var routes: [Route] = []
         var flights: [Flight] = []
+        var queue: [QueueEntry] = []
     }
 
     private var pool = FreeModelPool()
@@ -107,6 +117,9 @@ actor FreeModelGateway {
         var id: UUID
         var providerID: UUID
         var requestBytes = 0
+        var routing: GatewayTaskRouting
+        var enqueuedAt: Date
+        var deadline: Date = .distantFuture
         var work: Work
         var timeout: Task<Void, Never>?
         func fail(_ error: Error) {
@@ -160,12 +173,13 @@ actor FreeModelGateway {
             return admitted
         }
         let queuedFor = try checkQueue(requestBytes: requestBytes, providers: plan.candidates.map { $0.endpoint.id })
-        let id = UUID()
+        let id = plan.id
         let result: Plan = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
                 enqueue(.init(id: id, providerID: queuedFor,
-                              requestBytes: requestBytes, work: .request(requirements, testingMemberID, continuation)))
+                              requestBytes: requestBytes, routing: plan.routing, enqueuedAt: now,
+                              work: .request(requirements, testingMemberID, continuation)))
             }
         } onCancel: { Task { await self.cancelWaiter(id) } }
         if Task.isCancelled { finish(result); throw CancellationError() }
@@ -290,6 +304,7 @@ actor FreeModelGateway {
             try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
                 enqueue(.init(id: id, providerID: queuedFor, requestBytes: plan.requestBytes,
+                              routing: plan.routing, enqueuedAt: now,
                               work: .attempt(ready, plan, continuation)), timeout: waitTimeout)
             }
         } onCancel: { Task { await self.cancelWaiter(id) } }
@@ -354,6 +369,7 @@ actor FreeModelGateway {
         var waiter = waiter
         let seconds = min(Double(pool.queueTimeoutSeconds), max(0, timeout ?? Double(pool.queueTimeoutSeconds)))
         let id = waiter.id
+        waiter.deadline = waiter.enqueuedAt.addingTimeInterval(seconds)
         waiter.timeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             await self?.expireWaiter(id)
@@ -388,7 +404,8 @@ actor FreeModelGateway {
             do {
                 switch waiter.work {
                 case .request(let requirements, let testingMemberID, let continuation):
-                    let plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now, testingMemberID: testingMemberID)
+                    var plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now, testingMemberID: testingMemberID)
+                    plan.id = waiter.id
                     try checkRate(now: now)
                     guard let admitted = admit(plan, now: now) else { i += 1; continue }
                     changed = true
@@ -498,8 +515,18 @@ actor FreeModelGateway {
                               queued: waiters.filter { $0.providerID == id }.count,
                               limit: pool.concurrentLimit(for: id))
         }
+        let queue = waiters.map { waiter -> QueueEntry in
+            let requestID: UUID
+            let attempt: Int
+            switch waiter.work {
+            case .request: requestID = waiter.id; attempt = 0
+            case .attempt(_, let plan, _): requestID = plan.id; attempt = attempts[plan.id] ?? 0
+            }
+            return .init(id: requestID, providerID: waiter.providerID, routing: waiter.routing,
+                         enqueuedAt: waiter.enqueuedAt, deadline: waiter.deadline, attempt: attempt)
+        }
         return .init(health: displayed, active: reservations.count, requests: requestCount, queued: waiters.count, queuedBytes: waiters.reduce(0, { $0 + $1.requestBytes }),
-                     providers: loads, routes: routes, flights: flights)
+                     providers: loads, routes: routes, flights: flights, queue: queue)
     }
     func resetHealth() { health.removeAll(); providerCooldown.removeAll(); drain(); publish() }
 

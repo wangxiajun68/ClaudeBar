@@ -273,11 +273,19 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         rejectImport([manualA],FreeModelPool(),[])
         var missing = manualB; missing.model = "not-configured"
         rejectImport([manualA,missing])
-        for base in ["http://example.test/v1","https://127.0.0.1/v1","https://user@example.test/v1"] {
+        for base in ["ftp://example.test/v1","http://openrouter.ai/api/v1","https://127.0.0.1/v1","https://user@example.test/v1"] {
             var invalid = configured; invalid.baseURL = base; rejectImport([manualA],FreeModelPool(),[invalid])
         }
         check(GatewayProviderImport.endpointIssue("https://example.test/v1") == nil)
-        check(GatewayProviderImport.endpointIssue("http://example.test/v1")!.contains("HTTPS"))
+        check(GatewayProviderImport.endpointIssue("http://example.test/v1") == nil)
+        var http = configured; http.baseURL = "http://example.test/v1"
+        check(try GatewayProviderImport.merge([manualA],into:FreeModelPool(),providers:[http],confirmedFree:true).members == [manualA])
+        var alias = configured; alias.id = UUID(); alias.baseURL += "/"
+        var account = configured; account.id = UUID(); account.apiKey = "fixture-different-account"
+        let choices = GatewayProviderImport.connectionChoices([configured,alias,account],selectedID:alias.id)
+        check(choices.count == 2 && choices[0].ids == Set([configured.id,alias.id]))
+        check(choices[0].provider.id == alias.id && choices[1].id == account.id)
+        check(!choices[0].address.contains(configured.apiKey))
         check(GatewayProviderImport.endpointIssue("http://127.0.0.1:15721/v1")!.contains("本机"))
         check(!GatewayProviderImport.endpointIssue("https://secret@example.test/v1?token=secret")!.contains("secret"))
         var noKey = configured; noKey.apiKey = ""; rejectImport([manualA],FreeModelPool(),[noKey])
@@ -357,9 +365,18 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         check(busy.active == 2 && busy.queued == 1 && busy.requests == 2)
         check(busy.providers[a]?.active == 1 && busy.providers[b]?.active == 1)
         check(busy.flights.count == 2,"queued call cannot manufacture a connecting flight")
+        check(busy.queue.count == 1 && busy.queue[0].providerID == a && busy.queue[0].attempt == 0)
+        check(busy.queue[0].routing.difficulty == .low && busy.queue[0].deadline > busy.queue[0].enqueuedAt)
         await g.finish(first)
         let next = try await blocked.value
         check(next.candidates[0].endpoint.id == a)
+        check(next.id == busy.queue[0].id,"queue tag must survive admission")
+        try await g.started(next.candidates[0],plan:next)
+        await g.receivedHeaders(next.candidates[0],plan:next)
+        check((await g.snapshot()).flights.contains { $0.requestID == busy.queue[0].id && $0.phase == .waiting })
+        await g.receivedOutput(next.candidates[0],plan:next)
+        check((await g.snapshot()).flights.contains { $0.requestID == busy.queue[0].id && $0.phase == .streaming })
+        check((await g.snapshot()).queue.isEmpty)
         await g.finish(next); await g.finish(both)
         check((await g.snapshot()).active == 0)
         await expect(.interrupted) { _ = try await g.acquireAttempt(first.candidates,plan:first) }
@@ -413,6 +430,7 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         await expect(.queueTimedOut) { _ = try await expiry.value }
         let expiredLoad = await bounded.snapshot()
         check(expiredLoad.requests == 1 && expiredLoad.queued == 0)
+        check(expiredLoad.queue.isEmpty)
         check((await bounded.snapshot()).health.isEmpty)
         await bounded.finish(owner)
         serial.maxQueued = 0; let immediate = await configured(serial)
@@ -436,6 +454,8 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         await switching.report(route.candidates[0],plan:route,status:500,latency:0.1)
         let retry = Task { try await switching.started(route.candidates[1],plan:route) }
         try await queued(switching,1)
+        let retryQueue = await switching.snapshot()
+        check(retryQueue.queue[0].id == route.id && retryQueue.queue[0].attempt == 1,"fallback keeps the original request tag")
         check((await switching.snapshot()).providers[a]?.active == 0,"failed provider permit must be released before fallback wait")
         check((await switching.snapshot()).providers[b]?.active == 1)
         let independent = try await switching.begin(low)
@@ -615,7 +635,7 @@ enum ProviderBridge {
         try await storage.save(initial)
         let providers = CodexProviderStore(), claude = ProviderStore()
         let id = UUID()
-        providers.providers = [.init(id:id,apiKey:"fixture-only",baseURL:"https://fixture.example/v1",models:[.init(name:"fixture/free")])]
+        providers.providers = [.init(id:id,apiKey:"fixture-only",baseURL:"http://fixture.example/v1",models:[.init(name:"fixture/free")])]
         let store = FreeModelGatewayStore()
         store.start(providers:providers,claude:claude)
         for _ in 0..<500 where store.loading || store.connections.isEmpty {
@@ -642,6 +662,19 @@ enum ProviderBridge {
         precondition(imported && calls == 1 && saved.members == [member] && store.pool.members == [member])
         let encoded = try Data(contentsOf:FilePaths.freeModelPoolFile)
         precondition(!saved.enabled && !String(decoding:encoded,as:UTF8.self).contains("fixture-only"))
+        precondition(store.connectionSources[id] == "Codex")
+        let enabled: Bool = await withCheckedContinuation { continuation in
+            store.change(completion:{ continuation.resume(returning:$0) }) { $0.enabled = true }
+        }
+        precondition(enabled)
+        let requirements = try GatewayRequirements(chat:["messages":[["role":"user","content":"hello"]],"max_tokens":1,"task_difficulty":"medium"])
+        let plan = try await FreeModelGateway.shared.begin(requirements)
+        precondition(plan.candidates[0].endpoint.baseURL == "http://fixture.example/v1")
+        await FreeModelGateway.shared.finish(plan)
+        let disabled: Bool = await withCheckedContinuation { continuation in
+            store.change(completion:{ continuation.resume(returning:$0) }) { $0.enabled = false }
+        }
+        precondition(disabled)
         var rejected = false
         precondition(!store.importModels([member],confirmedFree:false) { succeeded in
             precondition(!succeeded); rejected = true

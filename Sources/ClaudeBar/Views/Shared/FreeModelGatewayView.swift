@@ -74,6 +74,7 @@ struct FreeModelGatewayView: View {
                 if gateway.loading { ProgressView("读取模型池…").frame(maxWidth: .infinity).padding(20) }
                 if let error = gateway.error { errorBanner(error) }
                 gatewayBar
+                GatewayQueueView(snapshot: gateway.snapshot, pool: gateway.pool, connections: gateway.connections)
                 if !gateway.pool.members.isEmpty { overview(presentation).id("gateway-map") }
                 workspaceBar
                 switch workspace {
@@ -384,17 +385,27 @@ struct FreeModelGatewayView: View {
         }
     }
     private var discoveryConnectionChoices: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let choices = GatewayProviderImport.connectionChoices(openRouter, selectedID: gateway.pool.openRouterProviderID)
+        let matches = choices.filter { choice in
+            connectionQuery.isEmpty || choice.provider.name.localizedCaseInsensitiveContains(connectionQuery)
+                || connectionSubtitle(choice).localizedCaseInsensitiveContains(connectionQuery)
+        }
+        return VStack(alignment: .leading, spacing: 12) {
             Text("OpenRouter 连接").font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
             InstrumentSearchField(prompt: "搜索已保存连接", text: $connectionQuery)
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(openRouter.filter { connectionQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(connectionQuery) }) { provider in
+                    ForEach(matches) { choice in
+                        let provider = choice.provider
                         Button {
                             gateway.change(completion: { saved in if saved { showDiscoveryConnections = false } }) { $0.openRouterProviderID = provider.id }
                         } label: {
                             HStack(spacing: 10) {
-                                Text(provider.name).font(Theme.Font.bodySmall).lineLimit(2)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(provider.name).font(Theme.Font.bodySmall).lineLimit(2)
+                                    Text(connectionSubtitle(choice)).font(Theme.Font.micro)
+                                        .foregroundStyle(Theme.textSecondary).lineLimit(2)
+                                }
                                 Spacer(minLength: 8)
                                 if gateway.pool.openRouterProviderID == provider.id { AppGlyph(name: "checkmark", size: 12).foregroundStyle(Theme.Ink.cursor) }
                             }.foregroundStyle(Theme.textPrimary).padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -404,7 +415,7 @@ struct FreeModelGatewayView: View {
                     }
                     if openRouter.isEmpty {
                         Text("还没有已保存的 OpenRouter 连接。").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                    } else if !openRouter.contains(where: { connectionQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(connectionQuery) }) {
+                    } else if matches.isEmpty {
                         Text("没有匹配的连接，请尝试其他关键词。").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                     }
                 }
@@ -412,6 +423,11 @@ struct FreeModelGatewayView: View {
             HairlineDivider()
             ActionButton("添加连接", symbol: "plus") { showDiscoveryConnections = false; onAddOpenRouter() }
         }.padding(16).frame(width: 300).background(Theme.bgPrimary)
+    }
+    private func connectionSubtitle(_ choice: GatewayProviderImport.ConnectionChoice) -> String {
+        let sources = Set(choice.ids.compactMap { gateway.connectionSources[$0] }).sorted().joined(separator: " · ")
+        let suffix = choice.ids.count > 1 ? "共享连接" : "配置 " + choice.id.uuidString.prefix(6)
+        return [sources, choice.address, suffix].filter { !$0.isEmpty }.joined(separator: " · ")
     }
     private var discoveryProviderAction: some View {
         ActionButton("添加连接", symbol: "plus", action: onAddOpenRouter)

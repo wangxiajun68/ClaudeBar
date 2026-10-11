@@ -10,6 +10,7 @@ final class FreeModelGatewayStore: ObservableObject {
     @Published private(set) var discovering = false
     @Published private(set) var snapshot = FreeModelGateway.Snapshot()
     @Published private(set) var connections: [CodexProvider] = []
+    @Published private(set) var connectionSources: [UUID: String] = [:]
     @Published var error: String?
     @Published private(set) var testingMemberID: String?
     @Published private(set) var testResults: [String: String] = [:]
@@ -117,6 +118,13 @@ final class FreeModelGatewayStore: ObservableObject {
             available.append(converted)
         }
         if connections != available { connections = available }
+        var sources: [UUID: String] = [:]
+        for provider in available {
+            let clients = [(providers?.providers.contains { $0.id == provider.id } == true, "Codex"),
+                           (claude?.providers.contains { $0.id == provider.id } == true, "Claude Code")]
+            sources[provider.id] = clients.filter(\.0).map(\.1).joined(separator: " · ")
+        }
+        if connectionSources != sources { connectionSources = sources }
         let endpoints = available.compactMap { provider -> FreeModelGateway.Endpoint? in
             guard GatewayProviderImport.endpointIssue(provider.baseURL) == nil else { return nil }
             return .init(id: provider.id, name: provider.name, baseURL: provider.baseURL, apiKey: provider.apiKey)
