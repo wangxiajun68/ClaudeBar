@@ -222,6 +222,31 @@ private final class VisibleFixtureWindow: NSWindow {
         output.update(pulses:3,moving:true); visible.contentView = nil
         precondition(output.layer?.animationKeys() == nil, "detaching must stop output pulses")
         print("PASS: queue pulses require real output and stop offscreen/reduced/detached")
+        let highway = GatewayRoadView(frame:CGRect(x:0,y:0,width:800,height:162))
+        visible.contentView = highway
+        let roadGeometry = GatewayRoadGeometry(width:800)
+        var ship = GatewayRoadShip(id:UUID(),progress:0.08,lane:-7,phase:0,pulses:0)
+        func highwayAnimations(_ layer:CALayer?) -> Int {
+            guard let layer else { return 0 }
+            return (layer.animationKeys()?.count ?? 0) + (layer.sublayers ?? []).reduce(0) { $0 + highwayAnimations($1) }
+        }
+        highway.update(ships:[ship],geometry:roadGeometry,moving:true)
+        precondition(highwayAnimations(highway.layer) == 0,"queued vessels must remain parked")
+        highway.update(ships:[],geometry:roadGeometry,moving:true)
+        ship.progress = 0.26; ship.phase = 1
+        highway.update(ships:[ship],geometry:roadGeometry,moving:true)
+        precondition(highway.layer?.sublayers?[3].animation(forKey:"travel") != nil,"admission gap must retain vessel identity for continuous travel")
+        ship.progress = 0.54; ship.phase = 2
+        highway.update(ships:[ship],geometry:roadGeometry,moving:true)
+        precondition(highway.layer?.sublayers?[3].sublayers?[0].animation(forKey:"waiting") != nil,"docked wait must remain visible")
+        ship.progress = 0.8; ship.phase = 3; ship.pulses = 1
+        highway.update(ships:[ship],geometry:roadGeometry,moving:true)
+        precondition(highway.layer?.sublayers?[4].animation(forKey:"output") != nil,"real output must return along the route")
+        highway.update(ships:[ship],geometry:roadGeometry,moving:false)
+        precondition(highwayAnimations(highway.layer) == 0,"hidden/reduced highway must have no animation")
+        highway.stop(); visible.contentView = nil
+        precondition(highwayAnimations(highway.layer) == 0,"detached highway must stop and release its timers")
+        print("PASS: parked queue, identity across admission, checkpoint travel/wait, real return signal and hidden/detached highway")
         let store = FreeModelGatewayStore.shared
         for (name,width,height,dark,count,live,long) in [
             ("queue",900.0,500.0,false,5,true,false),

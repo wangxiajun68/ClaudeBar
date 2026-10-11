@@ -75,7 +75,7 @@ struct GatewayQueueView: View {
             items.filter { $0.stage == stage }.prefix(8).enumerated().map { index, item in
                 let start: Double
                 if geometry.compact {
-                    start = [0.055, 0.22, 0.68, 0.82][stage.rawValue]
+                    start = [0.055, 0.22, 0.74, 0.82][stage.rawValue]
                 } else { start = [0.085, 0.26, 0.54, 0.80][stage.rawValue] }
                 let step = stage == .queued ? -0.018 : 0.023
                 return GatewayRoadShip(id: item.id, progress: start + Double(index / 2) * step,
@@ -282,6 +282,7 @@ private final class GatewayRoadView: NSView {
         var signal: CAShapeLayer
         var state: GatewayRoadShip
         var lastSignal = Date.distantPast
+        var departingAt: Date?
     }
     private let edge = CAShapeLayer(), road = CAShapeLayer(), center = CAShapeLayer()
     private var vessels: [UUID:Vessel] = [:]
@@ -289,6 +290,7 @@ private final class GatewayRoadView: NSView {
     private var input: [GatewayRoadShip] = []
     private var moving = false
     private var token: NSObjectProtocol?
+    private var retirement: Task<Void, Never>?
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
         super.init(frame:frame); wantsLayer = true
@@ -313,6 +315,7 @@ private final class GatewayRoadView: NSView {
     }
     func stop() {
         moving = false
+        retirement?.cancel(); retirement = nil
         for vessel in vessels.values { vessel.root.removeAllAnimations(); vessel.body.removeAllAnimations(); vessel.signal.removeAllAnimations() }
     }
     private func paint(animate: Bool) {
@@ -325,11 +328,24 @@ private final class GatewayRoadView: NSView {
         center.strokeColor = NSColor(Theme.textSecondary.opacity(0.35)).cgColor
         let ids = Set(input.map(\.id))
         for id in Array(vessels.keys) where !ids.contains(id) {
-            if let vessel = vessels.removeValue(forKey:id) { vessel.root.removeFromSuperlayer(); vessel.signal.removeFromSuperlayer() }
+            guard var vessel = vessels[id] else { continue }
+            if !visible || vessel.departingAt.map({ Date().timeIntervalSince($0) >= 0.8 }) == true {
+                vessel.root.removeFromSuperlayer(); vessel.signal.removeFromSuperlayer(); vessels[id] = nil
+            } else if vessel.departingAt == nil {
+                // Admission briefly removes a waiter before transport starts.
+                // Keep its identity long enough to travel into the next checkpoint.
+                vessel.departingAt = Date(); vessel.root.opacity = 0
+                let departure = CABasicAnimation(keyPath:"opacity")
+                departure.fromValue = 1; departure.toValue = 0; departure.duration = 0.8
+                vessel.root.add(departure,forKey:"departure")
+                vessel.body.removeAllAnimations(); vessel.signal.removeAllAnimations()
+                vessels[id] = vessel
+            }
         }
         for state in input {
             var vessel = vessels[state.id] ?? makeVessel(state, in:layer)
             let previous = vessel.state
+            vessel.departingAt = nil; vessel.root.opacity = 1; vessel.root.removeAnimation(forKey:"departure")
             let target = geometry.point(state.progress, lane:state.lane)
             let color = NSColor([Theme.Ink.warning,Theme.Ink.claude,Theme.Ink.claude,Theme.Ink.success][state.phase]).cgColor
             vessel.body.fillColor = color; vessel.signal.fillColor = color
@@ -364,6 +380,13 @@ private final class GatewayRoadView: NSView {
             vessel.state = state; vessels[state.id] = vessel
         }
         CATransaction.commit()
+        if retirement == nil, vessels.values.contains(where: { $0.departingAt != nil }) {
+            retirement = Task { [weak self] in
+                do { try await Task.sleep(for:.milliseconds(850)) } catch { return }
+                guard let self else { return }
+                self.retirement = nil; self.paint(animate:false)
+            }
+        }
     }
     private func makeVessel(_ state: GatewayRoadShip, in layer: CALayer) -> Vessel {
         let root = CALayer(), body = CAShapeLayer(), signal = CAShapeLayer()
