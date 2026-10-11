@@ -43,6 +43,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.model.isAutomatic = false
+                    self?.panel?.cancelStrike()
                     self?.audio?.stop()
                 }
             })
@@ -74,7 +75,10 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
             self?.model.endInteraction()
         }
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: WoodenFishView(model: model) { [weak self] in self?.strike() })
+        let host = NSHostingView(rootView: WoodenFishView(model: model) { [weak self] in self?.strike() })
+        // The panel owns its fixed size; animation must not renegotiate it.
+        host.sizingOptions = []
+        panel.contentView = host
         self.panel = panel
         panel.orderFrontRegardless()
         installMouseMonitors()

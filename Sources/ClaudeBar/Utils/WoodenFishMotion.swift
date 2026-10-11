@@ -7,6 +7,7 @@ struct WoodenFishBurstPool {
     static let capacity = 4
     struct Entry: Identifiable {
         let id: UInt
+        let createdAt = Date()
         let feedback: WoodenFishStrikeFeedback
     }
     private(set) var entries: [Entry] = []

@@ -24,7 +24,10 @@ source += '\n'.join((root / path).read_text() for path in (
 if '--reduced-motion' in sys.argv:
     source = source.replace('@Environment(\\.accessibilityReduceMotion) private var reduceMotion',
                             'private let reduceMotion = true')
+if '--measure' in sys.argv:
+    source = source.replace('Canvas { context, _ in', 'Canvas { context, _ in\n PreviewDrawCounter.count += 1')
 source += r'''
+enum PreviewDrawCounter { static var count = 0 }
 final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
     @Published var isDark = false
@@ -41,6 +44,7 @@ enum AppPresentation { static var allowsInterface = true }
         if CommandLine.arguments.contains("--measure") {
             model.muted = true
             let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
+            host.sizingOptions = []
             host.frame = CGRect(origin: .zero, size: model.size.panelSize)
             let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = host
@@ -54,6 +58,7 @@ enum AppPresentation { static var allowsInterface = true }
             let idleStart = cpu()
             RunLoop.current.run(until: Date().addingTimeInterval(3))
             let idleCPU = cpu() - idleStart
+            PreviewDrawCounter.count = 0
             let activeStart = cpu()
             let start = Date()
             for frame in 0..<180 {
@@ -61,6 +66,7 @@ enum AppPresentation { static var allowsInterface = true }
                 if frame.isMultiple(of: 5) { model.strike() }
             }
             let activeCPU = cpu() - activeStart
+            let activeDraws = PreviewDrawCounter.count
             RunLoop.current.run(until: Date().addingTimeInterval(2))
             let settledStart = cpu()
             RunLoop.current.run(until: Date().addingTimeInterval(3))
@@ -70,7 +76,7 @@ enum AppPresentation { static var allowsInterface = true }
             for index in 0..<100_000 {
                 if WoodenFishGeometry.captures(CGPoint(x: index % 188, y: index % 222), scale: 0.72) { hits += 1 }
             }
-            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total)")
+            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total), active_draws=\(activeDraws)")
             window.orderOut(nil)
             window.contentView = nil
             return
@@ -146,6 +152,7 @@ enum AppPresentation { static var allowsInterface = true }
             model.size = CommandLine.arguments.contains("--small") ? .small : .regular
             model.isHovered = CommandLine.arguments.contains("--hover")
             let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
+            host.sizingOptions = []
             host.frame = CGRect(origin: .zero, size: model.size.panelSize)
             let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
             window.isOpaque = false
@@ -187,6 +194,7 @@ enum AppPresentation { static var allowsInterface = true }
                 model.isAutomatic = CommandLine.arguments.contains("--auto")
                 model.isHovered = CommandLine.arguments.contains("--hover")
                 let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
+                host.sizingOptions = []
                 host.frame = CGRect(origin: .zero, size: size.panelSize)
                 let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
                 window.isOpaque = false

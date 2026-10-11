@@ -631,41 +631,22 @@ those checks.
 
 ## Desktop wooden fish
 
-The desktop wooden fish is a native vector object on a transparent window.
-A warm apricot asymmetric resonator replaces the regular jade ellipse:
-light / dark fills are `#F5CC91` / `#D99558`, with cocoa / pale-gold contours
-(`#764426` / `#FFE1AA`). A single continuous carved curl connects the mouth;
-a warm wooden mallet and short base arc complete the silhouette. The body
-outline is 6 artwork points, with round joins and a narrow contrasting keyline.
-Opaque flat fills and restrained curves supply the detail. This accessory's
-local palette and form do not change the broader app's card system.
+A native transparent desktop toy, with no visible controls or context menu.
+Click to strike; drag directly to move. The warm asymmetrical resonator uses
+apricot `#F5CC91` / `#D99558`, cocoa / cream contours `#764426` / `#FFE1AA`,
+a continuous recessed curl and a warm wooden mallet. The 6pt outer contour
+uses a 1.8pt contrasting keyline. This accessory language does not alter the
+app's card system.
 
-Only the object appears at rest. There are no visible buttons, toolbar or
-context menu. A click strikes on release only while still inside the shape;
-moving at least 5 native points starts a drag and cancels the strike.
-Direct dragging saves position; Option-drag remains compatible. Settings owns
-sound, volume, automatic tapping, tempo, size, reset confirmation and hiding.
-The object retains an accessible activation action, Space to strike and
-window-local Escape to pause and reset the manual chain.
+Readonly native-size counts appear on hover, strikes or automatic play:
+13pt rounded semibold digits, 10pt supporting text, white and `#FFE0A6`
+on a 94%-opaque `#29221C` surface. Settings owns sound, cadence, size,
+automatic play, hiding and confirmed reset. A 5pt native drag threshold
+prevents movement from awarding a strike. Keyboard accessibility remains.
 
-The artwork scales are 0.60 / 0.72 / 0.88; the transparent panel measures
-260 × scale by 78 + 200 × scale. Counts appear only on shape hover, during
-strike feedback or while automatic tapping runs. The noninteractive readout
-uses a 13pt rounded daily number with 10pt supporting text on a small warm-dark
-rounded surface. Transparent margins and counts pass pointer events through.
-
-Each strike emits transparent 功德 +1 lettering, using native 10pt / 18pt type.
-Independent curved flights last 1.35 seconds and clear at approximately
-1.42 seconds. The pool holds at most four groups, evicting the oldest when
-full. Only manual combos of eight or more emit particles, three per group.
-Reduce Motion removes all object transforms, particles and curved flights,
-leaving only the latest fixed-position label fade. There is no idle animation.
-Cached immutable capture paths and an outside-window rectangle rejection
-bound pointer work; these are implementation constraints, not measured CPU
-or energy claims.
-
-Every strike adds one count and changes no actual model Token usage.
-Automatic tapping is session-only, does not form combos or trigger surprises,
-and stops on hiding, sleep, exit or performance mode. Exact palette values,
-rhythm messages, geometry, lifecycle and verification boundaries are recorded
-in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).
+A single Canvas renders the object and bounded feedback, with an active-only
+34ms cancellable refresh task, at most four words and three particles per combo strike from
+eight onward. Reduce Motion keeps only the latest word's stationary fade.
+No idle animation, per-move path allocation or animation-driven window sizing.
+The shared outline preserves transparent desktop click-through. Detailed
+states and verification scope are in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).
