@@ -34,7 +34,11 @@ for name in ['totals', 'trend', 'routeComparison', 'hourlyActivity', 'domainRank
         source = source.replace(marker, marker + f'\n        let _ = PerfDriver.hit("{name}")')
 # The interaction seam follows whichever view actually owns selection state.
 source = source.replace('.chartXSelection(value: $selectedDate)', '.chartXSelection(value: $selectedDate)\n            .onReceive(PerfDriver.shared.$date) { selectedDate = $0 }')
-source = source.replace('@State private var selectedDate: Date?\n    var body: some View {\n        VStack', '@State private var selectedDate: Date?\n    var body: some View {\n        let _ = PerfDriver.hit("trend")\n        return VStack')
+trend_start = source.find('private struct VpnTrafficTrendView:')
+if trend_start >= 0:
+    tail = source[trend_start:]
+    tail = tail.replace('var body: some View {\n        VStack', 'var body: some View {\n        let _ = PerfDriver.hit("trend")\n        return VStack', 1)
+    source = source[:trend_start] + tail
 source = source.replace('.chartXSelection(value: selection)', '.chartXSelection(value: selection)\n            .onReceive(PerfDriver.shared.$date) { selection.wrappedValue = $0 }')
 source += r'''
 @MainActor final class PerfDriver: ObservableObject {

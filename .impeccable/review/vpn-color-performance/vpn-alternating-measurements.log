@@ -1,0 +1,18 @@
+VARIANT baseline
+HOVER 120 selections; section evaluations=["hourlyActivity": 120, "totals": 120, "trend": 120, "domainRanking": 120, "routeComparison": 120]; commit wall median=13.82200000807643ms p95=15.58237501012627ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=["totals": 119, "routeComparison": 119, "domainRanking": 119, "hourlyActivity": 119, "trend": 119]
+VARIANT current
+HOVER 120 selections; section evaluations=["trend": 120]; commit wall median=6.018208339810371ms p95=6.990958339883946ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=[:]
+VARIANT current
+HOVER 120 selections; section evaluations=["trend": 120]; commit wall median=6.113750001532026ms p95=7.958041678648442ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=[:]
+VARIANT baseline
+HOVER 120 selections; section evaluations=["trend": 120, "routeComparison": 120, "hourlyActivity": 120, "domainRanking": 120, "totals": 120]; commit wall median=14.849583327304572ms p95=19.53670833609067ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=["totals": 119, "trend": 119, "routeComparison": 119, "hourlyActivity": 119, "domainRanking": 119]
+VARIANT baseline
+HOVER 120 selections; section evaluations=["routeComparison": 120, "trend": 120, "totals": 120, "hourlyActivity": 120, "domainRanking": 120]; commit wall median=14.809958331170492ms p95=16.092833335278556ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=["routeComparison": 119, "trend": 119, "totals": 119, "hourlyActivity": 119, "domainRanking": 119]
+VARIANT current
+HOVER 120 selections; section evaluations=["trend": 120]; commit wall median=5.372166677261703ms p95=6.071458323276602ms (includes 1ms scheduling; not FPS)
+WITHIN-BUCKET 120 pointer positions; section evaluations=[:]

@@ -13,6 +13,7 @@ struct VpnTrafficAnalyticsView: View {
     @State private var clearing = false
     @State private var loading = true
     @State private var rankRoute: RankRoute = .all
+    @State private var domainsExpanded = false
 
     enum RankRoute: String, CaseIterable, Identifiable {
         case all, proxied, direct
@@ -37,9 +38,13 @@ struct VpnTrafficAnalyticsView: View {
                         empty
                     } else {
                         VpnTrafficTrendView(report: report, period: period)
-                        routeComparison(report)
-                        VpnTrafficHourlyView(report: report)
-                        domainRanking(report)
+                        routeTotals(report)
+                        DisclosureGroup(isExpanded: $domainsExpanded) {
+                            domainRanking(report).padding(.top, 12)
+                        } label: {
+                            Text("域名明细 · \(report.domains.count)")
+                                .font(.system(size: 14, weight: .medium, design: .rounded))
+                        }.tint(Theme.Ink.claude)
                     }
                     footnote(report)
                 } else if loading {
@@ -136,84 +141,21 @@ struct VpnTrafficAnalyticsView: View {
         }.font(.system(size: 13, weight: .medium, design: .rounded))
     }
 
-    private func legend(_ title: String, _ color: Color) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 12, height: 12)
-            Text(title).font(.system(size: 13, weight: .medium, design: .rounded)).foregroundColor(Theme.textSecondary)
+    private func routeTotals(_ report: VpnTrafficReport) -> some View {
+        HStack(alignment: .top, spacing: 20) {
+            routeTotal("代理采样", report.totals.proxied.total)
+            routeTotal("直连采样", report.totals.direct.total)
+            routeTotal("未归类", report.totals.unclassified.total)
         }
+        .padding(.top, 4)
     }
 
-    private func routeComparison(_ report: VpnTrafficReport) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HairlineDivider()
-            HStack {
-                Text("流向与上传下载").font(.system(size: 18, weight: .semibold, design: .rounded))
-                Spacer()
-                Text("连接采样").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-            }
-            let lanes: [(String, VpnTrafficAmounts, Color)] = [
-                ("代理", report.totals.proxied, Theme.Ink.claude),
-                ("直连", report.totals.direct, Theme.Ink.success)
-            ]
-            let denominator = max(1, Double(report.totals.proxied.total) + Double(report.totals.direct.total))
-            HStack(spacing: 24) {
-                ForEach(lanes, id: \.0) { lane in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(lane.0).foregroundColor(lane.2).font(.system(size: 18, weight: .semibold, design: .rounded))
-                            Spacer(minLength: 0)
-                            Text(lane.1.total == 0 ? "0%" : String(format: "%.1f%%", Double(lane.1.total) / denominator * 100))
-                                .font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
-                        }
-                        Text(VpnFormat.bytes(lane.1.total)).font(Theme.Font.body.weight(.medium)).monospacedDigit()
-                        Text("↑ \(VpnFormat.bytes(lane.1.upload))   ↓ \(VpnFormat.bytes(lane.1.download))")
-                            .font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary).monospacedDigit()
-                        Text(lane.0 == "代理" ? "本机 → 代理节点 → 目标" : "本机 → 目标")
-                            .font(.system(size: 12, design: .rounded)).foregroundColor(Theme.textSecondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            GeometryReader { geometry in
-                HStack(spacing: 2) {
-                    Rectangle().fill(Theme.Ink.claude)
-                        .frame(width: max(0, geometry.size.width - 2) * Double(report.totals.proxied.total) / denominator)
-                    Rectangle().fill(Theme.Ink.success)
-                        .frame(width: max(0, geometry.size.width - 2) * Double(report.totals.direct.total) / denominator)
-                }
-                .background(Theme.bgSecondary)
-                .clipShape(Capsule())
-            }.frame(height: 12).accessibilityHidden(true)
-            Chart {
-                ForEach(lanes, id: \.0) { lane in
-                    BarMark(x: .value("上传", Double(lane.1.upload)), y: .value("流向", lane.0))
-                        .foregroundStyle(lane.2.opacity(0.45)).position(by: .value("方向", "上传"))
-                        .cornerRadius(5)
-                    BarMark(x: .value("下载", Double(lane.1.download)), y: .value("流向", lane.0))
-                        .foregroundStyle(lane.2).position(by: .value("方向", "下载"))
-                        .cornerRadius(5)
-                }
-            }
-            .chartLegend(.hidden)
-            .chartYAxis {
-                AxisMarks(position: .leading) { _ in AxisValueLabel().font(Theme.Font.caption) }
-            }
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline.opacity(0.6))
-                    AxisValueLabel {
-                        if let bytes = value.as(Double.self) { Text(chartBytes(bytes)).font(.system(size: 12, design: .rounded).monospacedDigit()) }
-                    }
-                }
-            }
-            .frame(height: 138)
-            HStack(spacing: 16) {
-                legend("上传 · 浅色", Theme.textSecondary.opacity(0.4))
-                legend("下载 · 实色", Theme.textSecondary)
-                Spacer(minLength: 0)
-            }
-            Text("未归类差额 \(VpnFormat.bytes(report.totals.unclassified.total)) · 占比只比较代理与直连采样；短连接可能只计入内核总量。")
-                .font(.system(size: 12, design: .rounded)).foregroundColor(Theme.textSecondary)
-        }
+    private func routeTotal(_ title: String, _ bytes: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 13)).foregroundColor(Theme.textSecondary)
+            Text(VpnFormat.bytes(bytes))
+                .font(.system(size: 17, weight: .medium, design: .rounded)).monospacedDigit()
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func domainRanking(_ report: VpnTrafficReport) -> some View {
@@ -225,7 +167,6 @@ struct VpnTrafficAnalyticsView: View {
         case .direct: domains = report.directRanking; count = report.directDomainCount
         }
         return VStack(alignment: .leading, spacing: 12) {
-            HairlineDivider()
             ViewThatFits(in: .horizontal) {
                 HStack {
                     Text("域名流量排行").font(.system(size: 18, weight: .semibold, design: .rounded))
@@ -252,23 +193,14 @@ struct VpnTrafficAnalyticsView: View {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
                         Text("\(index + 1)").font(.system(size: 12, design: .rounded).monospacedDigit()).foregroundColor(Theme.textSecondary).frame(width: 20, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(domain.host).font(Theme.Font.captionMono).lineLimit(1).truncationMode(.middle).help(domain.host)
-                            GeometryReader { geometry in
-                                let maximum = max(1, Double(domains.first.map(volume) ?? 1))
-                                HStack(spacing: 0) {
-                                    Rectangle().fill(Theme.Ink.claude)
-                                        .frame(width: geometry.size.width * Double(rankRoute == .direct ? 0 : domain.traffic.proxied.total) / maximum)
-                                    Rectangle().fill(Theme.Ink.success)
-                                        .frame(width: geometry.size.width * Double(rankRoute == .proxied ? 0 : domain.traffic.direct.total) / maximum)
-                                }.clipShape(Capsule())
-                            }.frame(height: 6).accessibilityHidden(true)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Text(domain.host).font(Theme.Font.captionMono)
+                            .lineLimit(1).truncationMode(.middle).help(domain.host)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Text(VpnFormat.bytes(domain.traffic.proxied.total)).foregroundColor(Theme.Ink.claude).frame(width: 78, alignment: .trailing)
                         Text(VpnFormat.bytes(domain.traffic.direct.total)).foregroundColor(Theme.Ink.success).frame(width: 78, alignment: .trailing)
                         Text(VpnFormat.bytes(domain.total)).frame(width: 82, alignment: .trailing)
                     }
-                    .font(Theme.Font.captionMono).monospacedDigit().frame(height: 52)
+                    .font(Theme.Font.captionMono).monospacedDigit().frame(height: 40)
                     .textSelection(.enabled)
                     HairlineDivider()
                 }
@@ -285,14 +217,6 @@ struct VpnTrafficAnalyticsView: View {
             .accessibilityLabel("域名排行流向")
     }
 
-    private func volume(_ domain: VpnTrafficDomain) -> Int64 {
-        switch rankRoute {
-        case .all: return domain.total
-        case .proxied: return domain.traffic.proxied.total
-        case .direct: return domain.traffic.direct.total
-        }
-    }
-
     private var empty: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("流量历史从下一次连接采样开始").font(Theme.Font.bodySmall.weight(.medium))
@@ -303,8 +227,8 @@ struct VpnTrafficAnalyticsView: View {
 
     private func footnote(_ report: VpnTrafficReport) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("总流量包含经内核的所有连接；代理、直连与域名排行来自连接采样。绕过内核的系统流量不在统计范围内。")
-            Text("按小时保留最近 31 天，按日保留全部历史；清空日志不会清除这里的累计数据。")
+            Text("每个点表示该时段的传输量，上传与下载相加为总量；代理与直连来自连接采样。")
+            Text("仅统计经过内核的流量。清空日志不影响累计历史。")
             if let date = report.updatedAt { Text("最近记录 \(date.formatted(.dateTime.month().day().hour().minute()))") }
         }.font(.system(size: 12, design: .rounded)).foregroundColor(Theme.textSecondary)
     }
@@ -319,40 +243,46 @@ private struct VpnTrafficTrendView: View {
     let report: VpnTrafficReport
     let period: VpnTrafficPeriod
     @State private var selectedDate: Date?
+    @State private var measure: Measure = .total
+
+    enum Measure: String, CaseIterable, Identifiable {
+        case total, download, upload
+        var id: String { rawValue }
+        var title: String {
+            switch self { case .total: return "总量"; case .download: return "下载"; case .upload: return "上传" }
+        }
+        func bytes(_ value: VpnTrafficAmounts) -> Int64 {
+            switch self { case .total: return value.total; case .download: return value.download; case .upload: return value.upload }
+        }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("流量趋势").font(.system(size: 18, weight: .semibold, design: .rounded))
-                Spacer(minLength: 4)
-                if let point = selectedPoint(report) {
-                    Text("\(point.date.formatted(period == .today ? .dateTime.hour().minute() : .dateTime.month().day())) · \(VpnFormat.bytes(point.traffic.core.total))")
-                        .font(.system(size: 13, weight: .medium, design: .rounded).monospacedDigit()).foregroundColor(Theme.textSecondary)
-                } else {
-                    Text("峰值 " + VpnFormat.bytes(report.peak?.traffic.core.total ?? 0))
-                        .font(.system(size: 13, weight: .medium, design: .rounded)).foregroundColor(Theme.textSecondary)
-                }
+            HStack(spacing: 12) {
+                Text("流量趋势").font(.system(size: 16, weight: .semibold, design: .rounded))
+                Spacer(minLength: 0)
+                SegmentedCapsule(items: Measure.allCases, selection: measure,
+                                 title: { $0.title }, tint: Theme.Ink.claude,
+                                 onSelect: { measure = $0 }).fixedSize()
+                    .accessibilityLabel("图表显示的数据")
             }
             Chart {
                 ForEach(report.points) { point in
-                    AreaMark(x: .value("时间", point.date), y: .value("总量", Double(point.traffic.core.total)), stacking: .unstacked)
-                        .foregroundStyle(LinearGradient(colors: [Theme.chartBlue.opacity(0.55), Theme.chartBlue.opacity(0.10)], startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.monotone)
-                    AreaMark(x: .value("时间", point.date), y: .value("直连", Double(point.traffic.direct.total)), series: .value("填色", "直连"), stacking: .unstacked)
-                        .foregroundStyle(LinearGradient(colors: [Theme.chartGreen.opacity(0.58), Theme.chartGreen.opacity(0.12)], startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.monotone)
-                    LineMark(x: .value("时间", point.date), y: .value("字节", Double(point.traffic.core.total)), series: .value("流向", "总流量"))
-                        .foregroundStyle(Theme.chartBlue).lineStyle(StrokeStyle(lineWidth: 2.5)).interpolationMethod(.monotone)
-                    LineMark(x: .value("时间", point.date), y: .value("字节", Double(point.traffic.proxied.total)), series: .value("流向", "代理"))
-                        .foregroundStyle(Theme.Ink.claude).lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4])).interpolationMethod(.monotone)
-                    LineMark(x: .value("时间", point.date), y: .value("字节", Double(point.traffic.direct.total)), series: .value("流向", "直连"))
-                        .foregroundStyle(Theme.Ink.success).lineStyle(StrokeStyle(lineWidth: 2.5)).interpolationMethod(.monotone)
+                    AreaMark(x: .value("时间", point.date), y: .value(measure.title, Double(measure.bytes(point.traffic.core))))
+                        .foregroundStyle(LinearGradient(colors: [Theme.chartBlue.opacity(0.34), Theme.chartBlue.opacity(0.04)], startPoint: .top, endPoint: .bottom))
+                        .interpolationMethod(.linear)
+                    LineMark(x: .value("时间", point.date), y: .value(measure.title, Double(measure.bytes(point.traffic.core))))
+                        .foregroundStyle(Theme.chartBlue)
+                        .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.linear)
                 }
-                if let point = selectedPoint(report) {
-                    RuleMark(x: .value("选中时间", point.date))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.4))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    PointMark(x: .value("时间", point.date), y: .value("总量", Double(point.traffic.core.total)))
-                        .foregroundStyle(Theme.textPrimary).symbolSize(32)
+                if let point = selectedPoint(report) ?? report.points.max(by: { measure.bytes($0.traffic.core) < measure.bytes($1.traffic.core) }) {
+                    if selectedDate != nil {
+                        RuleMark(x: .value("选中时间", point.date))
+                            .foregroundStyle(Theme.textSecondary.opacity(0.4))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }
+                    PointMark(x: .value("时间", point.date), y: .value(measure.title, Double(measure.bytes(point.traffic.core))))
+                        .foregroundStyle(Theme.Ink.claude).symbolSize(48)
                 }
             }
             .chartXSelection(value: selection)
@@ -383,25 +313,47 @@ private struct VpnTrafficTrendView: View {
             }
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                    AxisValueLabel(format: period == .today ? .dateTime.hour() : .dateTime.month().day())
+                    AxisValueLabel(format: period == .today ? .dateTime.hour() : period == .all ? .dateTime.year().month() : .dateTime.month().day())
                         .font(.system(size: 12, design: .rounded))
                 }
             }
             .chartXScale(domain: trendDomain(report))
-            .frame(height: 260)
-            .accessibilityLabel("\(period.title)流量趋势：总流量、代理采样和直连采样")
-            HStack(spacing: 18) {
-                legend("总流量", Theme.chartBlue)
-                legend("代理", Theme.Ink.claude)
-                legend("直连", Theme.Ink.success)
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 16) {
-                let traffic = selectedPoint(report)?.traffic ?? report.totals
-                metric("代理", value: traffic.proxied.total, symbol: "arrow.triangle.branch")
-                metric("直连", value: traffic.direct.total, symbol: "arrow.right")
-            }.frame(height: 24)
+            .chartYScale(domain: 0...max(1, Double(report.points.map { measure.bytes($0.traffic.core) }.max() ?? 0) * 1.08))
+            .chartLegend(.hidden)
+            .frame(height: 248)
+            .accessibilityLabel("\(period.title)\(measure.title)流量，纵轴为字节，横轴为统计时段")
+            inspection
         }
+    }
+
+    private var inspection: some View {
+        let point = selectedPoint(report)
+        let peak = report.points.max { measure.bytes($0.traffic.core) < measure.bytes($1.traffic.core) }
+        let traffic = point?.traffic.core ?? peak?.traffic.core ?? .init()
+        let date = point?.date ?? peak?.date
+        return HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(point == nil ? "峰值时段" : "选中时段")
+                    .font(.system(size: 12)).foregroundColor(Theme.textSecondary)
+                Text(date.map { bucketLabel($0) } ?? "暂无采样")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(VpnFormat.bytes(measure.bytes(traffic)))
+                    .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+                Text("上传 \(VpnFormat.bytes(traffic.upload)) · 下载 \(VpnFormat.bytes(traffic.download))")
+                    .font(.system(size: 12, design: .rounded)).monospacedDigit()
+                    .foregroundColor(Theme.textSecondary)
+            }
+        }
+        .frame(height: 52)
+    }
+
+    private func bucketLabel(_ date: Date) -> String {
+        if period == .today { return date.formatted(.dateTime.month().day().hour()) }
+        let monthly = period == .all && report.points.count > 1
+            && report.points[1].date.timeIntervalSince(report.points[0].date) > 2 * 86400
+        return date.formatted(monthly ? .dateTime.year().month() : .dateTime.month().day())
     }
 
     private func trendDomain(_ report: VpnTrafficReport) -> ClosedRange<Date> {
@@ -421,70 +373,4 @@ private struct VpnTrafficTrendView: View {
             if selectedDate != next { selectedDate = next }
         })
     }
-    private func metric(_ label: String, value: Int64, symbol: String) -> some View {
-        HStack(spacing: 6) {
-            AppGlyph(name: symbol, size: 12).foregroundColor(Theme.textSecondary)
-            Text(label).foregroundColor(Theme.textSecondary)
-            Text(VpnFormat.bytes(value)).font(Theme.Font.captionMono).monospacedDigit()
-        }.font(Theme.Font.caption)
-    }
-
-    private func legend(_ title: String, _ color: Color) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 12, height: 12)
-            Text(title).font(.system(size: 13, weight: .medium, design: .rounded)).foregroundColor(Theme.textSecondary)
-        }
-    }
-
-}
-
-private struct VpnTrafficHourlyView: View {
-    let report: VpnTrafficReport
-    @State private var selectedHour: Double?
-    var body: some View {
-        let hours = (0..<24).map { hour in
-            (hour: hour, bytes: report.activity.filter { $0.hour == hour }.reduce(Int64(0)) { VpnFormat.saturatingAdd($0, $1.bytes) })
-        }
-        let dayCount = Set(report.activity.map(\.day)).count
-        return VStack(alignment: .leading, spacing: 14) {
-            HairlineDivider()
-            HStack {
-                Text("日内流量").font(.system(size: 18, weight: .semibold, design: .rounded))
-                Spacer()
-                if let selectedHour, let value = hours.first(where: { abs(Double($0.hour) - selectedHour) < 0.5 }) {
-                    Text("\(String(format: "%02d", value.hour)):00 · \(VpnFormat.bytes(value.bytes))")
-                        .font(.system(size: 13, weight: .medium, design: .rounded).monospacedDigit()).foregroundColor(Theme.textSecondary)
-                } else {
-                    Text("时段内最近 \(dayCount) 天 · 按小时合计")
-                        .font(.system(size: 13, weight: .medium, design: .rounded)).foregroundColor(Theme.textSecondary)
-                }
-            }
-            Chart {
-                ForEach(hours, id: \.hour) { hour in
-                    RectangleMark(xStart: .value("起始小时", Double(hour.hour) - 0.3),
-                                  xEnd: .value("结束小时", Double(hour.hour) + 0.3),
-                                  yStart: .value("基线", 0.0), yEnd: .value("字节", Double(hour.bytes)))
-                        .foregroundStyle(LinearGradient(colors: [Theme.chartBlue, Theme.chartBlue.opacity(0.48)], startPoint: .top, endPoint: .bottom))
-                        .opacity(selectedHour == nil || abs((selectedHour ?? 0) - Double(hour.hour)) < 0.5 ? 1 : 0.35)
-                        .cornerRadius(5)
-                }
-            }
-            .chartXScale(domain: -0.5...23.5)
-            .chartXSelection(value: $selectedHour)
-            .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine().foregroundStyle(Theme.hairline.opacity(0.6))
-                    AxisValueLabel { if let bytes = value.as(Double.self) { Text(chartBytes(bytes)).font(.system(size: 12, design: .rounded).monospacedDigit()) } }
-                }
-            }
-            .chartXAxis {
-                AxisMarks(values: [0, 6, 12, 18]) { value in
-                    AxisValueLabel { Text("\(value.as(Int.self) ?? 0) 时").font(.system(size: 12, design: .rounded)) }
-                }
-            }
-            .frame(height: 174)
-            .help("按本地小时合并所选时段最近七天的内核流量。选择柱形可读取准确数值。")
-        }
-    }
-
 }

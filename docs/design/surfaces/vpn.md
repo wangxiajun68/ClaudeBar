@@ -76,35 +76,26 @@ statistics live in historical analytics, avoiding mixed single-line/three-line c
 
 ## Historical analytics
 
-A dedicated fourth tab, with today / 7 days / 30 days / all. A neutral typographic
-reading strip gives the selected period's total, upload/download, and lifetime total
-with its recording start date. A full-width 260pt trend chart uses a saturated blue total silhouette and a
-green direct silhouette with translucent area fills; proxy samples use a
-darker dashed blue curve. Section titles are 18pt semibold rounded, legends
-13pt medium and axes 12pt with single-line byte labels. The total reading is
-40pt; units and supporting numbers remain readable in narrow windows.
-Hover or select reveals the nearest bucket; scales carry byte units and calendar
-dates. Rounded SF readings, neutral surfaces and native capsule controls match
-the rest of the workspace; this is product UI, not a research-figure layout.
+One chart only. Today / 7 days / 30 days / all selects the period. The reading
+strip gives its kernel total, upload/download and lifetime total. A single blue
+248pt area/line plot switches between total, download and upload; it never mixes
+kernel totals with route sampling. Straight segments connect actual buckets
+without invented smoothed peaks. Axes carry bytes and calendar dates, including
+year/month for all-time data. Idle marks the peak; hover or select snaps to the
+nearest bucket and presents its date, amount, upload and download in a fixed
+52pt inspection row. Section text stays readable at 560pt.
 
-A second section compares observed proxy and direct routes, with full numeric
-upload/download, paths, a shared proportion track and compact paired horizontal
-bars. The unclassified gap between root totals and route samples is explicit.
-A simple 24-hour bar chart combines the selected period's latest seven days;
-its native selection exposes exact byte values. The hourly plot is 174pt tall
-with blue gradient columns, while route comparison uses a 12pt proportion
-track and 138pt paired bars. Color describes measured quantities; it is not
-a decorative background. There is no heatmap or separate
-ratio facet. Domain rankings use aligned 52pt rows, proportional bars, full
-values, route sorting and long-name tooltips. Top 20 is a display limit;
-it never limits storage or totals.
-Spacing and hairlines separate sections, without a grid of decorative metric cards.
-All controls and values fit 560pt, and the analysis scrolls within the workspace.
+Proxy, direct and unclassified amounts are three aligned numeric readings, with
+no proportion or comparison chart. Domain detail defaults collapsed; expanding
+it exposes a compact numeric table and existing route sorting, without small
+bars. Top 20 remains a display limit and never truncates storage or totals.
+The prior paired route bars, hourly histogram and three overlapping trend curves
+were removed at the user's request to prioritize data expression over chart count.
 
-Statistics use a private daily archive rather than the diagnostic FIFO. Log clear
-and history clear are separate confirmed actions. Empty, loading and storage-error
-states are explicit. The page states that kernel-bypassing traffic is out of scope,
-route/domain sampling may miss short connections, and old logs cannot be backfilled.
+Statistics use a private daily archive, independent of log clear. Empty, loading
+and storage-error states remain explicit. The page states each point is a bucket
+of transferred bytes and total is upload plus download. Route sampling and
+kernel-bypassing traffic boundaries remain explicit; old logs cannot be backfilled.
 
 ## Performance
 
@@ -119,9 +110,8 @@ when the narrow workspace hides traffic. Query loops cooperate with cancellation
 row preparation and old-core total accumulation run in a cancellable detached
 task; only a typed Sendable snapshot crosses back to the main actor. Malformed
 payloads preserve the last live snapshot, while an explicit empty connection
-array clears it. Trend and hourly selection state belongs to their individual
-views, so pointer movement never re-evaluates the totals, route comparison or
-domain ranking. Hover dates snap to the nearest sorted calendar bucket with
+array clears it. Trend selection and measure state belong to the single chart view, so pointer
+movement never re-evaluates the totals, route readings or domain detail. Hover dates snap to the nearest sorted calendar bucket with
 binary search, suppressing redundant updates within the same bucket. The
 inspection row has a fixed height so hover never changes scroll geometry. Typing
 uses 150ms debounce. Domain folding and sorting run only in summary mode, in the
