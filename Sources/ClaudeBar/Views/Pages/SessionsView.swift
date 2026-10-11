@@ -52,6 +52,14 @@ struct SessionsView: View {
     @StateObject private var migrations = SessionMigrationModel()
     @State private var showsMigration = false
     @StateObject private var migrationDraft = SessionMigrationDraft()
+    @State private var sessionUsage: [SessionUsageSummary.Request: SessionUsageSummary] = [:]
+    @State private var usageRevision = 0
+
+    private var usageRequests: [SessionUsageSummary.Request] {
+        let requests = providerStore.aliveSessions.map { SessionUsageSummary.Request(source: .claude, sessionId: $0.sessionId) }
+            + providerStore.externalSessions.filter { !$0.isSubagent }.map { .init(source: .codex, sessionId: $0.sessionId) }
+        return Set(requests).sorted { ($0.source.rawValue, $0.sessionId) < ($1.source.rawValue, $1.sessionId) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s16) {
@@ -84,7 +92,19 @@ struct SessionsView: View {
         .resourceMonitorScope(.sessions)
         .background(Theme.bgPrimary)
         .environmentObject(migrations)
+        .environment(\.sessionUsageSummaries, sessionUsage)
         .task { await migrations.refresh() }
+        .task(id: usageRevision) {
+            let requests = usageRequests
+            let result = await Task.detached(priority: .utility) { SessionUsageSummary.fetch(requests) }.value
+            guard !Task.isCancelled else { return }
+            if sessionUsage != result { sessionUsage = result }
+        }
+        .onChange(of: usageRequests) { usageRevision += 1 }
+        .onReceive(providerStore.usageIndexDidRefresh.debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)) { _ in
+            usageRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .modelPriceDidChange)) { _ in usageRevision += 1 }
         .onChange(of: migrations.selectionRequest) {
             if let source = migrations.selectedSource {
                 migrationDraft.resetPrepared()
@@ -340,22 +360,21 @@ private struct SessionContextReadout: View {
     var messages: Int? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Label("上下文", systemImage: "square.stack.3d.up")
-                Spacer(minLength: 0)
-                if let messages {
-                    Label("\(messages)", systemImage: "text.bubble")
-                        .monospacedDigit().help("\(messages) 条消息")
-                }
-            }
-            .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                    .help("上下文占用")
                 RollingNumberText(hasData ? label : "—")
-                    .font(Theme.Font.tileValueSmall)
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundColor(hasData ? Theme.contextInk(ratio) : Theme.textSecondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
+                if let messages {
+                    Label("\(messages)", systemImage: "text.bubble")
+                        .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                        .monospacedDigit().fixedSize().help("\(messages) 条消息")
+                }
                 Label(updated, systemImage: "clock")
                     .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                     .lineLimit(1).help("最近更新：" + updated)
@@ -372,11 +391,10 @@ private struct SessionContextReadout: View {
                                  with: .color(filled ? Theme.contextColor(ratio) : Theme.hairline))
                 }
             }
-            .frame(height: 6)
+            .frame(height: 5)
             .accessibilityLabel("上下文占用")
             .accessibilityValue(hasData ? label : "暂无上下文数据")
         }
-        .padding(.vertical, 4)
     }
 }
 
@@ -390,20 +408,21 @@ private struct SessionCardHeading: View {
     let status: (label: String, tint: Color, ink: Color)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                SessionClientBadge(client: client, active: active, waiting: waiting)
+        HStack(alignment: .center, spacing: 8) {
+            SessionClientBadge(client: client, active: active, waiting: waiting)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(label.folder).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 0)
-                StatusPill(label: status.label, tint: status.tint, ink: status.ink)
+                Text(label.title.isEmpty ? label.folder : label.title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(label.title.isEmpty ? label.folder : label.title)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundColor(Theme.textPrimary).lineLimit(2)
-                .frame(height: 36, alignment: .topLeading)
-                .help(label.accessibilityText)
+            Spacer(minLength: 0)
+            StatusPill(label: status.label, tint: status.tint, ink: status.ink)
+                .fixedSize()
         }
+        .help(label.accessibilityText)
     }
 }
 
@@ -480,7 +499,7 @@ private struct SessionTileFull: View {
                 }
             }
         }
-        .padding(Theme.Space.s16)
+        .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         // Hue is information here, not decoration: three agent families share
         // this grid, and the card's own accent is what makes a page of them
@@ -499,19 +518,24 @@ private struct SessionTileFull: View {
             SessionCardHeading(label: session.cardLabel, client: .claude,
                                active: isBusy, waiting: isWaiting, status: status)
 
-            // Context block and activity line are always rendered (dimmed
-            // when there is no data) so every tile in a grid row keeps the
-            // same height regardless of what the transcript scan found.
+            // Keep the capacity and live activity visible without reserving
+            // empty title or readout rows.
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextTokens > 0,
                                   updated: session.relativeUpdated, messages: session.messageCount)
+            SessionUsageReadout(source: .claude, sessionId: session.sessionId)
 
-            ActivityLine(activity: isWaiting ? waitingActivity : (session.displayActivity.isEmpty ? " " : session.displayActivity),
-                         isBusy: isBusy || isWaiting,
-                         color: isWaiting ? Theme.statusWarning : Theme.statusBusy)
-            HStack(spacing: 6) {
-                Image(systemName: "gauge.with.dots.needle.33percent").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                SessionLoadChip(key: .pid(session.pid))
+            HStack(spacing: 8) {
+                ActivityLine(activity: isWaiting ? waitingActivity : session.displayActivity,
+                             isBusy: isBusy || isWaiting,
+                             color: isWaiting ? Theme.statusWarning : Theme.statusBusy)
+                Label {
+                    SessionLoadChip(key: .pid(session.pid), compact: true)
+                } icon: {
+                    Image(systemName: "gauge.with.dots.needle.33percent")
+                }
+                .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                .fixedSize().layoutPriority(1)
             }
 
             SessionMetadataLine(symbol: "cpu", text: session.model.isEmpty ? "模型未记录" : session.model)
@@ -676,18 +700,26 @@ private struct CursorTileFull: View {
             SessionCardHeading(label: session.cardLabel, client: .cursorDesktop,
                                active: isActive, waiting: isWaiting, status: status)
 
-            // Space-reserved context + activity lines — see SessionTileFull.
+            // Compact capacity and live activity, shared with the other clients.
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextPercent >= 0,
                                   updated: session.relativeUpdated)
+            SessionUsageReadout(source: nil, sessionId: session.composerId)
 
-            ActivityLine(activity: isWaiting ? "等待你确认计划"
-                                             : (session.displayActivity.isEmpty ? " " : session.displayActivity),
-                         isBusy: isActive || isWaiting,
-                         color: isWaiting ? Theme.statusWarning : Theme.cursorAccent)
-            HStack(spacing: 6) {
-                Image(systemName: "gauge.with.dots.needle.33percent").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                SessionLoadChip(key: .cursor, shared: true)
+            HStack(spacing: 8) {
+                ActivityLine(activity: isWaiting ? "等待你确认计划" : session.displayActivity,
+                             isBusy: isActive || isWaiting,
+                             color: isWaiting ? Theme.statusWarning : Theme.cursorAccent)
+                Label {
+                    SessionLoadChip(key: .cursor, compact: true, shared: true)
+                } icon: {
+                    Image(systemName: "gauge.with.dots.needle.33percent")
+                }
+                .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                .fixedSize().layoutPriority(1)
+            }
+            if !session.subtitle.isEmpty {
+                SessionMetadataLine(symbol: "doc.text", text: session.subtitle)
             }
             HStack {
                 Label(session.name, systemImage: "folder")
@@ -731,7 +763,7 @@ private struct CursorTileFull: View {
                 .frame(height: min(CGFloat(session.subagents.count) * 52 - 4, 220))
             }
         }
-        .padding(Theme.Space.s16)
+        .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .tile(tint: Theme.cursor, hovered: isHovered)
         .contentShape(Rectangle())
@@ -861,7 +893,7 @@ private struct ExternalSessionTile: View {
     /// poll, and the cluster packs smaller cards to fit whatever it is given.
     private static let swarmWidthEstimate = AgentSwarmView.SwarmGrid.tileEstimateWidth
     /// Height of the readout column — cwd, model, context bar, session id.
-    private static let readoutHeight: CGFloat = 224
+    private static let readoutHeight: CGFloat = 184
 
     /// Height for this session: the readout column's height, or the cluster's,
     /// whichever is taller. A session whose fan-out is small stays as short as
@@ -900,6 +932,7 @@ private struct ExternalSessionTile: View {
                 SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                       hasData: session.contextLimit > 0 || session.contextTokens > 0,
                                       updated: session.relativeUpdated)
+                SessionUsageReadout(source: .codex, sessionId: session.sessionId)
 
                 HStack(spacing: 6) {
                 Image(systemName: "gauge.with.dots.needle.33percent").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -1050,8 +1083,15 @@ private struct ExternalSessionGridCard: View {
         return VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
                 SessionClientBadge(client: .codex, active: isActive, waiting: isWaiting)
-                Text(session.cardLabel.folder).font(Theme.Font.caption)
-                    .foregroundColor(Theme.textSecondary).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.cardLabel.folder).font(Theme.Font.caption)
+                        .foregroundColor(Theme.textSecondary).lineLimit(1)
+                    Text(session.cardLabel.title.isEmpty ? session.cardLabel.folder : session.cardLabel.title)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(Theme.textPrimary).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .help(session.cardLabel.accessibilityText)
                 Spacer(minLength: 4)
                 if !agents.isEmpty {
                     Button { showSwarm = true } label: {
@@ -1068,31 +1108,35 @@ private struct ExternalSessionGridCard: View {
                 }
             }
 
-            Text(session.cardLabel.title.isEmpty ? session.cardLabel.folder : session.cardLabel.title)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundColor(Theme.textPrimary).lineLimit(2)
-                .frame(height: 36, alignment: .topLeading)
-                .help(session.cardLabel.accessibilityText)
-
-            // Context + recency, space-reserved so cards in a row stay level.
+            // Capacity and recency share one compact readout.
             SessionContextReadout(label: session.contextLabel, ratio: session.contextRatio,
                                   hasData: session.contextLimit > 0 || session.contextTokens > 0,
                                   updated: session.relativeUpdated)
+            SessionUsageReadout(source: .codex, sessionId: session.sessionId)
 
-            SessionMetadataLine(symbol: "folder", text: session.cwd.isEmpty ? "项目未记录" : session.cwd)
-            HStack(spacing: 6) {
-                Image(systemName: "gauge.with.dots.needle.33percent").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                SessionLoadChip(key: .standardizedCwd(session.cwd))
+            HStack(spacing: 8) {
+                ActivityLine(activity: session.currentActivity, isBusy: isActive || isWaiting,
+                             color: isWaiting ? Theme.statusWarning : tint)
+                Label {
+                    SessionLoadChip(key: .standardizedCwd(session.cwd), compact: true)
+                } icon: {
+                    Image(systemName: "gauge.with.dots.needle.33percent")
+                }
+                .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                .fixedSize().layoutPriority(1)
             }
-            SessionMetadataLine(symbol: "cpu", text: session.model.isEmpty ? "模型未记录" : session.model)
-
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
+                SessionMetadataLine(symbol: "cpu", text: session.model.isEmpty ? "模型未记录" : session.model)
+                Spacer(minLength: 0)
                 Label(String(session.sessionId.prefix(8)), systemImage: "number")
                     .help(session.sessionId)
-                    .font(Theme.Font.tileDetail)
-                    .foregroundColor(Theme.textTertiary(0.5))
+                    .font(Theme.Font.microMono)
+                    .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .fixedSize()
+            }
+            HStack(spacing: 4) {
+                SessionMetadataLine(symbol: "folder", text: session.cwd.isEmpty ? "项目未记录" : session.cwd)
                 Spacer(minLength: 0)
                 SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0), labeled: true, actionTitle: "迁移")
                 SessionActionChips(isHovered: isHovered) {
@@ -1129,8 +1173,8 @@ private struct ExternalSessionGridCard: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { stripWidth = $0 }
             }
         }
-        .padding(Theme.Space.s16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         // Same reasoning as `ExternalSessionTile`: the agent strip occupies the
         // card's lower half, so the ornament is the hue, not the rings.
         .tile(tint: tint, hovered: isHovered)

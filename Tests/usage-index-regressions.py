@@ -55,6 +55,8 @@ for filename, marker, name in [
     source += text + "\n"
 source += (utils / 'ModelPricing.swift').read_text()
 source += (utils / 'ModelPriceTable.swift').read_text()
+source += '\nenum BuildChannel { static var allowsSystemIntegration = true }\n'
+source += (root / 'Sources/ClaudeBar/Models/SessionUsageSummary.swift').read_text()
 source += (utils / 'UsageModelInventory.swift').read_text()
 provider = (root / 'Sources/ClaudeBar/Models/ProviderStore.swift').read_text()
 source += r'''
@@ -398,6 +400,34 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             let batch = UsageIndex.fetchSessionFamilies(source:.claude,sessionIds:["family","family","family-other","missing"])
             require(batch["family"]!.reduce(0){$0+$1.totalTokens} == 124 && batch["missing"]!.isEmpty)
             require(batch["family-other"]!.reduce(0){$0+$1.totalTokens} == 106,"neighbor sessions stay separate")
+            let dailyFamily = UsageIndex.fetchSessionDailyFamilies(source:.claude,sessionIds:["family"])
+            require(dailyFamily["family"]!.values.flatMap{$0}.reduce(0){$0+$1.totalTokens} == 124,
+                    "daily session query retains deduplicated family usage")
+            let summaryRequest = SessionUsageSummary.Request(source:.claude,sessionId:"family")
+            let summaries = SessionUsageSummary.fetch([summaryRequest,summaryRequest,
+                .init(source:.thirdParty,sessionId:"family"), .init(source:.codex,sessionId:"family")])
+            require(summaries.count == 1 && summaries[summaryRequest]?.total == 124,
+                    "session summaries are client-isolated, deduplicated and omit missing usage")
+            require(summaries[summaryRequest]?.cost.unpricedModels == 2,"unknown models retain unpriced usage")
+            BuildChannel.allowsSystemIntegration = false
+            require(SessionUsageSummary.fetch([summaryRequest]).isEmpty,"dev cannot query external session families")
+            BuildChannel.allowsSystemIntegration = true
+
+            // Session spend keeps date boundaries when the same model changes price.
+            let slug = "fixture-session-cost"
+            func price(_ day: String, _ input: Double) -> ModelPricing.PriceOverride {
+                .init(slug:slug,rate:.init(currency:.usd,input:input,output:input,cacheRead:input,cacheWrite:input),
+                      unpriced:nil,effectiveFrom:day,source:.manual,sourceURL:nil,checkedAt:nil,note:nil)
+            }
+            ModelPricing.replaceOverrides([slug:[price("2026-01-01",1),price("2026-01-02",2)]])
+            let routedDays = UsageIndex.sessionFamilyDailyRollups(source:.claude,ids:["daily"],byPath:[
+                "claude:/p/daily.jsonl":["2026-01-01":[ModelUsage(model:slug,inputTokens:1_000_000)]],
+                "claude:/p/daily/subagents/child.jsonl":["2026-01-02":[ModelUsage(model:slug,outputTokens:1_000_000)]]
+            ],pathIDs:[:],parents:[:])
+            let datedSummary = SessionUsageSummary(days:routedDays["daily"]!)
+            require(datedSummary.total == 2_000_000 && datedSummary.input == 1_000_000 && datedSummary.output == 1_000_000)
+            require(abs(datedSummary.cost.cost.usd - 3) < 0.000001,"lifetime session spend uses each day's effective price")
+            ModelPricing.replaceOverrides([:])
 
             func codexFamily(_ id: String, parent: String?, tokens: Int, nested: Bool = false, archived: Bool = false) throws -> URL {
                 var meta: [String:Any] = ["id":id]

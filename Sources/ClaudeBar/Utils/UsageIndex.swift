@@ -333,19 +333,26 @@ struct UsageIndex {
 
     /// One indexed snapshot per client, rather than one corpus scan per island row.
     static func fetchSessionFamilies(source: UsageSource, sessionIds: [String]) -> [String: [ModelUsage]] {
+        fetchSessionDailyFamilies(source: source, sessionIds: sessionIds).mapValues {
+            ModelUsage.merged($0.values.flatMap { $0 }).sorted { $0.totalTokens > $1.totalTokens }
+        }
+    }
+
+    /// Keep each day's rate boundary for lifetime session cost estimates.
+    static func fetchSessionDailyFamilies(source: UsageSource, sessionIds: [String]) -> [String: [String: [ModelUsage]]] {
         let ids = Set(sessionIds.filter { !$0.isEmpty && !$0.contains("/") })
         guard !ids.isEmpty, source != .thirdParty else { return [:] }
         let prefix = source == .claude ? "claude:" : "codex:"
-        var byPath: [String: [ModelUsage]] = [:]
+        var byPath: [String: [String: [ModelUsage]]] = [:]
         var fileMeta: [String: (mtime: Double, size: Int)] = [:]
         guard let db = connection() else { return [:] }
         lock.lock()
         var stmt: OpaquePointer?
         let sql = """
             SELECT f.path, f.mtime, f.size, r.model, sum(r.calls), sum(r.input),
-                   sum(r.output), sum(r.cache_read), sum(r.cache_create)
+                   sum(r.output), sum(r.cache_read), sum(r.cache_create), r.day
             FROM files f LEFT JOIN rollup r ON r.path = f.path
-            WHERE f.path LIKE ?1 GROUP BY f.path, r.model
+            WHERE f.path LIKE ?1 GROUP BY f.path, r.day, r.model
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { lock.unlock(); return [:] }
         sqlite3_bind_text(stmt, 1, prefix + "%", -1, SQLITE_TRANSIENT)
@@ -353,7 +360,8 @@ struct UsageIndex {
             let path = String(cString: sqlite3_column_text(stmt, 0))
             fileMeta[path] = (sqlite3_column_double(stmt, 1), Int(sqlite3_column_int64(stmt, 2)))
             guard let name = sqlite3_column_text(stmt, 3) else { continue }
-            byPath[path, default: []].append(ModelUsage(model: String(cString: name),
+            guard let day = sqlite3_column_text(stmt, 9) else { continue }
+            byPath[path, default: [:]][String(cString: day), default: []].append(ModelUsage(model: String(cString: name),
                 calls: Int(sqlite3_column_int64(stmt, 4)), inputTokens: Int(sqlite3_column_int64(stmt, 5)),
                 outputTokens: Int(sqlite3_column_int64(stmt, 6)), cacheReadTokens: Int(sqlite3_column_int64(stmt, 7)),
                 cacheCreationTokens: Int(sqlite3_column_int64(stmt, 8))))
@@ -390,13 +398,20 @@ struct UsageIndex {
                 if let parent = header.parent, !parent.isEmpty { parents[header.id] = parent }
             }
         }
-        return sessionFamilyRollups(source: source, ids: ids, byPath: byPath, pathIDs: pathIDs, parents: parents)
+        return sessionFamilyDailyRollups(source: source, ids: ids, byPath: byPath, pathIDs: pathIDs, parents: parents)
     }
 
     /// Route each transcript once. Memoized requested ancestors eliminate the
     /// per-request corpus scan and repeated parent walks; cycles share a set.
     static func sessionFamilyRollups(source: UsageSource, ids: Set<String>, byPath: [String: [ModelUsage]],
                                      pathIDs: [String: String], parents: [String: String]) -> [String: [ModelUsage]] {
+        sessionFamilyDailyRollups(source: source, ids: ids, byPath: byPath.mapValues { ["": $0] },
+                                 pathIDs: pathIDs, parents: parents).mapValues { $0[""] ?? [] }
+    }
+
+    static func sessionFamilyDailyRollups(source: UsageSource, ids: Set<String>,
+                                         byPath: [String: [String: [ModelUsage]]],
+                                         pathIDs: [String: String], parents: [String: String]) -> [String: [String: [ModelUsage]]] {
         // Share immutable requested-ancestor links. Copying a Set per node
         // would consume quadratic memory when every node in a deep chain is
         // requested, even if only one leaf has usage.
@@ -429,7 +444,7 @@ struct UsageIndex {
             }
             return ancestorsByID[start] ?? matched
         }
-        var grouped: [String: [String: ModelUsage]] = [:]
+        var grouped: [String: [String: [String: ModelUsage]]] = [:]
         for (path, rows) in byPath {
             var matched: Set<String> = []
             let components = path.split(separator: "/", omittingEmptySubsequences: false)
@@ -463,15 +478,18 @@ struct UsageIndex {
                 }
             }
             for id in matched {
-                for row in rows {
-                    grouped[id, default: [:]][row.model, default: ModelUsage(model: row.model)].merge(row)
+                for (day, usages) in rows {
+                    for row in usages {
+                        grouped[id, default: [:]][day, default: [:]][row.model, default: ModelUsage(model: row.model)].merge(row)
+                    }
                 }
             }
         }
-        var result: [String: [ModelUsage]] = [:]
+        var result: [String: [String: [ModelUsage]]] = [:]
         for id in ids {
-            result[id] = (grouped[id].map { Array($0.values) } ?? [])
-                .filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
+            result[id] = grouped[id, default: [:]].mapValues {
+                $0.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
+            }
         }
         return result
     }

@@ -28,7 +28,7 @@ def read(name):
 index = read('UsageIndex.swift')
 oracle = (root / 'Tests/fixtures/session-family-baseline.swift').read_text()
 if 'static func sessionFamilyRollups(' in index:
-    family = 'struct ProductionFamilyRollups {\n' + declaration(index, '    static func sessionFamilyRollups(') + '\n}\n'
+    family = 'struct ProductionFamilyRollups {\n' + declaration(index, '    static func sessionFamilyRollups(') + '\n' + declaration(index, '    static func sessionFamilyDailyRollups(') + '\n}\n'
 else:
     start = index.index('        var result: [String: [ModelUsage]] = [:]', index.index('static func fetchSessionFamilies'))
     end = index.index('        return result\n    }', start) + len('        return result\n    }')

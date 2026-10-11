@@ -31,7 +31,10 @@ import AppKit
 # The shared scalars: the theme, and the surface the preview sits on.
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'extension Color {')
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
-source += (root / 'Tools/control-preview-support.swift').read_text() + '\n'
+_support = (root / 'Tools/control-preview-support.swift').read_text()
+_support = _support.replace('final class Preferences: @unchecked Sendable {',
+                           'final class Preferences: ObservableObject, @unchecked Sendable {\n        @Published var costDisplay: CostDisplay = .split\n        @Published var tokenUnitStyle: TokenUnitStyle = .metric')
+source += _support + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/LucideHardwareGeometry.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/LucideHardwarePaths.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/InstrumentGlyph.swift').read_text() + '\n'
@@ -97,8 +100,22 @@ source += 'enum UsageStats {\n' + declaration('Sources/ClaudeBar/Utils/UsageStat
 source += declaration('Sources/ClaudeBar/Views/Pages/SessionMigrationView.swift', 'extension MigrationClient {')
 source += declaration('Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift', 'extension MigrationSource {')
 source += declaration('Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift', 'struct SessionMigrationButton:')
+source += (root / 'Sources/ClaudeBar/Models/ModelUsage.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Utils/ModelPricing.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Utils/ModelPriceTable.swift').read_text() + '\n'
+source += declaration('Sources/ClaudeBar/Models/AppPreferences.swift', 'enum TokenUnitStyle:')
+source += (root / 'Sources/ClaudeBar/Utils/TokenMagnitude.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Models/SessionUsageSummary.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Views/Shared/SessionUsageReadout.swift').read_text() + '\n'
 source += '''
 enum BuildChannel { static let allowsSystemIntegration = false }
+enum UsageIndex {
+    static func fetchSessionDailyFamilies(source: UsageSource, sessionIds: [String]) -> [String: [String: [ModelUsage]]] { [:] }
+}
+final class ExchangeRate: ObservableObject {
+    static let shared = ExchangeRate()
+    let effectiveRate: Double? = nil
+}
 enum FilePaths { static let codexDir = URL(fileURLWithPath: "/synthetic/codex") }
 @MainActor final class SessionMigrationModel: ObservableObject {
     func requestMigration(_ source: MigrationSource) {}
@@ -177,6 +194,17 @@ source += r'''
             cwd: "/Projects/ClaudeBar", updatedAt: now - 45 * 60_000, model: "gpt-6.1-sol",
             isAlive: true, isActive: false, contextTokens: 48000, contextLimit: 256000,
             title: "验证迁移记录和重试行为")
+        let summaries: [SessionUsageSummary.Request: SessionUsageSummary] = [
+            .init(source: .claude, sessionId: claude[0].sessionId): .init(days: ["2026-10-10": [
+                ModelUsage(model: claude[0].model, calls: 20, inputTokens: 480000,
+                           outputTokens: 38000, cacheReadTokens: 2200000, cacheCreationTokens: 90000)]]),
+            .init(source: .claude, sessionId: claude[1].sessionId): .init(days: ["2026-10-10": [
+                ModelUsage(model: claude[1].model, calls: 32, inputTokens: 810000,
+                           outputTokens: 64000, cacheReadTokens: 3400000, cacheCreationTokens: 120000)]]),
+            .init(source: .codex, sessionId: codex.sessionId): .init(days: ["2026-10-10": [
+                ModelUsage(model: codex.model, calls: 12, inputTokens: 250000,
+                           outputTokens: 12000, cacheReadTokens: 180000)]])
+        ]
         for width in [900, 1440] {
             for dark in [false, true] {
                 AppPreferences.shared.isDark = dark
@@ -211,6 +239,7 @@ source += r'''
                 }
                 .padding(24).frame(width: CGFloat(width))
                 .environmentObject(SessionMigrationModel())
+                .environment(\.sessionUsageSummaries, summaries)
                 .environment(\.colorScheme, dark ? .dark : .light)
                 .background(Theme.bgPrimary)
                 let renderer = ImageRenderer(content: sheet)
