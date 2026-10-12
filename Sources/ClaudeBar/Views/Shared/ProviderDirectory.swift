@@ -526,6 +526,7 @@ private struct OfficialProviderCard: View {
     let client: ProviderClient
     let isDefault: Bool
     let onUse: () -> Void
+    @State private var showsQuota = false
 
     var body: some View {
         ProviderCardSurface(state: isDefault ? .active : .ready) {
@@ -550,6 +551,13 @@ private struct OfficialProviderCard: View {
             HStack {
                 Text("登录状态由客户端管理").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                 Spacer(minLength: 0)
+                if client == .claude {
+                    Button("查询额度") { showsQuota = true }
+                        .buttonStyle(ProviderActionStyle(prominent: false, tint: Theme.Ink.claude))
+                        .popover(isPresented: $showsQuota) {
+                            ClaudeQuotaCard().frame(width: 440).padding(12)
+                        }
+                }
                 Button(action: onUse) { Label(isDefault ? "重新应用" : "激活", systemImage: "bolt.fill") }
                     .buttonStyle(ProviderActionStyle(prominent: true, tint: isDefault ? Theme.Ink.success : ProviderCardState.ready.color))
                     .help("切回官方连接，清除第三方覆盖，保留供应商配置")
