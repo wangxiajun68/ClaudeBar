@@ -25,9 +25,16 @@ if '--reduced-motion' in sys.argv:
     source = source.replace('@Environment(\\.accessibilityReduceMotion) private var reduceMotion',
                             'private let reduceMotion = true')
 if '--measure' in sys.argv:
-    source = source.replace('Canvas { context, _ in', 'Canvas { context, _ in\n PreviewDrawCounter.count += 1')
+    source = source.replace('Canvas { context, _ in', 'Canvas { context, _ in\n PreviewDrawCounter.record()')
 source += r'''
-enum PreviewDrawCounter { static var count = 0 }
+enum PreviewDrawCounter {
+    static var count = 0
+    static var times: [Double] = []
+    static func record() {
+        count += 1
+        times.append(ProcessInfo.processInfo.systemUptime)
+    }
+}
 final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
     @Published var isDark = false
@@ -43,6 +50,7 @@ enum AppPresentation { static var allowsInterface = true }
         let model = WoodenFishModel(defaults: defaults)
         if CommandLine.arguments.contains("--measure") {
             model.muted = true
+            model.size = CommandLine.arguments.contains("--large") ? .large : .regular
             let host = NSHostingView(rootView: WoodenFishView(model: model, strike: {}))
             host.sizingOptions = []
             host.frame = CGRect(origin: .zero, size: model.size.panelSize)
@@ -59,6 +67,7 @@ enum AppPresentation { static var allowsInterface = true }
             RunLoop.current.run(until: Date().addingTimeInterval(3))
             let idleCPU = cpu() - idleStart
             PreviewDrawCounter.count = 0
+            PreviewDrawCounter.times.removeAll(keepingCapacity: true)
             let activeStart = cpu()
             let start = Date()
             for frame in 0..<180 {
@@ -67,16 +76,22 @@ enum AppPresentation { static var allowsInterface = true }
             }
             let activeCPU = cpu() - activeStart
             let activeDraws = PreviewDrawCounter.count
+            let activeElapsed = Date().timeIntervalSince(start)
+            let intervals = zip(PreviewDrawCounter.times.dropFirst(), PreviewDrawCounter.times)
+                .map { $0 - $1 }.sorted()
+            let p95 = intervals.isEmpty ? 0 : intervals[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
+            let slowFrames = intervals.filter { $0 > 0.025 }.count
             RunLoop.current.run(until: Date().addingTimeInterval(2))
+            let settledDrawStart = PreviewDrawCounter.count
             let settledStart = cpu()
             RunLoop.current.run(until: Date().addingTimeInterval(3))
             let settledCPU = cpu() - settledStart
             let hitStart = cpu()
             var hits = 0
             for index in 0..<100_000 {
-                if WoodenFishGeometry.captures(CGPoint(x: index % 188, y: index % 222), scale: 0.72) { hits += 1 }
+                if WoodenFishGeometry.captures(CGPoint(x: index % 188, y: index % 222), scale: model.size.scale) { hits += 1 }
             }
-            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total), active_draws=\(activeDraws)")
+            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), settled_draws=\(PreviewDrawCounter.count - settledDrawStart), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total), active_draws=\(activeDraws), draws_per_second=\(Double(activeDraws) / activeElapsed), p95_interval_ms=\(p95 * 1000), intervals_over_25ms=\(slowFrames)")
             window.orderOut(nil)
             window.contentView = nil
             return
@@ -164,10 +179,10 @@ enum AppPresentation { static var allowsInterface = true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
             let start = Date()
             var taps = 0
-            for frame in 0..<180 {
-                RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 30))
+            for frame in 0..<360 {
+                RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 60))
                 // First strike, then 32 quick taps: cloud overlap and all combo tiers.
-                if frame == 1 || (45...107).contains(frame) && (frame - 45).isMultiple(of: 2) {
+                if frame == 2 || (90...214).contains(frame) && (frame - 90).isMultiple(of: 4) {
                     model.strike()
                     taps += 1
                 }
@@ -182,7 +197,7 @@ enum AppPresentation { static var allowsInterface = true }
             precondition(model.feedback.combo == 32 && model.feedback.surprise == .cache, "real fast-tap rhythm reaches all tiers")
             window.orderOut(nil)
             window.contentView = nil
-            print("Rendered real strike animation at 30fps, including overlapping rapid taps")
+            print("Rendered real strike animation at 60fps, including overlapping rapid taps")
             return
         }
         for _ in 0..<108 { model.strike() }

@@ -105,7 +105,7 @@ enum WoodenFishSize: String, CaseIterable, Identifiable {
         switch self { case .small: return "小巧"; case .regular: return "标准"; case .large: return "大号" }
     }
     var scale: CGFloat {
-        switch self { case .small: return 0.60; case .regular: return 0.72; case .large: return 0.88 }
+        switch self { case .small: return 0.36; case .regular: return 0.46; case .large: return 0.56 }
     }
     var panelSize: CGSize { CGSize(width: 260 * scale, height: 78 + 200 * scale) }
 }

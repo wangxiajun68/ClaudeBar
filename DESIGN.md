@@ -645,8 +645,10 @@ automatic play, hiding and confirmed reset. A 5pt native drag threshold
 prevents movement from awarding a strike. Keyboard accessibility remains.
 
 A single Canvas renders the object and bounded feedback, with an active-only
-34ms cancellable refresh task, at most four words and three particles per combo strike from
-eight onward. Reduce Motion keeps only the latest word's stationary fade.
+60fps absolute-deadline cancellable refresh task, at most two dual-line rewards
+(功德 +1 / Token +1) and three particles per combo strike from
+eight onward. Reduce Motion keeps only the latest reward pair's stationary fade.
 No idle animation, per-move path allocation or animation-driven window sizing.
+Artwork scales are 0.36 / 0.46 / 0.56; the default body is about 90pt wide.
 The shared outline preserves transparent desktop click-through. Detailed
 states and verification scope are in [the wooden fish brief](docs/design/surfaces/wooden-fish.md).

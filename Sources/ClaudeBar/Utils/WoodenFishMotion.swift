@@ -47,7 +47,7 @@ enum WoodenFishMotion {
 
     /// Each strike owns a stable, different flight. New strikes never reposition
     /// existing words. Native bounds keep the spray inside the transparent window.
-    static func word(progress: Double, id: UInt, reducedMotion: Bool, displayScale: CGFloat = 0.72) -> Particle {
+    static func word(progress: Double, id: UInt, reducedMotion: Bool, displayScale: CGFloat = 0.46) -> Particle {
         let p = min(1, max(0, progress))
         let opacity = min(1, p / 0.06) * max(0, min(1, (1 - p) / 0.35))
         guard !reducedMotion else {
@@ -64,17 +64,21 @@ enum WoodenFishMotion {
         // per-strike variation changes origin, reach, curvature and launch speed.
         let phase = Double(id % 65_536) * 0.61803398875 + (variation(1) - 0.5) * 0.12
         let angle = (-160 + 140 * (phase - floor(phase))) * .pi / 180
-        let horizontalReach = max(0, 130 * Double(displayScale) - 32)
+        // Both native-size reward lines share this envelope, even at the
+        // smallest artwork scale. Leave six points above the count footer.
+        let horizontalReach = max(0, 130 * Double(displayScale) - 36)
+        let maximumY = 109 * Double(displayScale) - 29
         let origin = CGPoint(x: (variation(2) - 0.5) * horizontalReach * 1.1,
-                             y: -22 + 62 * variation(3))
-        let minimumY = 22 - (36 + 91 * Double(displayScale))
+                             y: min(maximumY, -22 + 62 * variation(3)))
+        let minimumY = 24 - (36 + 91 * Double(displayScale))
         let destination = CGPoint(x: cos(angle) * horizontalReach * (0.72 + 0.24 * variation(4)),
                                   y: max(minimumY, origin.y + sin(angle) * (44 + 44 * variation(5))))
         let travel = 1 - pow(1 - p, 2.8 + 1.4 * variation(6))
         let bend = sin(p * .pi) * (variation(7) - 0.5) * 10
         let bloom = min(1, p / 0.18)
         let scale = 0.76 + 0.24 * (1 - pow(1 - bloom, 3)) + 0.06 * sin(bloom * .pi)
-        return Particle(offset: CGPoint(x: origin.x + (destination.x - origin.x) * travel + bend,
+        return Particle(offset: CGPoint(x: min(horizontalReach, max(-horizontalReach,
+                                                origin.x + (destination.x - origin.x) * travel + bend)),
                                         y: origin.y + (destination.y - origin.y) * travel),
                         opacity: opacity, scale: scale * (0.94 + 0.06 * variation(8)),
                         angle: (variation(9) - 0.5) * (8 + 20 * travel))

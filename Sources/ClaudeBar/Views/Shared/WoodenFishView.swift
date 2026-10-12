@@ -13,8 +13,6 @@ struct WoodenFishView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Reserve transparent space for the uppermost rapid-tap words.
-            Color.clear.frame(height: 36).allowsHitTesting(false).accessibilityHidden(true)
             instrument
             counts
         }
@@ -32,9 +30,9 @@ struct WoodenFishView: View {
         Button(action: strike) {
             WoodenFishScene(entries: bursts.entries, displayScale: model.size.scale,
                             isPressed: model.isPressed) { bursts.expire($0) }
-            .frame(width: 260, height: 200)
+            .frame(width: 260, height: 200 + 36 / model.size.scale)
             .scaleEffect(model.size.scale, anchor: .topLeading)
-            .frame(width: 260 * model.size.scale, height: 200 * model.size.scale, alignment: .topLeading)
+            .frame(width: 260 * model.size.scale, height: 36 + 200 * model.size.scale, alignment: .topLeading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -84,15 +82,21 @@ private struct WoodenFishScene: View {
 
     var body: some View {
         scene(at: entries.isEmpty ? .distantFuture : frameDate)
-            .frame(width: 260, height: 200)
+            .frame(width: 260, height: 200 + 36 / displayScale)
             .task(id: entries.last?.id) {
                 guard let latest = entries.last else { return }
                 frameDate = Date()
+                let clock = ContinuousClock()
+                let interval = Duration.nanoseconds(16_666_667)
+                var deadline = clock.now
                 do {
-                    // Explicit sleep bounds work even when the hosting window's
-                    // display cycle runs faster than the requested frame rate.
+                    // Absolute deadlines avoid accumulating rendering time into
+                    // each frame. Missed frames are skipped instead of replayed.
                     while Date().timeIntervalSince(latest.createdAt) < 1.42 {
-                        try await Task.sleep(for: .milliseconds(34))
+                        deadline = deadline.advanced(by: interval)
+                        if deadline <= clock.now { deadline = clock.now.advanced(by: interval) }
+                        try await clock.sleep(until: deadline, tolerance: .microseconds(500))
+                        try Task.checkCancellation()
                         frameDate = Date()
                     }
                 } catch { return }
@@ -104,7 +108,7 @@ private struct WoodenFishScene: View {
         Canvas { context, _ in
             // Include the mallet's outer caps in the drawing surface. The shared
             // hit geometry places the instrument ten points into this canvas.
-            context.translateBy(x: 10, y: 0)
+            context.translateBy(x: 10, y: 36 / displayScale)
             let age = entries.last.map { date.timeIntervalSince($0.createdAt) } ?? 10
             let impact: Double = reduceMotion || age >= 0.4 ? 0 :
                 age < 0.045 ? max(0, age / 0.045) : exp(-(age - 0.045) * 14) * cos((age - 0.045) * 23)
@@ -115,7 +119,16 @@ private struct WoodenFishScene: View {
             instrument.rotate(by: .degrees(-1.5 * impact))
             instrument.translateBy(x: -120, y: -200)
             WoodenFishArtwork.draw(in: &instrument, impact: impact)
-            for entry in entries {
+            // Resolve each colour's two labels once per frame, then reuse them
+            // across all strikes; font layout never scales with the burst count.
+            guard !entries.isEmpty else { return }
+            let normalInk = Color(hex: 0xFFF6E7)
+            let goldenInk = Color(hex: 0xFFE0A6)
+            let merit = context.resolve(rewardLabel("功德", ink: normalInk))
+            let token = context.resolve(rewardLabel("Token", ink: normalInk))
+            let goldenMerit = context.resolve(rewardLabel("功德", ink: goldenInk))
+            let goldenToken = context.resolve(rewardLabel("Token", ink: goldenInk))
+            for entry in entries.suffix(reduceMotion ? 1 : 2) {
                 let progress = max(0, date.timeIntervalSince(entry.createdAt)) / 1.35
                 guard progress >= 0, progress < 1,
                       !reduceMotion || entry.id == entries.last?.id else { continue }
@@ -129,11 +142,11 @@ private struct WoodenFishScene: View {
                 word.opacity = reduceMotion ? max(0, min(1, (1 - progress) / 0.35)) : motion.opacity
                 word.addFilter(.shadow(color: Color(hex: 0x382317).opacity(0.85),
                                        radius: 0.6 / displayScale, x: 0, y: 1 / displayScale))
-                let ink = entry.feedback.isGolden ? Color(hex: 0xFFE0A6) : Color(hex: 0xFFF6E7)
-                word.draw(Text("功德").font(.system(size: 10 / displayScale, weight: .semibold))
-                    .foregroundColor(ink), at: CGPoint(x: -10 / displayScale, y: 0))
-                word.draw(Text("+1").font(.system(size: 18 / displayScale, weight: .bold, design: .rounded))
-                    .foregroundColor(ink), at: CGPoint(x: 14 / displayScale, y: -2 / displayScale))
+                let ink = entry.feedback.isGolden ? goldenInk : normalInk
+                word.draw(entry.feedback.isGolden ? goldenMerit : merit,
+                          at: CGPoint(x: 0, y: -9 / displayScale))
+                word.draw(entry.feedback.isGolden ? goldenToken : token,
+                          at: CGPoint(x: 0, y: 9 / displayScale))
                 if !reduceMotion && entry.feedback.combo >= 8 {
                     for lane in [0, 2, 4] {
                         let particle = WoodenFishMotion.particle(progress: progress, lane: lane, reducedMotion: false)
@@ -147,6 +160,13 @@ private struct WoodenFishScene: View {
             }
         }
     }
+
+    private func rewardLabel(_ title: String, ink: Color) -> Text {
+        (Text(title).font(.system(size: 10 / displayScale, weight: .semibold, design: .rounded))
+         + Text(" +1").font(.system(size: 14 / displayScale, weight: .bold, design: .rounded)))
+            .foregroundColor(ink)
+    }
+
 }
 
 /// Warm lacquer colours and a single recessed curl give the toy its identity.
