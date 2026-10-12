@@ -23,7 +23,7 @@ enum AgentProtocolBridge {
         catch { throw Failure.unsupported }
     }
 
-    static func request(_ body: [String: Any], model: String) throws -> [String: Any] {
+    static func request(_ body: [String: Any], model: String, allowDocuments: Bool = false) throws -> [String: Any] {
         guard let messages = body["messages"] as? [[String: Any]], messages.count <= 8000,
               let maximum = body["max_tokens"] as? Int, maximum > 0, maximum <= 200_000 else { throw Failure.malformed }
         if let stops = body["stop_sequences"] as? [String], !stops.isEmpty { throw Failure.unsupported }
@@ -57,6 +57,19 @@ enum AgentProtocolBridge {
                 case "image":
                     guard role == "user" else { throw Failure.unsupported }
                     textBlocks.append(["type": "input_image", "image_url": try image(block)])
+                case "document":
+                    guard allowDocuments, role == "user", block["citations"] == nil,
+                          let source = block["source"] as? [String: Any] else { throw Failure.unsupported }
+                    var file: [String: Any] = ["type": "input_file", "filename": "document.pdf"]
+                    if source["type"] as? String == "base64", source["media_type"] as? String == "application/pdf",
+                       let data = source["data"] as? String {
+                        file["file_data"] = "data:application/pdf;base64," + data
+                    } else if source["type"] as? String == "url", let url = source["url"] as? String {
+                        file["file_url"] = url
+                    } else { throw Failure.unsupported }
+                    if let title = block["title"] as? String { textBlocks.append(["type": "input_text", "text": title]) }
+                    if let context = block["context"] as? String { textBlocks.append(["type": "input_text", "text": context]) }
+                    textBlocks.append(file)
                 case "tool_use":
                     guard role == "assistant", let id = block["id"] as? String, !id.isEmpty,
                           let name = block["name"] as? String, let arguments = block["input"] as? [String: Any] else { throw Failure.malformed }

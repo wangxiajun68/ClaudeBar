@@ -33,6 +33,8 @@ struct FreeModelGatewayView: View {
     @State private var tools = true
     @State private var images = false
     @State private var json = false
+    @State private var media = Set<GatewayMediaCapability>()
+    @State private var supportsChat = true
     @State private var difficulties = GatewayTaskDifficulty.allCases
     @State private var confirmedFree = false
     @State private var editingMember: String?
@@ -233,7 +235,7 @@ struct FreeModelGatewayView: View {
             Text("\(item.provider) · \(item.member.contextLength.formatted()) 上下文")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON, text: true)
+            GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON, text: true, media: item.member.mediaCapabilities ?? [])
             HStack(spacing: 7) {
                 Circle().fill(item.state.tint).frame(width: 6, height: 6)
                 Text("\(item.state.title) · 成功 \(health?.successes ?? 0) / 失败 \(health?.failures ?? 0)")
@@ -568,7 +570,8 @@ struct FreeModelGatewayView: View {
         submitted = false
         editingMember = member.id; providerID = member.providerID; modelID = member.model
         context = String(member.contextLength); tools = member.supportsTools; images = member.supportsImages
-        json = member.supportsJSON; difficulties = member.difficulties; confirmedFree = false
+        json = member.supportsJSON; media = member.mediaCapabilities ?? []; difficulties = member.difficulties; confirmedFree = false
+        supportsChat = member.supportsChat
         showAdd = true
     }
     private var controls: some View {
@@ -746,6 +749,9 @@ struct FreeModelGatewayView: View {
             SettingsToggleRow(title: "支持图片输入", isOn: $images)
             SettingsDivider()
             SettingsToggleRow(title: "支持结构化 JSON", isOn: $json)
+            SettingsDivider()
+            SettingsToggleRow(title: "支持 Chat Completions", isOn: $supportsChat)
+            GatewayMediaControls(selection: $media)
         }.disabled(!editable)
     }
 
@@ -782,7 +788,7 @@ struct FreeModelGatewayView: View {
             gateway.change(completion: completeManual) { value in
                 let member = FreeModelPool.Member(providerID: provider.id, model: model, name: model,
                     contextLength: length, supportsTools: tools, supportsImages: images, supportsJSON: json,
-                    difficulties: difficulties)
+                    difficulties: difficulties, mediaCapabilities: media, supportsChat: supportsChat)
                 if let index = value.members.firstIndex(where: { $0.id == member.id }) {
                     var updated = member; updated.enabled = value.members[index].enabled
                     value.members[index] = updated

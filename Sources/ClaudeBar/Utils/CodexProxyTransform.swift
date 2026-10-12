@@ -484,7 +484,7 @@ enum CodexProxyTransform {
     /// Chat content: a plain string when there are no images (strict Relays
     /// reject array content on text-only turns); a part list when vision
     /// parts are present.
-    private static func chatMessageContent(_ item: [String: Any]) -> Any {
+    private static func chatMessageContent(_ item: [String: Any], allowMedia: Bool = false) -> Any {
         if let s = item["content"] as? String { return s }
         guard let arr = item["content"] as? [[String: Any]] else {
             if let content = item["content"] { return jsonString(content) }
@@ -498,7 +498,9 @@ enum CodexProxyTransform {
             if !t.isEmpty { parts.append(["type": "text", "text": t]) }
         }
         for part in arr {
-            if let img = extractImage(from: part) {
+            if allowMedia, ["input_audio", "video_url", "file"].contains(part["type"] as? String ?? "") {
+                flushText(); parts.append(part)
+            } else if let img = extractImage(from: part) {
                 flushText()
                 parts.append(chatImagePart(img))
             } else if imageCandidateURL(in: part) != nil {
@@ -895,7 +897,7 @@ enum CodexProxyTransform {
 
     // MARK: - Request: Responses → Chat Completions
 
-    static func responsesToChatRequest(_ body: [String: Any], registry: inout ToolRegistry) -> [String: Any] {
+    static func responsesToChatRequest(_ body: [String: Any], registry: inout ToolRegistry, allowMedia: Bool = false) -> [String: Any] {
         var out = body
         rewriteToolsAndInput(&out, registry: &registry)
 
@@ -940,7 +942,7 @@ enum CodexProxyTransform {
                 case "tool": role = "tool"
                 default: role = "user"
                 }
-                messages.append(["role": role, "content": chatMessageContent(item)])
+                messages.append(["role": role, "content": chatMessageContent(item, allowMedia: allowMedia)])
             case "reasoning":
                 continue // summaries are not replayable for most Chat backends
             case "function_call":

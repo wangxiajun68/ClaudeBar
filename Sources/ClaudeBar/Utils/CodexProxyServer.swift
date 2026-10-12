@@ -342,7 +342,7 @@ final class CodexProxyServer: @unchecked Sendable {
         }
 
         if request.method == "POST", CaptureSource.isThirdPartyClient(headers: request.headers),
-           ["/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages", "/v1/messages/count_tokens", "/messages/count_tokens"].contains(path),
+           GatewayWireAdapter.supports(path: path),
            let body = request.body,
            let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
            await FreeModelGateway.shared.handles(model: json["model"] as? String ?? "", thirdParty: true) {
@@ -857,6 +857,7 @@ final class CodexProxyServer: @unchecked Sendable {
         var plan: FreeModelGateway.Plan?
         var headWritten = false
         let anthropic = path.hasSuffix("/messages")
+        let binaryResponse = path.hasSuffix("/audio/speech")
         let requestID = UUID()
         do {
             if path.hasSuffix("/messages/count_tokens") {
@@ -868,7 +869,8 @@ final class CodexProxyServer: @unchecked Sendable {
                 return // conservative local estimate; no quota or upstream I/O
             }
             let adapted = try GatewayWireAdapter.request(json, path: path)
-            let requirements = try GatewayRequirements(chat: adapted.chat)
+            var requirements = try GatewayRequirements(chat: adapted.requirementsBody ?? adapted.chat)
+            if let operation = adapted.operation { requirements.media.insert(operation.capability); requirements.nativeEndpoint = true }
             let selected = try await gateway.begin(requirements, requestBytes: request.body?.count ?? 0, requestID: requestID)
             plan = selected
             let requestDeadline = Date().addingTimeInterval(Double(selected.requestTimeoutSeconds))
@@ -908,7 +910,8 @@ final class CodexProxyServer: @unchecked Sendable {
                 let event: [String: Any] = ["type": "error", "request_id": requestID.uuidString,
                     "error": ["type": "gateway_error", "code": failure?.code ?? "gateway_error", "message": message]]
                 if headWritten {
-                    if anthropic { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
+                    if binaryResponse { connection.cancel() }
+                    else if anthropic { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
                     else if path.hasSuffix("/responses") {
                         try? await writeMigration(connection, data: CodexProxyTransform.synthesizeFailed(message: message))
                     } else {
@@ -935,7 +938,12 @@ final class CodexProxyServer: @unchecked Sendable {
                                        total: requestDeadline.timeIntervalSinceNow, onTotalTimeout: { connection.cancel() })
         defer { deadline.stop() }
         let streamUpstream = adapted.stream || adapted.wire != .chat
-        let outbound = FreeModelGateway.outbound(adapted.chat, candidate: candidate, stream: streamUpstream)
+        let mediaOutput = (adapted.chat["modalities"] as? [String] ?? []).contains { $0 == "audio" || $0 == "image" }
+        let responseLimit = mediaOutput || adapted.operation != nil ? 64 * 1024 * 1024 : AgentProtocolBridge.maxBytes
+        var outbound = FreeModelGateway.outbound(adapted.chat, candidate: candidate, stream: streamUpstream)
+        if adapted.operation != nil {
+            for key in ["stream", "stream_options", "max_tokens", "max_completion_tokens"] { outbound.removeValue(forKey: key) }
+        }
         let outData = try JSONSerialization.data(withJSONObject: outbound)
         let upstream = CodexProxyState.UpstreamEndpoint(baseURL: candidate.endpoint.baseURL,
             apiKey: candidate.endpoint.apiKey, wireAPI: "chat", name: candidate.endpoint.name)
@@ -943,10 +951,10 @@ final class CodexProxyServer: @unchecked Sendable {
         var routedJSON = try JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any] ?? [:]
         routedJSON["model"] = candidate.member.model
         logRequest.body = try JSONSerialization.data(withJSONObject: routedJSON)
-        let kind: ProxyLogKind = adapted.wire == .anthropic ? .anthropic
+        let kind: ProxyLogKind = adapted.operation != nil ? .other : adapted.wire == .anthropic ? .anthropic
             : (adapted.wire == .responses ? .openaiResponses : .openaiChat)
         let log = await startLog(logRequest, source: .codex, kind: kind, provider: candidate.endpoint.name)
-        let tap = await makeOpenAITap(kind: .openaiChat, request: request, json: routedJSON,
+        let tap = adapted.operation != nil ? nil : await makeOpenAITap(kind: .openaiChat, request: request, json: routedJSON,
             rewritten: outData, stream: adapted.stream, upstream: upstream)
         bindInterrupt(tap, connection: connection)
         var totals = TokenTotals()
@@ -954,14 +962,17 @@ final class CodexProxyServer: @unchecked Sendable {
         var retryAfter: Double?
         defer { task?.cancel() }
         do {
-            guard let url = chatCompletionsURL(candidate.endpoint.baseURL) else { throw GatewayFailure.invalidRequest }
+            guard var url = chatCompletionsURL(candidate.endpoint.baseURL) else { throw GatewayFailure.invalidRequest }
+            if let operation = adapted.operation {
+                url = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(operation.rawValue)
+            }
             var req = URLRequest(url: url, timeoutInterval: Double(plan.streamIdleTimeoutSeconds))
             req.httpMethod = "POST"; req.httpBody = outData
             req.setValue("Bearer \(candidate.endpoint.apiKey)", forHTTPHeaderField: "Authorization")
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             req.setValue(plan.id.uuidString, forHTTPHeaderField: "X-Request-ID")
-            req.setValue(streamUpstream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
+            req.setValue(adapted.operation == .speech ? "audio/*" : (streamUpstream ? "text/event-stream" : "application/json"), forHTTPHeaderField: "Accept")
             try Self.throwIfInterrupted(tap)
             let lifetime = Self.gatewayLifetime
             let (bytes, response) = try await GatewayNetwork.shared.session.bytes(for: req,
@@ -978,17 +989,41 @@ final class CodexProxyServer: @unchecked Sendable {
             guard (200..<300).contains(http.statusCode) else { throw GatewayFailure.upstream(http.statusCode) }
             await FreeModelGateway.shared.receivedHeaders(candidate, plan: plan)
             var latency = Date().timeIntervalSince(started)
-            if !streamUpstream {
+            if adapted.operation == .speech {
+                let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased().split(separator: ";").first.map(String.init) ?? ""
+                guard ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/flac", "audio/ogg", "audio/opus", "audio/aac", "audio/pcm", "application/octet-stream"].contains(contentType) else { throw GatewayFailure.upstream(502) }
+                var chunk = Data(), count = 0
+                for try await byte in bytes {
+                    count += 1
+                    guard count <= responseLimit else { throw GatewayFailure.upstream(502) }
+                    chunk.append(byte)
+                    if count == 1 {
+                        deadline.receivedOutput(); latency = Date().timeIntervalSince(started)
+                        await FreeModelGateway.shared.receivedOutput(candidate, plan: plan)
+                        headWritten = true
+                        try await writeMigration(connection, data: Data("HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nX-Request-ID: \(plan.id.uuidString)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8))
+                    }
+                    if chunk.count >= 16 * 1024 {
+                        try Self.throwIfInterrupted(tap)
+                        try await writeMigration(connection, data: chunk); chunk.removeAll(keepingCapacity: true)
+                    }
+                }
+                guard count > 0 else { throw GatewayFailure.upstream(502) }
+                if !chunk.isEmpty { try await writeMigration(connection, data: chunk) }
+            } else if !streamUpstream {
                 var data = Data()
                 for try await byte in bytes {
-                    try Self.throwIfInterrupted(tap)
-                    guard data.count < AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    if data.count & 4095 == 0 { try Self.throwIfInterrupted(tap) }
+                    guard data.count < responseLimit else { throw GatewayFailure.upstream(502) }
                     data.append(byte)
                 }
-                guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      value["error"] == nil, let choices = value["choices"] as? [[String: Any]],
-                      choices.first?["message"] is [String: Any], choices.first?["finish_reason"] is String else {
+                guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     throw GatewayFailure.upstream(502)
+                }
+                if let operation = adapted.operation { try GatewayWireAdapter.validateNativeResponse(value, operation: operation) }
+                else {
+                    guard value["error"] == nil, let choices = value["choices"] as? [[String: Any]],
+                          choices.first?["message"] is [String: Any], choices.first?["finish_reason"] is String else { throw GatewayFailure.upstream(502) }
                 }
                 tap?.applyChat(value); totals.applyChat(value)
                 deadline.receivedOutput()
@@ -1010,6 +1045,7 @@ final class CodexProxyServer: @unchecked Sendable {
                 var accumulatedBytes = 0
                 var lastVisualOutput = Date.distantPast
                 var decoder = GatewaySSEDecoder()
+                if mediaOutput { decoder.eventLimit = 16 * 1024 * 1024; decoder.totalLimit = responseLimit }
                 let doneMarker = Data("[DONE]".utf8)
                 var decodedBytes = 0
                 func deliver(_ events: [[String: Any]]) async throws {
@@ -1044,7 +1080,7 @@ final class CodexProxyServer: @unchecked Sendable {
                         continue
                     }
                     accumulatedBytes += data.count
-                    guard accumulatedBytes <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    guard accumulatedBytes <= responseLimit else { throw GatewayFailure.upstream(502) }
                     log.noteOutput(delta, kind: .openaiChat)
                     // Delay the client head until the first valid data frame.
                     // OpenRouter can report a provider error in a 200 stream.

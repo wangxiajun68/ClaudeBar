@@ -1,6 +1,37 @@
 import Foundation
 import CoreFoundation
 
+enum GatewayMediaCapability: String, Codable, CaseIterable, Sendable {
+    case audioInput, videoInput, fileInput, audioOutput, imageOutput
+    case imageGeneration, speechSynthesis, embeddings, rerank
+    var title: String {
+        switch self {
+        case .audioInput: return "音频输入"
+        case .videoInput: return "视频输入"
+        case .fileInput: return "原生 PDF 输入"
+        case .audioOutput: return "语音输出"
+        case .imageOutput: return "图片输出"
+        case .imageGeneration: return "图像生成 API"
+        case .speechSynthesis: return "语音合成 API"
+        case .embeddings: return "向量嵌入 API"
+        case .rerank: return "重排序 API"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .audioInput: return "waveform"
+        case .videoInput: return "video"
+        case .fileInput: return "doc"
+        case .audioOutput: return "speaker.wave.2"
+        case .imageOutput: return "photo.badge.plus"
+        case .imageGeneration: return "paintbrush"
+        case .speechSynthesis: return "speaker.wave.3"
+        case .embeddings: return "square.grid.3x3"
+        case .rerank: return "arrow.up.arrow.down"
+        }
+    }
+}
+
 enum GatewayTaskDifficulty: String, Codable, CaseIterable, Sendable {
     case low, medium, high
     var title: String {
@@ -55,6 +86,8 @@ struct FreeModelPool: Codable, Equatable, Sendable {
         /// OpenRouter entries must remain in a fresh, zero-priced catalog.
         var discovered = false
         var difficulties = GatewayTaskDifficulty.allCases
+        var mediaCapabilities: Set<GatewayMediaCapability>?
+        var supportsChat = true
         var id: String { providerID.uuidString + ":" + model }
     }
 
@@ -66,11 +99,12 @@ struct FreeModelPool: Codable, Equatable, Sendable {
         var supportsImages: Bool
         var supportsJSON: Bool
         var maxOutput: Int?
+        var mediaCapabilities: Set<GatewayMediaCapability>?
 
         func member(providerID: UUID) -> Member {
             .init(providerID: providerID, model: id, name: name, contextLength: contextLength,
                   supportsTools: supportsTools, supportsImages: supportsImages,
-                  supportsJSON: supportsJSON, discovered: true)
+                  supportsJSON: supportsJSON, discovered: true, mediaCapabilities: mediaCapabilities)
         }
     }
 
@@ -135,11 +169,19 @@ struct FreeModelPool: Codable, Equatable, Sendable {
             guard seen.insert(id).inserted else { return nil }
             let parameters = row["supported_parameters"] as? [String] ?? []
             let provider = row["top_provider"] as? [String: Any]
+            let inputs = architecture["input_modalities"] as? [String] ?? []
+            let outputs = architecture["output_modalities"] as? [String] ?? []
+            var media = Set<GatewayMediaCapability>()
+            if inputs.contains("audio") { media.insert(.audioInput) }
+            if inputs.contains("video") { media.insert(.videoInput) }
+            if inputs.contains("file") { media.insert(.fileInput) }
+            if outputs.contains("audio") { media.insert(.audioOutput) }
+            if outputs.contains("image") { media.insert(.imageOutput) }
             return CatalogModel(id: id, name: row["name"] as? String ?? id, contextLength: context,
                 supportsTools: parameters.contains("tools"),
                 supportsImages: (architecture["input_modalities"] as? [String] ?? []).contains("image"),
                 supportsJSON: parameters.contains("response_format") || parameters.contains("structured_outputs"),
-                maxOutput: provider?["max_completion_tokens"] as? Int)
+                maxOutput: provider?["max_completion_tokens"] as? Int, mediaCapabilities: media)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 }
@@ -151,7 +193,7 @@ enum GatewayFailure: Error, LocalizedError, Equatable {
         switch self {
         case .disabled: return "自动网关未启用，请在「模型 → 自动网关」开启。"
         case .emptyPool: return "模型池没有可用模型，请加入免费模型并检查供应商凭据。"
-        case .noCompatibleModel: return "模型池中没有符合任务难度、工具、图片或上下文要求的模型。"
+        case .noCompatibleModel: return "模型池中没有符合任务难度、工具、多模态或上下文要求的模型。"
         case .coolingDown: return "候选模型正在冷却，稍后重试或调整模型池。"
         case .busy: return "网关并发已满，请稍后重试。"
         case .queueFull: return "网关等待队列已满，请稍后重试。"
@@ -202,6 +244,8 @@ struct GatewayRequirements: Sendable {
     var json: Bool
     var context: Int
     var output: Int
+    var media = Set<GatewayMediaCapability>()
+    var nativeEndpoint = false
 
     /// Receives the normalized Chat body, so every supported protocol uses the
     /// same capability filter. Image bytes never masquerade as text tokens.
@@ -216,6 +260,13 @@ struct GatewayRequirements: Sendable {
         json = chat["response_format"] != nil
         guard let messages = chat["messages"] as? [[String: Any]], !messages.isEmpty else { throw GatewayFailure.invalidRequest }
         var bytes = 0
+        var mediaContext = 0
+        if let modalities = chat["modalities"] {
+            guard let values = modalities as? [String], !values.isEmpty,
+                  values.allSatisfy({ ["text", "audio", "image"].contains($0) }) else { throw GatewayFailure.invalidRequest }
+            if values.contains("audio") { media.insert(.audioOutput) }
+            if values.contains("image") { media.insert(.imageOutput) }
+        }
         for message in messages {
             if message["tool_calls"] != nil || message["role"] as? String == "tool" {
                 tools = true
@@ -225,8 +276,25 @@ struct GatewayRequirements: Sendable {
             else if let parts = message["content"] as? [[String: Any]] {
                 for part in parts {
                     switch part["type"] as? String {
-                    case "text": bytes += (part["text"] as? String ?? "").utf8.count
-                    case "image_url": images = true
+                    case "text":
+                        guard let text = part["text"] as? String else { throw GatewayFailure.invalidRequest }
+                        bytes += text.utf8.count
+                    case "image_url":
+                        try GatewayMediaValidation.resource((part["image_url"] as? [String: Any])?["url"], kind: "image")
+                        images = true; mediaContext += 4096
+                    case "input_audio":
+                        guard let audio = part["input_audio"] as? [String: Any],
+                              let format = audio["format"] as? String,
+                              GatewayMediaValidation.audioFormats.contains(format) else { throw GatewayFailure.invalidRequest }
+                        try GatewayMediaValidation.base64(audio["data"])
+                        media.insert(.audioInput); mediaContext += 8192
+                    case "video_url":
+                        try GatewayMediaValidation.resource((part["video_url"] as? [String: Any])?["url"], kind: "video")
+                        media.insert(.videoInput); mediaContext += 16384
+                    case "file":
+                        guard let file = part["file"] as? [String: Any], file["file_id"] == nil else { throw GatewayFailure.invalidRequest }
+                        try GatewayMediaValidation.resource(file["file_data"], kind: "pdf")
+                        media.insert(.fileInput); mediaContext += 16384
                     default: throw GatewayFailure.invalidRequest
                     }
                 }
@@ -235,20 +303,66 @@ struct GatewayRequirements: Sendable {
         if let declarations = chat["tools"] { bytes += (try JSONSerialization.data(withJSONObject: declarations)).count }
         output = chat["max_completion_tokens"] as? Int ?? chat["max_tokens"] as? Int ?? 4096
         guard output > 0, output <= 200_000, bytes <= 16 * 1024 * 1024 else { throw GatewayFailure.invalidRequest }
-        context = bytes / 2 + output + 1024 + (images ? 4096 : 0)
-        routing = GatewayTaskRouter.analyze(messages: messages, tools: tools, images: images, override: override)
+        context = bytes / 2 + output + 1024 + mediaContext
+        routing = GatewayTaskRouter.analyze(messages: messages, tools: tools, images: images || media.contains(.videoInput), override: override)
     }
 
     func accepts(_ member: FreeModelPool.Member, difficulty selected: GatewayTaskDifficulty? = nil) -> Bool {
-        member.difficulties.contains(selected ?? difficulty) && (!tools || member.supportsTools) && (!images || member.supportsImages)
-            && (!json || member.supportsJSON) && context <= member.contextLength
+        (nativeEndpoint || member.supportsChat) && member.difficulties.contains(selected ?? difficulty) && (!tools || member.supportsTools) && (!images || member.supportsImages)
+            && (!json || member.supportsJSON) && media.isSubset(of: member.mediaCapabilities ?? []) && context <= member.contextLength
+    }
+}
+
+/// Validate without decoding/copying large attachments or fetching remote URLs.
+enum GatewayMediaValidation {
+    static let audioFormats: Set<String> = ["wav", "mp3", "aiff", "aac", "ogg", "flac", "m4a", "pcm16", "pcm24", "opus"]
+    static let maxEncodedBytes = 16 * 1024 * 1024
+
+    static func base64(_ value: Any?) throws {
+        guard let text = value as? String else { throw GatewayFailure.invalidRequest }
+        try checkBase64(text[...])
+    }
+    private static func checkBase64(_ text: Substring) throws {
+        let bytes = text.utf8
+        guard !bytes.isEmpty, bytes.count <= maxEncodedBytes, bytes.count % 4 == 0 else { throw GatewayFailure.invalidRequest }
+        var padding = 0
+        for byte in bytes {
+            if byte == 61 { padding += 1; guard padding <= 2 else { throw GatewayFailure.invalidRequest } }
+            else {
+                guard padding == 0, (65...90).contains(byte) || (97...122).contains(byte) || (48...57).contains(byte) || byte == 43 || byte == 47 else {
+                    throw GatewayFailure.invalidRequest
+                }
+            }
+        }
+    }
+    static func resource(_ value: Any?, kind: String) throws {
+        guard let text = value as? String, !text.isEmpty else { throw GatewayFailure.invalidRequest }
+        if text.hasPrefix("data:") {
+            guard let comma = text.prefix(100).firstIndex(of: ",") else { throw GatewayFailure.invalidRequest }
+            let header = String(text[..<comma]).lowercased()
+            let types: [String]
+            switch kind {
+            case "image": types = ["image/png", "image/jpeg", "image/webp", "image/gif"]
+            case "video": types = ["video/mp4", "video/mpeg", "video/mov", "video/quicktime", "video/webm"]
+            default: types = ["application/pdf"]
+            }
+            guard types.contains(where: { header == "data:\($0);base64" }) else { throw GatewayFailure.invalidRequest }
+            try checkBase64(text[text.index(after: comma)...])
+        } else {
+            guard text.utf8.count <= 8192, let url = URLComponents(string: text), url.scheme?.lowercased() == "https",
+                  let host = url.host?.lowercased(), !host.isEmpty, url.user == nil, url.password == nil, url.fragment == nil,
+                  !["localhost", "[::1]", "::1", "0.0.0.0"].contains(host), !host.hasSuffix(".local"),
+                  !host.hasPrefix("127."), !host.hasPrefix("10."), !host.hasPrefix("192.168."), !host.hasPrefix("169.254.") else {
+                throw GatewayFailure.invalidRequest
+            }
+        }
     }
 }
 
 /// Pools saved before task tiers apply to every tier until the user narrows them.
 extension FreeModelPool.Member {
     private enum CodingKeys: String, CodingKey {
-        case providerID, model, name, enabled, contextLength, supportsTools, supportsImages, supportsJSON, discovered, difficulties
+        case providerID, model, name, enabled, contextLength, supportsTools, supportsImages, supportsJSON, discovered, difficulties, mediaCapabilities, supportsChat
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -261,7 +375,9 @@ extension FreeModelPool.Member {
                   supportsImages: try container.decode(Bool.self, forKey: .supportsImages),
                   supportsJSON: try container.decode(Bool.self, forKey: .supportsJSON),
                   discovered: try container.decodeIfPresent(Bool.self, forKey: .discovered) ?? false,
-                  difficulties: try container.decodeIfPresent([GatewayTaskDifficulty].self, forKey: .difficulties) ?? GatewayTaskDifficulty.allCases)
+                  difficulties: try container.decodeIfPresent([GatewayTaskDifficulty].self, forKey: .difficulties) ?? GatewayTaskDifficulty.allCases,
+                  mediaCapabilities: try container.decodeIfPresent(Set<GatewayMediaCapability>.self, forKey: .mediaCapabilities),
+                  supportsChat: try container.decodeIfPresent(Bool.self, forKey: .supportsChat) ?? true)
     }
 }
 

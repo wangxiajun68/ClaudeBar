@@ -54,11 +54,17 @@ struct GatewayCapabilities: View {
     var images: Bool
     var json: Bool
     var text = false
+    var media: Set<GatewayMediaCapability> = []
     var body: some View {
         HStack(spacing: 8) {
             capability("wrench.and.screwdriver", "工具", enabled: tools)
             capability("photo", "图片", enabled: images)
             capability("curlybraces", "JSON", enabled: json)
+            if !media.isEmpty {
+                AppGlyph(name: "square.stack.3d.up", size: 12)
+                    .help(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
+                    .accessibilityLabel(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
+            }
         }
     }
     private func capability(_ icon: String, _ title: String, enabled: Bool) -> some View {
@@ -76,6 +82,18 @@ struct GatewayCapabilities: View {
         .foregroundStyle(Theme.textPrimary.opacity(0.72))
         .help("\(title)：\(enabled ? "支持" : "不支持")")
         .accessibilityLabel("\(title)\(enabled ? "支持" : "不支持")")
+    }
+}
+
+struct GatewayMediaControls: View {
+    @Binding var selection: Set<GatewayMediaCapability>
+    var body: some View {
+        ForEach(GatewayMediaCapability.allCases, id: \.self) { capability in
+            SettingsDivider()
+            SettingsToggleRow(title: capability.title, isOn: Binding(
+                get: { selection.contains(capability) },
+                set: { if $0 { selection.insert(capability) } else { selection.remove(capability) } }))
+        }
     }
 }
 

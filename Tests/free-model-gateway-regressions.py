@@ -77,6 +77,67 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         try await Task.sleep(for:.milliseconds(30)); precondition(!outputDeadline.timedOut)
         try await Task.sleep(for:.milliseconds(100)); precondition(outputDeadline.timedOut); outputDeadline.stop()
         print("PASS: bounded multi-line/CRLF/BOM SSE, Retry-After dates, first-output and total deadlines")
+        let audioPart: [String:Any] = ["type":"input_audio","input_audio":["data":"UklGRg==","format":"wav"]]
+        let videoPart: [String:Any] = ["type":"video_url","video_url":["url":"https://media.example/clip.mp4"]]
+        let pdfPart: [String:Any] = ["type":"file","file":["filename":"report.pdf","file_data":"data:application/pdf;base64,JVBERg=="]]
+        let multimodal: [String:Any] = ["messages":[["role":"user","content":[audioPart,videoPart,pdfPart]]],"max_tokens":1]
+        let mediaRequirements = try GatewayRequirements(chat:multimodal)
+        precondition(mediaRequirements.media == [.audioInput,.videoInput,.fileInput])
+        precondition(mediaRequirements.context == 1 + 1024 + 8192 + 16384 + 16384)
+        var mediaMember = FreeModelPool.Member(providerID:UUID(),model:"multimodal",name:"Multimodal",contextLength:128000,
+            supportsTools:true,supportsImages:true,supportsJSON:true)
+        precondition(!mediaRequirements.accepts(mediaMember))
+        mediaMember.mediaCapabilities = Set(GatewayMediaCapability.allCases)
+        precondition(mediaRequirements.accepts(mediaMember))
+        mediaMember.supportsChat = false
+        precondition(!mediaRequirements.accepts(mediaMember))
+        var nativeMediaRequirements = mediaRequirements; nativeMediaRequirements.nativeEndpoint = true
+        precondition(nativeMediaRequirements.accepts(mediaMember))
+        mediaMember.supportsChat = true
+        let restoredMedia = try JSONDecoder().decode(FreeModelPool.Member.self,from:JSONEncoder().encode(mediaMember))
+        precondition(restoredMedia == mediaMember)
+        var oldMedia = try JSONSerialization.jsonObject(with:JSONEncoder().encode(mediaMember)) as! [String:Any]
+        oldMedia.removeValue(forKey:"mediaCapabilities")
+        precondition(try JSONDecoder().decode(FreeModelPool.Member.self,from:JSONSerialization.data(withJSONObject:oldMedia)).mediaCapabilities == nil)
+        for invalid in ["", "====", "ab=c", "abc", "not base64!"] {
+            do { try GatewayMediaValidation.base64(invalid); fatalError("accepted malformed base64") }
+            catch { precondition(error as? GatewayFailure == .invalidRequest) }
+        }
+        for url in ["file:///tmp/private.pdf","https://user:secret@media.example/a","http://media.example/a","https://127.0.0.1/a","data:text/html;base64,AAAA"] {
+            do { try GatewayMediaValidation.resource(url,kind:"pdf"); fatalError("accepted invalid resource") }
+            catch { precondition(error as? GatewayFailure == .invalidRequest) }
+        }
+        let mediaResponses: [String:Any] = ["input":[["role":"user","content":[audioPart,
+            ["type":"input_video","video_url":"https://media.example/clip.mp4"],
+            ["type":"input_file","file_url":"https://media.example/report.pdf"]]]]]
+        let mediaAdapted = try GatewayWireAdapter.request(mediaResponses,path:"/v1/responses")
+        precondition(try GatewayRequirements(chat:mediaAdapted.chat).media == [.audioInput,.videoInput,.fileInput])
+        let mediaMessages: [String:Any] = ["max_tokens":100,"messages":[["role":"user","content":[
+            ["type":"document","source":["type":"base64","media_type":"application/pdf","data":"JVBERg=="]]]]]]
+        precondition(try GatewayRequirements(chat:GatewayWireAdapter.request(mediaMessages,path:"/v1/messages").chat).media == [.fileInput])
+        let mediaCandidate = FreeModelGateway.Candidate(member:mediaMember,endpoint:.init(id:mediaMember.providerID,name:"Fixture",baseURL:"https://openrouter.ai/api/v1",apiKey:"fixture"))
+        let safeMedia = FreeModelGateway.outbound(multimodal,candidate:mediaCandidate,stream:false)
+        precondition(((safeMedia["plugins"] as? [[String:Any]])?.first?["pdf"] as? [String:String])?["engine"] == "native")
+        var audioOutput = multimodal; audioOutput["modalities"] = ["text","audio"]; audioOutput["audio"] = ["voice":"alloy","format":"pcm16"]
+        precondition(try GatewayRequirements(chat:GatewayWireAdapter.request(audioOutput,path:"/v1/chat/completions").chat).media.contains(.audioOutput))
+        do { _ = try GatewayWireAdapter.request(audioOutput,path:"/v1/responses"); fatalError("lossy media output conversion") }
+        catch { precondition(error as? GatewayFailure == .invalidRequest) }
+        let mediaStarted = ContinuousClock.now
+        try GatewayMediaValidation.base64(String(repeating:"AAAA",count:2*1024*1024))
+        print("MEASURE: 8 MiB attachment syntax validation: \(mediaStarted.duration(to:.now))")
+        print("PASS: multimodal capabilities, old-file migration, lossless Responses media, Anthropic PDF, native-only PDF pricing and bounded attachment validation")
+        for operation in GatewayWireAdapter.Operation.allCases {
+            precondition(GatewayWireAdapter.supports(path:"/v1/"+operation.rawValue))
+            precondition(GatewayWireAdapter.supports(path:"/"+operation.rawValue))
+            precondition(!GatewayWireAdapter.supports(path:"/v1/"+operation.rawValue+"/unexpected"))
+        }
+        var nativeCatalogRow: [String:Any] = ["id":"fixture/multimodal","name":"Media","context_length":128000,
+            "pricing":["prompt":"0","completion":"0","image":"0","audio":"0"],
+            "architecture":["input_modalities":["text","image","audio","video","file"],"output_modalities":["text","audio","image"]]]
+        let nativeCatalog = try FreeModelPool.parseCatalog(JSONSerialization.data(withJSONObject:["data":[nativeCatalogRow]]))
+        precondition(nativeCatalog[0].mediaCapabilities == [.audioInput,.videoInput,.fileInput,.audioOutput,.imageOutput])
+        nativeCatalogRow["pricing"] = ["prompt":"0","completion":"0","audio":"0.1"]
+        precondition(try FreeModelPool.parseCatalog(JSONSerialization.data(withJSONObject:["data":[nativeCatalogRow]])).isEmpty)
         let price: [String:Any] = ["prompt":"0", "completion":"0", "request":"0"]
         let free: [String:Any] = ["id":"fixture/free", "name":"Fixture", "context_length":32000,
             "pricing":price, "architecture":["input_modalities":["text","image"],"output_modalities":["text"]],
@@ -211,7 +272,7 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         pool.enabled = false; await gateway.configure(pool,endpoints:[endpoint])
         precondition(await gateway.handles(model:"auto",thirdParty:true))
         await expect(.disabled) { _ = try await gateway.begin(requirements) }
-        let image = try GatewayRequirements(chat:["messages":[["role":"user","content":[["type":"image_url","image_url":["url":"data:image/png;base64,fixture"]]]]],"max_tokens":1])
+        let image = try GatewayRequirements(chat:["messages":[["role":"user","content":[["type":"image_url","image_url":["url":"data:image/png;base64,Zml4dHVyZQ=="]]]]],"max_tokens":1])
         var plain = pool.members[0]; plain.supportsImages = false
         precondition(!image.accepts(plain))
         let history = try GatewayRequirements(chat:["messages":[["role":"assistant","tool_calls":[["id":"call","type":"function","function":["name":"read","arguments":"{}"]]]]],"max_tokens":1])
@@ -576,7 +637,7 @@ func cancelled<T>(_ task: Task<T, Error>) async {
 
         var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(pool)) as! [String:Any]
         for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds",
-                    "providerRequestsPerMinute","providerWeights","firstOutputTimeoutSeconds","retryBudgetSeconds","requestTimeoutSeconds"] { legacy.removeValue(forKey:key) }
+                    "providerRequestsPerMinute","providerWeights","firstOutputTimeoutSeconds","streamIdleTimeoutSeconds","retryBudgetSeconds","requestTimeoutSeconds"] { legacy.removeValue(forKey:key) }
         let loaded = try JSONDecoder().decode(FreeModelPool.self,from:JSONSerialization.data(withJSONObject:legacy))
         check(loaded.maxConcurrent == pool.maxConcurrent && loaded.defaultProviderConcurrent == 2 && loaded.maxQueued == 32 && loaded.queueTimeoutSeconds == 30)
         check(loaded.members == pool.members && loaded.providerConcurrent.isEmpty && loaded.providerQueueCapacity == 8)
@@ -628,6 +689,20 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         let healed = try await behindProbe.value
         await recovery.finish(halfOpen); await recovery.finish(healed)
         print("PASS: weighted distribution, provider RPM recovery, single half-open probe, timeout defaults and limits")
+        var vectors = pool; vectors.strategy = .balanced; vectors.requestsPerMinute = 6000
+        vectors.members = [member(a,"vector-a",[.medium]),member(b,"vector-b",[.medium])]
+        for i in vectors.members.indices { vectors.members[i].mediaCapabilities = [.embeddings] }
+        let vectorGateway = await configured(vectors)
+        var vectorRequirements = medium; vectorRequirements.media = [.embeddings]; vectorRequirements.nativeEndpoint = true
+        let vectorOne = try await vectorGateway.begin(vectorRequirements,now:rateNow)
+        await vectorGateway.finish(vectorOne)
+        let vectorTwo = try await vectorGateway.begin(vectorRequirements,now:rateNow)
+        check(vectorOne.candidates.count == 1 && vectorTwo.candidates[0].member.model == "vector-a","embedding space must not rotate")
+        try await vectorGateway.started(vectorTwo.candidates[0],plan:vectorTwo,now:rateNow)
+        await vectorGateway.report(vectorTwo.candidates[0],plan:vectorTwo,status:429,latency:0.1,retryAfter:60,now:rateNow)
+        await vectorGateway.finish(vectorTwo)
+        await expect(.coolingDown) { _ = try await vectorGateway.begin(vectorRequirements,now:rateNow) }
+        print("PASS: embeddings never fail over or balance into a different vector space")
         var stressPool = weighted
         stressPool.maxConcurrent = 64; stressPool.defaultProviderConcurrent = 64
         stressPool.maxQueued = 1024; stressPool.providerQueueCapacity = 1024
@@ -825,7 +900,7 @@ import Foundation
 import Network
 import Security
 import Darwin
-enum ProxyLogKind { case anthropic, openaiChat, openaiResponses }
+enum ProxyLogKind { case anthropic, openaiChat, openaiResponses, other }
 enum ProxyLogSource { case codex }
 enum CaptureKind { case openaiChat }
 enum CaptureState { case done, error, aborted }
@@ -882,8 +957,10 @@ enum CodexProxyState {
         let firstID = UUID(), secondID = UUID()
         var pool = FreeModelPool(); pool.enabled = true; pool.strategy = .priority; pool.requestsPerMinute = 60
         pool.firstOutputTimeoutSeconds = 1
+        if settings["totalTimeout"] as? Bool == true { pool.requestTimeoutSeconds = 2 }
         pool.members = [FreeModelPool.Member(providerID:firstID,model:"first",name:"First",contextLength:128000,supportsTools:true,supportsImages:false,supportsJSON:true),
                         FreeModelPool.Member(providerID:secondID,model:"second",name:"Second",contextLength:128000,supportsTools:true,supportsImages:false,supportsJSON:true)]
+        if settings["media"] as? Bool == true { pool.members[1].supportsImages = true; pool.members[1].mediaCapabilities = Set(GatewayMediaCapability.allCases) }
         if let tiers = settings["tiers"] as? [String] {
             for index in pool.members.indices { pool.members[index].difficulties = [GatewayTaskDifficulty(rawValue:tiers[index])!] }
         }
@@ -940,9 +1017,34 @@ class Upstream(BaseHTTPRequestHandler):
             code = int(self.mode)
             self.send_response(code); self.send_header('Retry-After', '60'); self.end_headers()
             self.wfile.write(b'{"error":"never forward fixture credential errors"}'); return
+        if self.mode.startswith('media-native-'):
+            assert 'max_tokens' not in body and 'stream' not in body and 'messages' not in body
+            if self.path.endswith('/audio/speech'):
+                if self.mode.endswith('-wrong-type'):
+                    self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers()
+                    self.wfile.write(b'<html>not audio</html>'); return
+                if self.mode.endswith('-truncated'):
+                    self.send_response(200); self.send_header('Content-Type','audio/mpeg'); self.send_header('Content-Length','999999'); self.end_headers()
+                    self.wfile.write(b'ID3'+b'x'*32765); self.wfile.flush(); return
+                self.send_response(200); self.send_header('Content-Type','audio/mpeg'); self.end_headers()
+                for _ in range(8):
+                    self.wfile.write(b'ID3'+b'x'*32765); self.wfile.flush()
+                return
+            if self.path.endswith('/images/generations'):
+                result = {'created':123,'data':[{'b64_json':'aW1hZ2U='}]}
+            elif self.path.endswith('/embeddings'):
+                result = {'object':'list','data':[{'object':'embedding','index':0,'embedding':[0.1,0.2]}],'usage':{'prompt_tokens':2,'total_tokens':2}}
+            elif self.path.endswith('/rerank'):
+                result = {'results':[{'index':0,'relevance_score':0.9}]}
+            else:
+                raise AssertionError(self.path)
+            self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()
+            self.wfile.write(json.dumps(result).encode()); return
         if not body.get('stream'):
             result = {'id': 'chat-fixture', 'model': body['model'], 'choices': [{'message': {'role':'assistant','content':'fixture answer'}, 'finish_reason':'stop'}],
                       'usage': {'prompt_tokens':10,'completion_tokens':2,'total_tokens':12}}
+            if self.mode == 'media-image-output':
+                result['choices'][0]['message']['images'] = [{'type':'image_url','image_url':{'url':'data:image/png;base64,aW1hZ2U='}}]
             data = json.dumps(result).encode()
             self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(data); return
         if self.mode == 'preheaders':
@@ -970,7 +1072,15 @@ class Upstream(BaseHTTPRequestHandler):
             return
         if first and self.mode == 'sse-error':
             self.wfile.write(b'data: {"error":{"code":429,"message":"fixture unavailable"}}\n\n'); return
+        if self.mode == 'media-audio-output':
+            self.wfile.write(b'data: {"choices":[{"index":0,"delta":{"audio":{"data":"UklGRg==","transcript":"fixture audio"}}}]}\n\n')
+            self.wfile.write(b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"fixture answer"}}]}\n\n')
+        if self.mode == 'total-timeout':
+            self.wfile.flush()
+            for _ in range(30):
+                self.wfile.write(b': heartbeat\n\n'); self.wfile.flush(); time.sleep(.1)
+            return
         if self.mode == 'slow':
             self.wfile.flush(); time.sleep(0.6)
         if self.mode == 'queue':
@@ -1058,10 +1168,21 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
         case = folder/mode; case.mkdir(exist_ok=True)
         process = subprocess.Popen([str(server_binary),str(case)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
-            process.stdin.write(json.dumps({'base':f'http://127.0.0.1:{upstream.server_port}', 'tiers':tiers})); process.stdin.close()
+            process.stdin.write(json.dumps({'base':f'http://127.0.0.1:{upstream.server_port}', 'tiers':tiers,
+                                           'media':mode.startswith('media-'),'totalTimeout':mode == 'total-timeout'})); process.stdin.close()
             line = process.stdout.readline().strip()
             assert line.startswith('READY '), (line, process.stderr.read())
             port = int(line.split()[1]); token = (case/'proxy-token').read_text()
+            if mode == 'responses':
+                def raw_request(headers):
+                    with socket.create_connection(('127.0.0.1',port),timeout=2) as client:
+                        client.sendall(('POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n'+headers+'\r\n').encode())
+                        return client.recv(4096)
+                assert b'401' in raw_request('Content-Length: 64000000\r\n'), 'unauthorized body must not be awaited'
+                for header in ['Content-Length: 1\r\nContent-Length: 2\r\n','Content-Length: +1\r\n',
+                               'Content-Length: no\r\n','Transfer-Encoding: chunked\r\n']:
+                    assert not raw_request('Authorization: Bearer '+token+'\r\n'+header)
+                assert not Upstream.calls
             def send(auth):
                 connection = http.client.HTTPConnection('127.0.0.1',port,timeout=20)
                 headers = {'Content-Type':'application/json','User-Agent':'fixture-third-party'}
@@ -1277,6 +1398,45 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
             assert {k.lower():v for k,v in calls[0][1].items()}['x-request-id'] == {k.lower():v for k,v in calls[1][1].items()}['x-request-id']
         data,calls = run_case('multiline','/v1/chat/completions',streaming)
         assert b'fixture answer' in data and len(calls) == 1
+        data,calls = run_case('total-timeout','/v1/chat/completions',streaming)
+        assert len(calls) == 1 and b'fixture answer' in data and b'[DONE]' not in data
+        media_parts = [
+            {'type':'input_audio','input_audio':{'data':'UklGRg==','format':'wav'}},
+            {'type':'video_url','video_url':{'url':'https://media.example/clip.mp4'}},
+            {'type':'file','file':{'filename':'report.pdf','file_data':'data:application/pdf;base64,JVBERg=='}},
+            {'type':'image_url','image_url':{'url':'https://media.example/photo.png'}}]
+        data,calls = run_case('media-chat','/v1/chat/completions',dict(chat,messages=[{'role':'user','content':media_parts}]))
+        assert len(calls) == 1 and calls[0][2]['model'] == 'second' and calls[0][2]['messages'][0]['content'] == media_parts
+        response_parts = [media_parts[0],{'type':'input_video','video_url':'https://media.example/clip.mp4'},
+                          {'type':'input_file','file_data':'data:application/pdf;base64,JVBERg==','filename':'report.pdf'},
+                          {'type':'input_image','image_url':'https://media.example/photo.png'}]
+        data,calls = run_case('media-responses','/v1/responses',dict(response,input=[{'role':'user','content':response_parts}]))
+        assert len(calls) == 1 and calls[0][2]['messages'][0]['content'] == media_parts
+        document = {'type':'document','source':{'type':'base64','media_type':'application/pdf','data':'JVBERg=='}}
+        data,calls = run_case('media-anthropic','/v1/messages',dict(message,messages=[{'role':'user','content':[document]}]))
+        assert len(calls) == 1 and calls[0][2]['messages'][0]['content'][0]['file']['file_data'] == 'data:application/pdf;base64,JVBERg=='
+        data,calls = run_case('media-audio-output','/v1/chat/completions',dict(chat,stream=True,modalities=['text','audio'],audio={'voice':'alloy','format':'pcm16'}))
+        assert len(calls) == 1 and calls[0][2]['model'] == 'second' and b'UklGRg==' in data and b'fixture audio' in data and b'[DONE]' in data
+        data,calls = run_case('media-image-output','/v1/chat/completions',dict(chat,modalities=['text','image']))
+        assert len(calls) == 1 and json.loads(data)['choices'][0]['message']['images'][0]['image_url']['url'].endswith('aW1hZ2U=')
+        print('PASS: real multimodal routing and byte-preserving Chat/Responses/Anthropic PDF forwarding, image/audio output, strict ingress and total stream timeout')
+        for operation,body,key in [
+            ('images/generations',{'prompt':'a geometric test image'},'data'),
+            ('audio/speech',{'input':'Hello','voice':'alloy','response_format':'mp3'},None),
+            ('embeddings',{'input':['hello'],'encoding_format':'float'},'data'),
+            ('rerank',{'query':'hello','documents':['hello','bye']},'results')]:
+            body['model'] = 'auto'
+            data,calls = run_case('media-native-'+operation.replace('/','-'),'/v1/'+operation,body)
+            assert len(calls) == 1 and calls[0][0] == '/second/v1/'+operation
+            if key: assert json.loads(data)[key]
+            else: assert data == (b'ID3'+b'x'*32765)*8
+        print('PASS: native image generation, streamed binary speech, embeddings and rerank share admission and route only to declared-capability models')
+        speech = {'model':'auto','input':'Hello','voice':'alloy'}
+        data,calls = run_case('media-native-speech-wrong-type','/v1/audio/speech',speech,502)
+        assert len(calls) == 1 and b'<html>' not in data
+        data,calls = run_case('media-native-speech-truncated','/v1/audio/speech',speech)
+        assert len(calls) == 1 and data.startswith(b'ID3') and b'gateway_error' not in data and b'data:' not in data
+        print('PASS: binary speech rejects wrong content types and never retries or appends SSE after partial audio')
         data,calls = run_case('sse-error','/v1/chat/completions',streaming)
         assert b'fixture answer' in data and b'[DONE]' in data and len(calls) == 2
         data,calls = run_case('incomplete','/v1/chat/completions',streaming)

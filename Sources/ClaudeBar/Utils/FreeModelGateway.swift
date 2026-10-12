@@ -230,7 +230,8 @@ actor FreeModelGateway {
                 guard testingMemberID == nil || member.id == testingMemberID,
                       member.enabled, let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return nil }
                 if FreeModelPool.isOpenRouter(endpoint.baseURL) {
-                    guard let discovered = pool.discoveredAt, now.timeIntervalSince(discovered) < 48 * 3600,
+                    guard !requirements.nativeEndpoint,
+                          let discovered = pool.discoveredAt, now.timeIntervalSince(discovered) < 48 * 3600,
                           let catalog = catalogByID[member.model],
                           requirements.output <= (catalog.maxOutput ?? Int.max) else { return nil }
                     var current = catalog.member(providerID: member.providerID)
@@ -252,6 +253,11 @@ actor FreeModelGateway {
                 throw GatewayFailure.noCompatibleModel
             }
             throw GatewayFailure.emptyPool
+        }
+        // Embeddings from different models do not share a vector space, even
+        // when their dimensions match. Pin before health/weight ordering.
+        if requirements.nativeEndpoint, requirements.media.contains(.embeddings), let model = free.first?.1.member.model {
+            free.removeAll { $0.1.member.model != model }
         }
         let ready = free.filter { _, candidate in
             (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
@@ -687,6 +693,10 @@ actor FreeModelGateway {
             body.removeValue(forKey: "stream_options")
             body["provider"] = ["max_price": ["prompt": 0, "completion": 0, "request": 0, "image": 0, "audio": 0],
                                 "require_parameters": true]
+            let hasFiles = (body["messages"] as? [[String: Any]] ?? []).contains {
+                ($0["content"] as? [[String: Any]] ?? []).contains { $0["type"] as? String == "file" }
+            }
+            if hasFiles { body["plugins"] = [["id": "file-parser", "pdf": ["engine": "native"]]] }
         }
         return body
     }

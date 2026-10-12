@@ -25,7 +25,7 @@ struct GatewayCatalogCard: View, Equatable {
                         .font(Theme.Font.chromeEmph).monospacedDigit().foregroundStyle(Theme.textPrimary)
                     Text("上下文").font(Theme.Font.micro).foregroundStyle(Theme.textPrimary.opacity(0.72))
                 }.help("\(model.contextLength.formatted()) tokens 上下文")
-                GatewayCapabilities(tools: model.supportsTools, images: model.supportsImages, json: model.supportsJSON)
+                GatewayCapabilities(tools: model.supportsTools, images: model.supportsImages, json: model.supportsJSON, media: model.mediaCapabilities ?? [])
                 Spacer(minLength: 0)
                 if joined {
                     Label("已在池内", systemImage: "checkmark.circle")

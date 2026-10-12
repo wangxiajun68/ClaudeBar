@@ -267,6 +267,8 @@ private final class VisibleFixtureWindow: NSWindow {
             ("connections-dark",350.0,410.0,true,1,false,false),
             ("editor",600.0,680.0,false,1,false,false),
             ("editor-dark",600.0,680.0,true,1,false,false),
+            ("capabilities",520.0,840.0,false,1,false,false),
+            ("capabilities-dark",520.0,840.0,true,1,false,false),
             ("settings",520.0,1300.0,false,1,false,false),
             ("settings-dark",520.0,1300.0,true,1,false,false),
             ("header",900.0,240.0,false,0,false,false),
@@ -332,10 +334,15 @@ private final class VisibleFixtureWindow: NSWindow {
             PreviewCounts.rows = 0
             let view = VStack(spacing:12) {
                 Text("模型池布局预览 · 示例数据").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                if !PreviewScreen.editor && !PreviewScreen.settings && !PreviewScreen.admission {
+                if !PreviewScreen.editor && !PreviewScreen.settings && !PreviewScreen.admission && !name.hasPrefix("capabilities") {
                     ProviderHeadingPreview(surfaceRaw:name.hasPrefix("header") ? "providers" : "gateway")
                 }
-                if !name.hasPrefix("header") { FreeModelGatewayView(onAddOpenRouter:{}) }
+                if name.hasPrefix("capabilities") {
+                    SettingsGroup(title:"模型能力") {
+                        SettingsToggleRow(title:"支持 Chat Completions",isOn:.constant(true))
+                        GatewayMediaControls(selection:.constant(Set(GatewayMediaCapability.allCases)))
+                    }.padding(16)
+                } else if !name.hasPrefix("header") { FreeModelGatewayView(onAddOpenRouter:{}) }
             }.padding(.top,16).background(Theme.bgPrimary)
              .environment(\.colorScheme,dark ? .dark : .light)
 

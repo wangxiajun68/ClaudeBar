@@ -27,6 +27,8 @@ struct GatewayProviderImportView: View {
     @State private var tools = false
     @State private var images = false
     @State private var json = false
+    @State private var media = Set<GatewayMediaCapability>()
+    @State private var supportsChat = true
     @State private var tiers = GatewayTaskDifficulty.allCases
     @State private var submitted = false
     @State private var importError: String?
@@ -119,7 +121,7 @@ struct GatewayProviderImportView: View {
                     Spacer(minLength: 8)
                     ActionButton("档位与能力", symbol: "slider.horizontal.3") { showSettings = true }
                         .disabled(!gateway.canEdit || submitted)
-                        .popover(isPresented: $showSettings) { importSettings.padding(16).frame(width: 520) }
+                        .popover(isPresented: $showSettings) { ScrollView { importSettings.padding(16) }.frame(width: 520, height: 540) }
                     ActionButton(tone: .accent, tint: Theme.Ink.cursor, emphasis: .primary, perform: submit) {
                         AppGlyph(name: "plus", size: 12).foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
                         Text("加入 Auto 池").foregroundStyle(Theme.isDark ? Theme.fieldWell : .white)
@@ -151,6 +153,9 @@ struct GatewayProviderImportView: View {
             SettingsToggleRow(title: "支持图片输入", isOn: $images)
             SettingsDivider()
             SettingsToggleRow(title: "支持结构化 JSON", isOn: $json)
+            SettingsDivider()
+            SettingsToggleRow(title: "支持 Chat Completions", isOn: $supportsChat)
+            GatewayMediaControls(selection: $media)
 
         }.disabled(!gateway.canEdit || submitted)
     }
@@ -225,7 +230,7 @@ struct GatewayProviderImportView: View {
         let members = selectedEntries.map { entry in
             FreeModelPool.Member(providerID: entry.providerID, model: entry.model, name: entry.model,
                 contextLength: Int(entry.context) ?? 0, supportsTools: tools, supportsImages: images,
-                supportsJSON: json, difficulties: tiers)
+                supportsJSON: json, difficulties: tiers, mediaCapabilities: media, supportsChat: supportsChat)
         }
         submitted = true; importError = nil
         gateway.importModels(members, confirmedFree: confirmedFree) { succeeded in
