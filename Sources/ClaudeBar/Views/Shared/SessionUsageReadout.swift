@@ -27,8 +27,8 @@ struct SessionUsageReadout: View {
     var body: some View {
         let usage = summary
         let shown = usage.map { ModelPricing.present($0.cost.cost, display: costDisplay, rate: fx.effectiveRate) }
-        return HStack(alignment: .firstTextBaseline, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+        return HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("Token")
                     .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                     .fixedSize()
@@ -37,29 +37,32 @@ struct SessionUsageReadout: View {
                     .font(usage == nil ? Theme.Font.caption : .system(size: 24, weight: .bold, design: .rounded))
                     .foregroundColor(usage == nil ? Theme.textSecondary : Theme.Ink.claude)
                     .monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .frame(height: 29, alignment: .leading)
             }
-            Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: 3) {
                 Label("花费", systemImage: "creditcard")
                     .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                     .fixedSize()
-                VStack(alignment: .trailing, spacing: 2) {
-                    RollingNumberText(costLabel(usage, shown))
-                        .font(shown?.primary == nil ? Theme.Font.caption : .system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundColor(shown?.primary == nil ? Theme.textSecondary : Theme.textPrimary)
-                        .monospacedDigit()
-                    if let usage, let shown {
-                        let parts = shown.secondary.map { "+ " + ModelPricing.format($0.amount, currency: $0.currency) }
-                        let caveat = [parts, usage.cost.unpricedModels > 0 && shown.primary != nil ? "部分未计价" : nil]
-                            .compactMap { $0 }.joined(separator: " · ")
-                        if !caveat.isEmpty {
-                            Text(caveat).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                        }
+                RollingNumberText(costLabel(usage, shown))
+                    .font(shown?.primary == nil ? Theme.Font.caption : .system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(shown?.primary == nil ? Theme.textSecondary : Theme.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .frame(height: 29, alignment: .trailing)
+                if let usage, let shown {
+                    let parts = shown.secondary.map { "+ " + ModelPricing.format($0.amount, currency: $0.currency) }
+                    let caveat = [parts, usage.cost.unpricedModels > 0 && shown.primary != nil ? "部分未计价" : nil]
+                        .compactMap { $0 }.joined(separator: " · ")
+                    if !caveat.isEmpty {
+                        Text(caveat).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                            .lineLimit(1).minimumScaleFactor(0.5)
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .lineLimit(1).minimumScaleFactor(0.85)
         .help(detail(usage, shown))
         .accessibilityElement(children: .combine)
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }

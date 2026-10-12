@@ -185,7 +185,7 @@ source += r'''
             SessionInfo(pid: 102, sessionId: UUID().uuidString, cwd: "/Projects/Analytics", startedAt: now,
                 name: "analytics", status: .idle, updatedAt: now - 4 * 3600_000, isAlive: true,
                 contextTokens: 165000, contextLimit: 200000, model: "claude-opus-4-6",
-                messageCount: 32, currentActivity: "Read · index.swift", firstPrompt: "梳理索引与查询流程")
+                messageCount: 32, currentActivity: "Read · index.swift", firstPrompt: "梳理索引与查询流程，验证超长标题在窄卡片中始终只占一行")
         ]
         let cursor = [
             CursorSessionInfo(composerId: UUID().uuidString, name: "OpenClaw session debugging",
@@ -198,11 +198,11 @@ source += r'''
         let codex = ExternalSessionInfo(kind: .codex, sessionId: UUID().uuidString,
             cwd: "/Projects/ClaudeBar", updatedAt: now - 45 * 60_000, model: "gpt-6.1-sol",
             isAlive: true, isActive: false, contextTokens: 48000, contextLimit: 256000,
-            title: "验证迁移记录和重试行为")
+            title: "验证迁移记录和重试行为，并确认长标题不会推动其他读数向下移动")
         let summaries: [SessionUsageSummary.Request: SessionUsageSummary] = [
             .init(source: .claude, sessionId: claude[0].sessionId): .init(days: ["2026-10-10": [
-                ModelUsage(model: claude[0].model, calls: 20, inputTokens: 480000,
-                           outputTokens: 38000, cacheReadTokens: 2200000, cacheCreationTokens: 90000)]]),
+                ModelUsage(model: claude[0].model, calls: 20, inputTokens: 480000000,
+                           outputTokens: 38000000, cacheReadTokens: 2200000000, cacheCreationTokens: 90000000)]]),
             .init(source: .claude, sessionId: claude[1].sessionId): .init(days: ["2026-10-10": [
                 ModelUsage(model: claude[1].model, calls: 32, inputTokens: 810000,
                            outputTokens: 64000, cacheReadTokens: 3400000, cacheCreationTokens: 120000)]]),
@@ -210,9 +210,10 @@ source += r'''
                 ModelUsage(model: codex.model, calls: 12, inputTokens: 250000,
                            outputTokens: 12000, cacheReadTokens: 180000)]])
         ]
-        for width in [900, 1440] {
+        for width in [640, 900, 1440] {
             for dark in [false, true] {
                 AppPreferences.shared.isDark = dark
+                AppPreferences.shared.tokenUnitStyle = .chinese
                 let sheet = VStack(alignment: .leading, spacing: 24) {
                     HStack {
                         PageTitle(title: "会话")

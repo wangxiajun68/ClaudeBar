@@ -415,8 +415,8 @@ private struct SessionCardHeading: View {
                     .lineLimit(1).truncationMode(.middle)
                 Text(label.title.isEmpty ? label.folder : label.title)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary).lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundColor(Theme.textPrimary).lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer(minLength: 0)
             StatusPill(label: status.label, tint: status.tint, ink: status.ink)
@@ -1088,8 +1088,8 @@ private struct ExternalSessionGridCard: View {
                         .foregroundColor(Theme.textSecondary).lineLimit(1)
                     Text(session.cardLabel.title.isEmpty ? session.cardLabel.folder : session.cardLabel.title)
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.textPrimary).lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundColor(Theme.textPrimary).lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 .help(session.cardLabel.accessibilityText)
                 Spacer(minLength: 4)
