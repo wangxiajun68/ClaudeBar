@@ -21,16 +21,24 @@ struct ClaudeQuotaCard: View {
             if !quota.windows.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(quota.windows) { window in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(window.label).font(Theme.Font.caption)
-                                Spacer()
-                                Text(window.usedText + " 已用").font(Theme.Font.body.weight(.semibold)).monospacedDigit()
+                        let remaining = min(100, max(0, 100 - window.usedPercent))
+                        let tint = remaining <= 10 ? Theme.Ink.error
+                            : remaining <= 25 ? Theme.Ink.warning : Theme.Ink.success
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(window.label).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                            HStack(spacing: 8) {
+                                OrbitGauge(progress: remaining / 100, tint: tint, lineWidth: 3, bodySize: 7)
+                                    .frame(width: 32, height: 32)
+                                Text("\(Int(remaining.rounded()))%")
+                                    .font(Theme.Font.displayMetricSmall).monospacedDigit()
+                                    .foregroundColor(Theme.textPrimary)
+                                Text("剩余").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                             }
-                            ContextBar(ratio: window.usedPercent / 100, height: 6)
-                            Text(window.remainingPhrase).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                            Text("已用 \(window.usedText)").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                             Text(window.resetClock).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                        }.accessibilityElement(children: .combine)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
