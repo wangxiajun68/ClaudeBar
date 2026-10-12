@@ -402,6 +402,10 @@ actor FreeModelGateway {
         while i < waiters.count {
             let waiter = waiters[i]
             do {
+                // The timeout task may be waiting for this actor. Never admit
+                // expired work just because a permit was released first.
+                guard waiter.deadline > now else { throw GatewayFailure.queueTimedOut }
+                guard reservations.count < pool.maxConcurrent else { i += 1; continue }
                 switch waiter.work {
                 case .request(let requirements, let testingMemberID, let continuation):
                     var plan = try prepare(requirements, requestBytes: waiter.requestBytes, now: now, testingMemberID: testingMemberID)
@@ -511,11 +515,13 @@ actor FreeModelGateway {
         }
         var loads: [UUID: ProviderLoad] = [:]
         for id in Set(pool.members.map(\.providerID)).union(reservations.values.map(\.providerID)) {
-            loads[id] = .init(active: reservations.values.filter { $0.providerID == id }.count,
-                              queued: waiters.filter { $0.providerID == id }.count,
-                              limit: pool.concurrentLimit(for: id))
+            loads[id] = .init(limit: pool.concurrentLimit(for: id))
         }
+        for reservation in reservations.values { loads[reservation.providerID]?.active += 1 }
+        var queuedBytes = 0
         let queue = waiters.map { waiter -> QueueEntry in
+            loads[waiter.providerID]?.queued += 1
+            queuedBytes += waiter.requestBytes
             let requestID: UUID
             let attempt: Int
             switch waiter.work {
@@ -525,7 +531,7 @@ actor FreeModelGateway {
             return .init(id: requestID, providerID: waiter.providerID, routing: waiter.routing,
                          enqueuedAt: waiter.enqueuedAt, deadline: waiter.deadline, attempt: attempt)
         }
-        return .init(health: displayed, active: reservations.count, requests: requestCount, queued: waiters.count, queuedBytes: waiters.reduce(0, { $0 + $1.requestBytes }),
+        return .init(health: displayed, active: reservations.count, requests: requestCount, queued: waiters.count, queuedBytes: queuedBytes,
                      providers: loads, routes: routes, flights: flights, queue: queue)
     }
     func resetHealth() { health.removeAll(); providerCooldown.removeAll(); drain(); publish() }

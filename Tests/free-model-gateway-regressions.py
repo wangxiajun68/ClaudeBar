@@ -353,6 +353,17 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         func configured(_ value: FreeModelPool) async -> FreeModelGateway {
             let g = FreeModelGateway(); await g.configure(value,endpoints:endpoints); return g
         }
+        // Actor scheduling must not let an expired waiter race its timeout
+        // task and consume a newly available permit.
+        let deadlines = await configured(pool)
+        let heldDeadline = try await deadlines.begin(low)
+        let expiredWaiter = Task { try await deadlines.begin(low, now: Date().addingTimeInterval(-2)) }
+        try await queued(deadlines,1)
+        await deadlines.finish(heldDeadline)
+        await expect(.queueTimedOut) { _ = try await expiredWaiter.value }
+        let afterDeadline = await deadlines.snapshot()
+        check(afterDeadline.active == 0 && afterDeadline.queued == 0 && afterDeadline.requests == 1,
+              "expired waiter must not debit RPM or reserve capacity")
         let g = await configured(pool)
         let first = try await g.begin(low)
         try await g.started(first.candidates[0],plan:first)
@@ -510,6 +521,7 @@ func cancelled<T>(_ task: Task<T, Error>) async {
 
         var bulk = pool; bulk.maxQueued = 128; bulk.providerQueueCapacity = 128; bulk.queueTimeoutSeconds = 10
         let burst = await configured(bulk)
+        let burstStart = ContinuousClock.now
         try await withThrowingTaskGroup(of: Void.self) { group in
             for i in 0..<40 {
                 group.addTask {
@@ -527,6 +539,7 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         check(done.active == 0 && done.queued == 0 && done.requests == 40)
         check(done.providers.values.allSatisfy { $0.active == 0 })
         check(!String(describing:done).contains("fixture-a"))
+        print("MEASURE: 40 concurrent synthetic requests, including 2ms service per request: \(burstStart.duration(to: .now))")
 
         var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(pool)) as! [String:Any]
         for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds"] { legacy.removeValue(forKey:key) }
@@ -724,6 +737,7 @@ final class CaptureTap {
     func finish(state:CaptureState,status:Int,error:String?) {}
 }
 final class ProxyLogTap {
+    func noteOutput(_ value:[String:Any],kind:ProxyLogKind) {}
     func note(tokens:TokenTotals?) {}
     func finish(status:Int,error:String? = nil,tokens:TokenTotals? = nil) {}
 }

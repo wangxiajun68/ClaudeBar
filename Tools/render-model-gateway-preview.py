@@ -225,6 +225,16 @@ private final class VisibleFixtureWindow: NSWindow {
         let highway = GatewayRoadView(frame:CGRect(x:0,y:0,width:800,height:162))
         visible.contentView = highway
         let roadGeometry = GatewayRoadGeometry(width:800)
+        for width in [320.0, 480.0, 639.0, 640.0, 900.0, 1600.0] {
+            let layout = GatewayRoadGeometry(width:width)
+            for stage in 0..<4 {
+                let points = (0..<8).map { layout.point(layout.slotProgress(stage,index:$0),lane:$0 % 2 == 0 ? -9 : 9) }
+                precondition(points.allSatisfy { $0.x >= 7 && $0.x <= width - 7 })
+                for i in 0..<8 { for j in (i + 1)..<8 {
+                    precondition(hypot(points[i].x - points[j].x,points[i].y - points[j].y) >= 17.9,"request slots must not overlap")
+                } }
+            }
+        }
         var ship = GatewayRoadShip(id:UUID(),progress:0.08,lane:-7,phase:0,pulses:0)
         func highwayAnimations(_ layer:CALayer?) -> Int {
             guard let layer else { return 0 }
@@ -235,13 +245,13 @@ private final class VisibleFixtureWindow: NSWindow {
         highway.update(ships:[],geometry:roadGeometry,moving:true)
         ship.progress = 0.26; ship.phase = 1
         highway.update(ships:[ship],geometry:roadGeometry,moving:true)
-        precondition(highway.layer?.sublayers?[3].animation(forKey:"travel") != nil,"admission gap must retain vessel identity for continuous travel")
+        precondition(highway.layer?.sublayers?.contains { $0.animation(forKey:"travel") != nil } == true,"admission gap must retain vessel identity for continuous travel")
         ship.progress = 0.54; ship.phase = 2
         highway.update(ships:[ship],geometry:roadGeometry,moving:true)
-        precondition(highway.layer?.sublayers?[3].sublayers?[0].animation(forKey:"waiting") != nil,"docked wait must remain visible")
+        precondition(highway.layer?.sublayers?.contains { $0.sublayers?.contains { $0.animation(forKey:"waiting") != nil } == true } == true,"docked wait must remain visible")
         ship.progress = 0.8; ship.phase = 3; ship.pulses = 1
         highway.update(ships:[ship],geometry:roadGeometry,moving:true)
-        precondition(highway.layer?.sublayers?[4].animation(forKey:"output") != nil,"real output must return along the route")
+        precondition(highway.layer?.sublayers?.contains { $0.animation(forKey:"output") != nil } == true,"real output must return along the route")
         highway.update(ships:[ship],geometry:roadGeometry,moving:false)
         precondition(highwayAnimations(highway.layer) == 0,"hidden/reduced highway must have no animation")
         highway.stop(); visible.contentView = nil
@@ -252,6 +262,7 @@ private final class VisibleFixtureWindow: NSWindow {
             ("queue",900.0,500.0,false,5,true,false),
             ("queue-dark",900.0,500.0,true,5,true,false),
             ("queue-compact",560.0,760.0,false,5,true,false),
+            ("queue-idle",900.0,500.0,false,5,false,false),
             ("connections",350.0,410.0,false,1,false,false),
             ("connections-dark",350.0,410.0,true,1,false,false),
             ("editor",600.0,680.0,false,1,false,false),
@@ -283,7 +294,7 @@ private final class VisibleFixtureWindow: NSWindow {
             PreviewMotion.reduce = name == "reduced"
             AppPreferences.shared.isDark = dark
             store.seed(count:count,live:live,long:long)
-            if PreviewScreen.queue {
+            if PreviewScreen.queue && live {
                 let routing = GatewayTaskRouting(kind:.coding,difficulty:.medium,source:.automatic,reason:"fixture")
                 store.snapshot.active = 3; store.snapshot.queued = 5
                 store.snapshot.queue = (0..<5).map { i in

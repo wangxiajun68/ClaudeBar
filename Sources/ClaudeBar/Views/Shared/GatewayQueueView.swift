@@ -1,8 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// A continuous route, with real requests docking at transport checkpoints.
-/// Core Animation owns travel and frame-driven return signals, not a UI clock.
+/// Bounded native flow rendering. Only transport events produce output signals.
 struct GatewayQueueView: View {
     var snapshot: FreeModelGateway.Snapshot
     var pool: FreeModelPool
@@ -21,8 +20,8 @@ struct GatewayQueueView: View {
             case .waiting: return "等待输出"; case .streaming: return "接收输出" }
         }
         var station: String {
-            switch self { case .queued: return "排队入口"; case .connecting: return "连接站"
-            case .waiting: return "等待站"; case .streaming: return "输出站" }
+            switch self { case .queued: return "排队调度"; case .connecting: return "分发连接"
+            case .waiting: return "等待首帧"; case .streaming: return "流式输出" }
         }
         var symbol: String {
             switch self { case .queued: return "square.stack.3d.up"; case .connecting: return "antenna.radiowaves.left.and.right"
@@ -30,7 +29,7 @@ struct GatewayQueueView: View {
         }
         var tint: Color {
             switch self { case .queued: return Theme.Ink.warning; case .streaming: return Theme.Ink.success
-            default: return Theme.Ink.claude }
+            case .connecting: return Theme.Ink.claude; case .waiting: return Theme.Ink.cursor }
         }
     }
     private struct Item: Identifiable {
@@ -65,25 +64,22 @@ struct GatewayQueueView: View {
     }
     private var recent: [FreeModelGateway.Flight] {
         var seen = Set<UUID>()
-        return snapshot.flights.filter { flight in !flight.phase.isActive && !items.contains(where: { $0.id == flight.requestID }) }
+        let liveIDs = Set(items.map(\.id))
+        return snapshot.flights.filter { flight in !flight.phase.isActive && !liveIDs.contains(flight.requestID) }
             .sorted { $0.updatedAt > $1.updatedAt }
             .filter { seen.insert($0.requestID).inserted }.prefix(3).map { $0 }
     }
     private var moving: Bool { inViewport && windowVisible && !reduceMotion }
-    private func vessels(_ geometry: GatewayRoadGeometry) -> [GatewayRoadShip] {
+    private func vessels(_ geometry: GatewayRoadGeometry, items: [Item]) -> [GatewayRoadShip] {
         Stage.allCases.flatMap { stage in
             items.filter { $0.stage == stage }.prefix(8).enumerated().map { index, item in
-                let start: Double
-                if geometry.compact {
-                    start = [0.055, 0.22, 0.74, 0.82][stage.rawValue]
-                } else { start = [0.085, 0.26, 0.54, 0.80][stage.rawValue] }
-                let step = stage == .queued ? -0.018 : 0.023
-                return GatewayRoadShip(id: item.id, progress: start + Double(index / 2) * step,
-                    lane: index % 2 == 0 ? -7 : 7, phase: stage.rawValue, pulses: item.pulses)
+                return GatewayRoadShip(id: item.id, progress: geometry.slotProgress(stage.rawValue, index: index),
+                    lane: index % 2 == 0 ? -9 : 9, phase: stage.rawValue, pulses: item.pulses)
             }
         }
     }
     var body: some View {
+        let displayedItems = items
         VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
                 HStack { heading; Spacer(minLength: 8); capacity }
@@ -91,26 +87,26 @@ struct GatewayQueueView: View {
             }
             GeometryReader { proxy in
                 let geometry = GatewayRoadGeometry(width: proxy.size.width)
-                let ships = vessels(geometry)
+                let ships = vessels(geometry, items: displayedItems)
                 ZStack(alignment: .topLeading) {
                     GatewayRoad(ships: ships, geometry: geometry, moving: moving)
                         .allowsHitTesting(false).accessibilityHidden(true)
                     ForEach(Stage.allCases, id: \.rawValue) { stage in
-                        station(stage, geometry: geometry)
+                        station(stage, geometry: geometry, occupants: displayedItems.filter { $0.stage == stage })
                     }
                     ForEach(ships) { ship in
-                        if let item = items.first(where: { $0.id == ship.id }) {
+                        if let item = displayedItems.first(where: { $0.id == ship.id }) {
                             requestHit(item)
                                 .position(geometry.point(ship.progress, lane: ship.lane))
                         }
                     }
                 }
-            }.frame(height: compact ? 286 : 162)
+            }.frame(height: compact ? 284 : 146)
                 .onGeometryChange(for: Bool.self) { $0.size.width < 640 } action: { compact = $0 }
-            HStack(spacing: 8) {
-                AppGlyph(name: "paperplane.fill", size: 11).foregroundStyle(Theme.textSecondary)
-                Text(items.isEmpty ? (pool.enabled ? "等待请求驶入航道" : "启用 Auto 后显示请求航道") : "飞船代表真实请求 · 停靠表示等待 · 光点返回表示收到输出")
-                    .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+            HairlineDivider()
+            ViewThatFits(in: .horizontal) {
+                HStack { queueSummary; Spacer(); retrySummary }
+                VStack(alignment: .leading, spacing: 8) { queueSummary; retrySummary }
             }
             if !recent.isEmpty {
                 HairlineDivider()
@@ -132,8 +128,8 @@ struct GatewayQueueView: View {
     }
     private var heading: some View {
         HStack(spacing: 8) {
-            Text("请求航道").font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
-            Text(snapshot.queued > 0 ? "\(snapshot.queued) 个排队" : "航道畅通")
+            Text("请求调度").font(Theme.Font.chromeEmph).foregroundStyle(Theme.textPrimary)
+            Text(!pool.enabled ? "Auto 已停用" : (snapshot.queued > 0 ? "队列处理中" : (snapshot.active > 0 ? "实时流转" : "就绪")))
                 .font(Theme.Font.caption).foregroundStyle(snapshot.queued > 0 ? Theme.Ink.warning : Theme.textSecondary)
         }
     }
@@ -147,25 +143,47 @@ struct GatewayQueueView: View {
             }.accessibilityHidden(true)
         }.help("全局实际占用 \(snapshot.active) 个并发额度，上限 \(pool.maxConcurrent)。每供应商另有独立上限。")
     }
-    private func station(_ stage: Stage, geometry: GatewayRoadGeometry) -> some View {
+    private var queueSummary: some View {
+        HStack(spacing: 6) {
+            AppGlyph(name: "square.stack.3d.up", size: 11)
+            Text("队列 \(snapshot.queued) / \(pool.maxQueued)")
+            Text("· \(snapshot.queuedBytes == 0 ? "0 KB" : ByteCountFormatter.string(fromByteCount: Int64(snapshot.queuedBytes), countStyle: .memory))")
+        }.font(Theme.Font.microMono).foregroundStyle(Theme.textSecondary)
+    }
+    private var retrySummary: some View {
+        let retries = snapshot.queue.filter { $0.attempt > 0 }.count
+            + snapshot.flights.filter { $0.phase.isActive && $0.attempt > 1 }.count
+        return HStack(spacing: 6) {
+            AppGlyph(name: "arrow.triangle.branch", size: 11)
+            Text("重试中 \(retries)")
+            Text("· 超时 \(pool.queueTimeoutSeconds)s")
+        }.font(Theme.Font.micro).foregroundStyle(retries > 0 ? Theme.Ink.warning : Theme.textSecondary)
+    }
+    private func station(_ stage: Stage, geometry: GatewayRoadGeometry, occupants: [Item]) -> some View {
         let point = geometry.station(stage.rawValue)
-        let count = items.filter { $0.stage == stage }.count
+        let count = occupants.count
         return ZStack(alignment: .topLeading) {
             Button { inspectedStage = stage } label: {
-                ZStack {
-                    Circle().strokeBorder(count > 0 ? stage.tint.opacity(0.5) : Theme.hairline,
-                        style: StrokeStyle(lineWidth: 1, dash: [2, 4])).frame(width: 46, height: 46)
-                    Circle().fill(Theme.cardSurface).frame(width: 34, height: 34)
-                        .overlay { Circle().strokeBorder(count > 0 ? stage.tint.opacity(0.7) : Theme.hairline) }
-                    AppGlyph(name: stage.symbol, size: 16).foregroundStyle(count > 0 ? stage.tint : Theme.textSecondary)
-                }
-            }.buttonStyle(.plain).position(point)
-                .accessibilityLabel("\(stage.title)，\(count) 个请求；查看停靠的请求")
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        AppGlyph(name: stage.symbol, size: 11).foregroundStyle(stage.tint)
+                        Text(stage.station).font(Theme.Font.caption)
+                    }.foregroundStyle(Theme.textSecondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("\(count)").font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+                            .foregroundStyle(count > 0 ? stage.tint : Theme.textPrimary)
+                        Text("请求").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                        if count > 8 { Text("+\(count - 8)").font(Theme.Font.microMono).foregroundStyle(stage.tint) }
+                    }
+                }.frame(width: geometry.compact ? 132 : max(110, (geometry.width - 60) / 4), alignment: .leading)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).position(x: point.x, y: point.y - 58)
+                .help("查看\(stage.station)的全部请求")
+                .accessibilityLabel("\(stage.title)，\(count) 个请求；查看请求详情")
                 .popover(isPresented: Binding(get: { inspectedStage == stage }, set: { if !$0 { inspectedStage = nil } })) { stationContents(stage) }
-            VStack(spacing: 4) {
-                Text(stage.station).font(Theme.Font.caption.weight(.semibold)).foregroundStyle(Theme.textPrimary)
-                Text("\(count) 个请求").font(Theme.Font.micro).foregroundStyle(count > 0 ? stage.tint : Theme.textSecondary)
-            }.frame(width: 90).position(x: point.x, y: point.y + 50)
+            Text(occupants.first.map { "#\($0.tag)" } ?? "—")
+                .font(Theme.Font.microMono).foregroundStyle(Theme.textSecondary)
+                .position(x: point.x, y: point.y + 36)
         }
     }
     private func requestHit(_ item: Item) -> some View {
@@ -244,20 +262,25 @@ struct GatewayRoadGeometry: Equatable {
     func point(_ progress: Double, lane: CGFloat = 0) -> CGPoint {
         let t = max(0, min(1, progress))
         let base: CGPoint
-        if !compact { base = CGPoint(x: 22 + (width - 44) * t, y: 64) }
-        else if t < 0.35 { base = CGPoint(x: 28 + (width - 80) * t / 0.35, y: 54) }
-        else if t > 0.65 { base = CGPoint(x: width - 52 - (width - 80) * (t - 0.65) / 0.35, y: 180) }
+        if !compact { base = CGPoint(x: 22 + (width - 44) * t, y: 100) }
+        else if t < 0.35 { base = CGPoint(x: 28 + (width - 80) * t / 0.35, y: 100) }
+        else if t > 0.65 { base = CGPoint(x: width - 52 - (width - 80) * (t - 0.65) / 0.35, y: 236) }
         else {
             let q = (t - 0.35) / 0.3, r = 1 - q
             base = CGPoint(x: pow(r,3) * (width - 52) + 3 * r*r*q * (width - 4) + 3*r*q*q * (width - 4) + pow(q,3) * (width - 52),
-                           y: pow(r,3) * 54 + 3*r*r*q * 54 + 3*r*q*q * 180 + pow(q,3) * 180)
+                           y: pow(r,3) * 100 + 3*r*r*q * 100 + 3*r*q*q * 236 + pow(q,3) * 236)
         }
         guard lane != 0 else { return base }
         let before = point(max(0, t - 0.001)), after = point(min(1, t + 0.001))
         let dx = after.x - before.x, dy = after.y - before.y, length = max(0.001, hypot(dx,dy))
         return CGPoint(x: base.x - dy / length * lane, y: base.y + dx / length * lane)
     }
-    func station(_ index: Int) -> CGPoint { point((compact ? [0.09,0.31,0.69,0.92] : [0.14,0.39,0.66,0.93])[index]) }
+    func station(_ index: Int) -> CGPoint { point((compact ? [0.07,0.27,0.73,0.93] : [0.12,0.375,0.625,0.88])[index]) }
+    func slotProgress(_ stage: Int, index: Int) -> Double {
+        let center = (compact ? [0.07,0.27,0.73,0.93] : [0.12,0.375,0.625,0.88])[stage]
+        let step = compact ? 20 * 0.35 / max(1, width - 80) : 20 / max(1, width - 44)
+        return center + (Double(index / 2) - 1.5) * step
+    }
     func route(from start: Double = 0, to end: Double = 1, lane: CGFloat = 0) -> CGPath {
         let path = CGMutablePath()
         for i in 0...80 {
@@ -285,6 +308,10 @@ private final class GatewayRoadView: NSView {
         var departingAt: Date?
     }
     private let edge = CAShapeLayer(), road = CAShapeLayer(), center = CAShapeLayer()
+    private var rails: [CAShapeLayer] = []
+    private var banks: [CAShapeLayer] = []
+    private let sockets = CAShapeLayer()
+    private var paintedGeometry: GatewayRoadGeometry?
     private var vessels: [UUID:Vessel] = [:]
     private var geometry = GatewayRoadGeometry(width: 700)
     private var input: [GatewayRoadShip] = []
@@ -295,7 +322,16 @@ private final class GatewayRoadView: NSView {
     override init(frame: NSRect) {
         super.init(frame:frame); wantsLayer = true
         for item in [edge,road,center] { item.fillColor = nil; item.lineCap = .round; item.lineJoin = .round; layer?.addSublayer(item) }
-        edge.lineWidth = 32; road.lineWidth = 30; center.lineWidth = 1; center.lineDashPattern = [3,8]
+        edge.lineWidth = 28; road.lineWidth = 26; center.lineWidth = 1
+        for _ in 0..<3 {
+            let rail = CAShapeLayer(); rail.fillColor = nil; rail.lineWidth = 1
+            layer?.addSublayer(rail); rails.append(rail)
+        }
+        for _ in 0..<4 {
+            let bank = CAShapeLayer(); bank.lineWidth = 1
+            layer?.addSublayer(bank); banks.append(bank)
+        }
+        layer?.addSublayer(sockets)
     }
     required init?(coder: NSCoder) { nil }
     deinit { if let token { NotificationCenter.default.removeObserver(token) } }
@@ -322,10 +358,32 @@ private final class GatewayRoadView: NSView {
         guard let layer else { return }
         let visible = moving && window?.occlusionState.contains(.visible) == true
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for track in [edge,road,center] { track.path = geometry.route() }
-        edge.strokeColor = NSColor(Theme.hairline).cgColor
-        road.strokeColor = NSColor(Theme.fieldWell).cgColor
-        center.strokeColor = NSColor(Theme.textSecondary.opacity(0.35)).cgColor
+        if paintedGeometry != geometry {
+            for track in [edge,road,center] { track.path = geometry.route() }
+            for (index, rail) in rails.enumerated() { rail.path = geometry.route(lane: CGFloat(index - 1) * 9) }
+            let cells = CGMutablePath()
+            for (stage, bank) in banks.enumerated() {
+                let p = geometry.station(stage)
+                bank.path = CGPath(roundedRect: CGRect(x: p.x - 45, y: p.y - 22, width: 90, height: 44),
+                                   cornerWidth: 6, cornerHeight: 6, transform: nil)
+                for index in 0..<8 {
+                    let slot = geometry.point(geometry.slotProgress(stage, index: index), lane: index % 2 == 0 ? -9 : 9)
+                    cells.addRoundedRect(in: CGRect(x: slot.x - 7, y: slot.y - 3, width: 14, height: 6), cornerWidth: 2, cornerHeight: 2)
+                }
+            }
+            sockets.path = cells
+            paintedGeometry = geometry
+        }
+        edge.strokeColor = NSColor.clear.cgColor
+        road.strokeColor = NSColor.clear.cgColor
+        center.strokeColor = NSColor.clear.cgColor
+        for rail in rails { rail.strokeColor = NSColor(Theme.textSecondary.opacity(0.16)).cgColor }
+        let tints = [Theme.Ink.warning, Theme.Ink.claude, Theme.Ink.cursor, Theme.Ink.success]
+        for (stage, bank) in banks.enumerated() {
+            bank.fillColor = NSColor(Theme.cardSurface).cgColor
+            bank.strokeColor = NSColor(tints[stage].opacity(0.3)).cgColor
+        }
+        sockets.fillColor = NSColor(Theme.textSecondary.opacity(0.12)).cgColor
         let ids = Set(input.map(\.id))
         for id in Array(vessels.keys) where !ids.contains(id) {
             guard var vessel = vessels[id] else { continue }
@@ -347,7 +405,7 @@ private final class GatewayRoadView: NSView {
             let previous = vessel.state
             vessel.departingAt = nil; vessel.root.opacity = 1; vessel.root.removeAnimation(forKey:"departure")
             let target = geometry.point(state.progress, lane:state.lane)
-            let color = NSColor([Theme.Ink.warning,Theme.Ink.claude,Theme.Ink.claude,Theme.Ink.success][state.phase]).cgColor
+            let color = NSColor([Theme.Ink.warning,Theme.Ink.claude,Theme.Ink.cursor,Theme.Ink.success][state.phase]).cgColor
             vessel.body.fillColor = color; vessel.signal.fillColor = color
             let tangent = geometry.point(min(1,state.progress + 0.001))
             let base = geometry.point(state.progress)
@@ -390,8 +448,10 @@ private final class GatewayRoadView: NSView {
     }
     private func makeVessel(_ state: GatewayRoadShip, in layer: CALayer) -> Vessel {
         let root = CALayer(), body = CAShapeLayer(), signal = CAShapeLayer()
-        let shape = CGMutablePath(); shape.move(to:CGPoint(x:8,y:0)); shape.addLine(to:CGPoint(x:-6,y:-5)); shape.addLine(to:CGPoint(x:-2,y:0)); shape.addLine(to:CGPoint(x:-6,y:5)); shape.closeSubpath()
+        let shape = CGPath(roundedRect: CGRect(x: -7, y: -3, width: 14, height: 6), cornerWidth: 2, cornerHeight: 2, transform: nil)
         body.path = shape; body.lineWidth = 0.75; body.strokeColor = NSColor(Theme.cardSurface).cgColor
+        body.shadowColor = NSColor.black.cgColor; body.shadowOpacity = 0.14
+        body.shadowOffset = CGSize(width: 0, height: 2); body.shadowRadius = 2; body.shadowPath = shape
         root.addSublayer(body); layer.addSublayer(root)
         signal.path = CGPath(ellipseIn:CGRect(x:-2,y:-2,width:4,height:4),transform:nil); signal.opacity = 0; layer.addSublayer(signal)
         return Vessel(root:root,body:body,signal:signal,state:state)
