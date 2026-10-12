@@ -156,6 +156,48 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
             require(Probe.snapshot().1 == count && store.entries.first?.path == "/fresh", "history reloaded")
             Probe.gate = nil
         }
+
+        if __ASYNC__ {
+            FilePaths.proxyLogFile = base.appendingPathComponent("timing.jsonl")
+            let timing = ProxyAccessLog()
+            await timing.prepareForRequests()
+            let tap = timing.begin(method: "POST", path: "/v1/messages", source: .claude,
+                kind: .anthropic, provider: "", model: "fixture", stream: true, bytesIn: 0)
+            try await waitUntil { timing.entries.count == 1 }
+            tap.noteOutput(["type": "message_start", "message": ["usage": ["input_tokens": 10]]], kind: .anthropic)
+            tap.noteOutput(["choices": [["delta": ["role": "assistant", "content": ""]]]], kind: .openaiChat)
+            tap.noteOutput(["type": "response.created"], kind: .openaiResponses)
+            require(timing.entries[0].firstTokenMs == nil, "metadata counted as first token")
+            tap.noteOutput(["type": "content_block_delta", "delta": ["thinking": "fixture"]], kind: .anthropic)
+            try await waitUntil { timing.entries[0].firstTokenMs != nil }
+            let first = timing.entries[0].firstTokenMs
+            require(timing.entries[0].timingField.contains("首 token") && timing.entries[0].timingField.contains("总耗时"), "missing timing labels")
+            try await Task.sleep(for: .milliseconds(25))
+            tap.noteOutput(["choices": [["delta": ["content": "later"]]]], kind: .openaiChat)
+            tap.finish(status: 200)
+            try await waitUntil { timing.entries[0].endedAt != nil }
+            require(timing.entries[0].firstTokenMs == first, "later delta replaced first token")
+            let original = timing.entries[0]
+            try await waitUntil { (try? Data(contentsOf: FilePaths.proxyLogFile))?.isEmpty == false }
+            let reloaded = ProxyAccessLog()
+            reloaded.loadListIfNeeded()
+            try await waitUntil { reloaded.entries.count == 1 }
+            require(reloaded.entries[0].firstTokenMs == first, "first token timing lost on disk")
+            require(abs(reloaded.entries[0].durationMs - original.durationMs) <= 1, "total duration lost millisecond precision")
+            require(abs(reloaded.entries[0].startedAt.timeIntervalSince(original.startedAt)) < 0.0011, "start timestamp lost milliseconds")
+            require(large.entries[0].firstTokenMs == nil, "legacy rows invented first token timing")
+            for (kind, event) in [
+                (ProxyLogKind.openaiChat, ["choices": [["delta": ["tool_calls": [["function": ["name": "fixture"]]]]]]] as [String: Any]),
+                (.openaiResponses, ["type": "response.output_text.delta", "delta": "fixture"]),
+                (.anthropic, ["type": "content_block_delta", "delta": ["partial_json": "{}"]])
+            ] {
+                let output = timing.begin(method: "POST", path: "/fixture", source: .other,
+                    kind: kind, provider: "", model: "", stream: true, bytesIn: 0)
+                output.noteOutput(event, kind: kind)
+                output.finish(status: 200)
+                try await waitUntil { timing.entries.last?.id == output.id && timing.entries.last?.firstTokenMs != nil }
+            }
+        }
         metrics["large_read_off_main"] = snapshot.4 ? 1 : 0
         print("METRICS " + String(decoding: try JSONSerialization.data(withJSONObject: metrics, options: [.sortedKeys]), as: UTF8.self))
     }

@@ -66,6 +66,7 @@ struct ProxyLogView: View {
             hasher.combine(row.provider)
             hasher.combine(row.error)
             hasher.combine(row.endedAt)
+            hasher.combine(row.firstTokenMs)
             hasher.combine(row.status)
             hasher.combine(row.promptTokens)
             hasher.combine(row.completionTokens)
@@ -221,11 +222,16 @@ struct ProxyLogView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered) { row in
                         HStack(alignment: .top, spacing: 0) {
-                            Text(row.consoleBody)
+                            Text(row.consoleMetadata)
                                 .font(Theme.Font.console)
                                 .foregroundColor(color(for: row))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.timingField)
+                                .font(Theme.Font.console)
+                                .foregroundColor(color(for: row))
+                                .fixedSize()
+                                .help("首 token：收到首个文本、思考或工具调用增量的耗时；非流式及未观测到的请求显示 —。总耗时：从请求开始到结束。")
                             // Fixed-width buckets, so 入 / 出 / 缓存 line up down
                             // the page. A new row's counts land here when its
                             // usage event arrives, without the metadata line

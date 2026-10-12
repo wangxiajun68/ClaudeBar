@@ -519,6 +519,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     if line.hasPrefix("data:"),
                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
                        let delta = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] {
+                        log.noteOutput(delta, kind: .openaiChat)
                         tap?.applyChat(delta)
                         tokens.applyChat(delta)
                         log.note(tokens: tokens)
@@ -646,6 +647,7 @@ final class CodexProxyServer: @unchecked Sendable {
                         lastSequence = seq
                     }
                     ev = CodexProxyTransform.rewriteResponsesEvent(ev, registry: registry)
+                    log.noteOutput(ev, kind: .openaiResponses)
                     tap?.applyResponses(ev)
                     tokens.applyResponses(ev)
                     log.note(tokens: tokens)
@@ -741,6 +743,7 @@ final class CodexProxyServer: @unchecked Sendable {
             guard let data = line.data(using: .utf8),
                   let delta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
+            log.noteOutput(delta, kind: .openaiChat)
             tap?.applyChat(delta)
             tokens.applyChat(delta)
             log.note(tokens: tokens)
@@ -1020,6 +1023,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     }
                     accumulatedBytes += data.count
                     guard accumulatedBytes <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
+                    log.noteOutput(delta, kind: .openaiChat)
                     // Delay the client head until the first valid data frame.
                     // OpenRouter can report a provider error in a 200 stream.
                     if !sawData, adapted.stream {
@@ -1450,16 +1454,17 @@ final class CodexProxyServer: @unchecked Sendable {
         for try await line in bytes.lines {
             batch.append(contentsOf: line.utf8)
             batch.append(10)
+            if let ev = parser.push(line: line), !ev.done, let json = ev.json {
+                let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
+                log.noteOutput(json, kind: .anthropic)
+                tap?.applyAnthropic(event: name, json: json)
+                tokens.applyAnthropic(event: name, json: json)
+                log.note(tokens: tokens)
+            }
             if line.isEmpty || batch.count >= 4096 {
                 await write(connection, data: batch)
                 tap?.appendRaw(batch)
                 batch.removeAll(keepingCapacity: true)
-            }
-            if let ev = parser.push(line: line), !ev.done, let json = ev.json {
-                let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
-                tap?.applyAnthropic(event: name, json: json)
-                tokens.applyAnthropic(event: name, json: json)
-                log.note(tokens: tokens)
             }
         }
         if !batch.isEmpty {
@@ -1468,6 +1473,7 @@ final class CodexProxyServer: @unchecked Sendable {
         }
         if let ev = parser.finish(), !ev.done, let json = ev.json {
             let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
+            log.noteOutput(json, kind: .anthropic)
             tap?.applyAnthropic(event: name, json: json)
             tokens.applyAnthropic(event: name, json: json)
             log.note(tokens: tokens)

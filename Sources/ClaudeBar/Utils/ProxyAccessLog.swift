@@ -40,6 +40,7 @@ struct ProxyLogEntry: Identifiable, Equatable {
     var id: UInt64
     var startedAt: Date
     var endedAt: Date?
+    var firstTokenMs: Int? = nil
     var method: String
     var path: String
     var source: ProxyLogSource
@@ -94,7 +95,15 @@ struct ProxyLogEntry: Identifiable, Equatable {
     /// Everything but the token column — the log view renders the two
     /// separately so the counts stay in their own right-hand column instead of
     /// wrapping off a long path.
-    var consoleBody: String {
+    var consoleBody: String { consoleMetadata + timingField }
+
+    var timingField: String {
+        let first = firstTokenMs.map(ProxyAccessLog.formatDuration) ?? (isPending && stream ? "     …" : "     —")
+        let total = isPending ? "     …" : ProxyAccessLog.formatDuration(durationMs)
+        return "  首 token \(first)  总耗时 \(total)"
+    }
+
+    var consoleMetadata: String {
         let time = ProxyAccessLog.clock.string(from: startedAt)
         let src = source.label.padding(toLength: 6, withPad: " ", startingAt: 0)
         let kindPad = kind.label.padding(toLength: 10, withPad: " ", startingAt: 0)
@@ -106,12 +115,11 @@ struct ProxyLogEntry: Identifiable, Equatable {
         } else {
             st = String(format: "%3d", status)
         }
-        let dur = isPending ? "     …" : ProxyAccessLog.formatDuration(durationMs)
         let size = ProxyAccessLog.formatBytes(bytesIn)
         let modelBit = model.isEmpty ? "—" : model
         let streamBit = stream ? " sse" : ""
         let err = (error?.isEmpty == false) ? "  \(error!)" : ""
-        return "\(time)  \(method.padding(toLength: 4, withPad: " ", startingAt: 0))  \(path)  \(src) \(kindPad)  \(modelBit)\(streamBit)  \(st)  \(dur)  \(size)\(err)"
+        return "\(time)  \(method.padding(toLength: 4, withPad: " ", startingAt: 0))  \(path)  \(src) \(kindPad)  \(modelBit)\(streamBit)  \(st)  \(size)\(err)"
     }
 
     /// Copy-all form of the token column. The on-screen column is
@@ -189,7 +197,11 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
     private var loaded = false
     private let loadQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.load", qos: .utility)
     private let limit = 500
-    private let iso = ISO8601DateFormatter()
+    private let iso: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
     /// Lock-guarded single-flight publication; a continuous burst still gets
     /// a snapshot every 100 ms. The serial worker takes the lock off-main.
     private var publishScheduled = false
@@ -366,6 +378,15 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Store only timing metadata; the event payload is never retained.
+    func markFirstToken(id: UInt64, at: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        guard let idx = rows.firstIndex(where: { $0.id == id }),
+              rows[idx].endedAt == nil, rows[idx].firstTokenMs == nil else { return }
+        rows[idx].firstTokenMs = max(0, Int(at.timeIntervalSince(rows[idx].startedAt) * 1000))
+        schedulePublishLocked()
+    }
+
     /// Counts that arrived while the row was still streaming, held back until
     /// `finish` writes the line once. Usage clusters at the end of a stream,
     /// so this is both cheaper and what keeps the row from republishing itself
@@ -425,6 +446,8 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         guard let handle = try? FileHandle(forReadingFrom: FilePaths.proxyLogFile) else { return [] }
         defer { try? handle.close() }
         let formatter = ISO8601DateFormatter()
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var rows: [ProxyLogEntry] = []
         rows.reserveCapacity(limit)
         func appendLines(_ data: Data.SubSequence) {
@@ -435,7 +458,7 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
             // split a single record into fragments that no longer decoded, and
             // the row silently disappeared from the history list.
             for line in String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true).reversed() {
-                guard let row = decode(String(line), using: formatter) else { continue }
+                guard let row = decode(String(line), using: formatter, fractional: fractional) else { continue }
                 rows.append(row)
                 if rows.count == limit { break }
             }
@@ -560,6 +583,7 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
             "id": row.id,
             "at": iso.string(from: row.startedAt),
             "end": row.endedAt.map { iso.string(from: $0) } ?? "",
+            "firstTokenMs": row.firstTokenMs as Any? ?? NSNull(),
             "method": row.method,
             "path": row.path,
             "source": row.source.rawValue,
@@ -581,16 +605,17 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         return line
     }
 
-    private func decode(_ line: String, using iso: ISO8601DateFormatter) -> ProxyLogEntry? {
+    private func decode(_ line: String, using iso: ISO8601DateFormatter, fractional: ISO8601DateFormatter) -> ProxyLogEntry? {
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        func date(_ raw: String) -> Date? { fractional.date(from: raw) ?? iso.date(from: raw) }
         let id = (obj["id"] as? NSNumber)?.uint64Value ?? 0
         // The ceiling keeps `begin`'s `nextID += 1` away from UInt64 overflow:
         // a truncated or hand-edited sidecar can hold any value that fits, and
         // `NSNumber.uint64Value` converts a larger one without complaining.
         guard id > 0, id < Self.maxID,
               let atRaw = obj["at"] as? String,
-              let at = iso.date(from: atRaw),
+              let at = date(atRaw),
               let method = obj["method"] as? String,
               let path = obj["path"] as? String,
               let sourceRaw = obj["source"] as? String,
@@ -616,7 +641,8 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         return ProxyLogEntry(
             id: id,
             startedAt: at,
-            endedAt: endRaw.isEmpty ? nil : iso.date(from: endRaw),
+            endedAt: endRaw.isEmpty ? nil : date(endRaw),
+            firstTokenMs: Self.tokenCount(obj["firstTokenMs"]),
             method: method,
             path: path,
             source: source,
@@ -688,6 +714,7 @@ final class ProxyLogTap {
     /// lock-guarded rather than a bare `Bool`.
     private let lock = NSLock()
     private var finished = false
+    private var sawFirstToken = false
     private let records: Bool
 
     init(id: UInt64, store: ProxyAccessLog?, records: Bool = true) {
@@ -701,6 +728,43 @@ final class ProxyLogTap {
     func note(tokens: TokenTotals?) {
         guard records, let tokens, !tokens.isEmpty else { return }
         store?.updateTokens(id: id, tokens: tokens)
+    }
+
+    /// Observe generated output, ignoring headers, role-only and usage events.
+    /// Non-streaming responses cannot expose a real time to first token.
+    func noteOutput(_ json: [String: Any], kind: ProxyLogKind) {
+        lock.lock(); defer { lock.unlock() }
+        guard records, !finished, !sawFirstToken else { return }
+        func hasText(_ value: Any?) -> Bool { (value as? String)?.isEmpty == false }
+        let generated: Bool
+        switch kind {
+        case .openaiChat:
+            generated = (json["choices"] as? [[String: Any]] ?? []).contains { choice in
+                guard let delta = choice["delta"] as? [String: Any] else { return false }
+                if hasText(delta["content"]) || hasText(delta["reasoning_content"]) || hasText(delta["reasoning"]) { return true }
+                return (delta["tool_calls"] as? [[String: Any]] ?? []).contains { tool in
+                    let function = tool["function"] as? [String: Any] ?? [:]
+                    return hasText(function["name"]) || hasText(function["arguments"])
+                }
+            }
+        case .openaiResponses:
+            let type = json["type"] as? String ?? ""
+            generated = ((type.hasSuffix("output_text.delta") || (type.contains("reasoning") && type.hasSuffix(".delta"))
+                || type == "response.function_call_arguments.delta") && hasText(json["delta"]))
+                || (type == "response.output_item.added"
+                    && (json["item"] as? [String: Any])?["type"] as? String == "function_call")
+        case .anthropic:
+            let type = json["type"] as? String ?? ""
+            let delta = json["delta"] as? [String: Any] ?? [:]
+            let block = json["content_block"] as? [String: Any] ?? [:]
+            generated = (type == "content_block_delta" && (hasText(delta["text"]) || hasText(delta["thinking"]) || hasText(delta["partial_json"])))
+                || (type == "content_block_start" && (hasText(block["text"]) || hasText(block["thinking"]) || block["type"] as? String == "tool_use"))
+        default:
+            generated = false
+        }
+        guard generated else { return }
+        sawFirstToken = true
+        store?.markFirstToken(id: id)
     }
 
     func finish(status: Int, error: String? = nil, tokens: TokenTotals? = nil) {
