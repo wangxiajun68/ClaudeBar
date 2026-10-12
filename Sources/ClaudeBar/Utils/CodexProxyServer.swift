@@ -857,6 +857,7 @@ final class CodexProxyServer: @unchecked Sendable {
         var plan: FreeModelGateway.Plan?
         var headWritten = false
         let anthropic = path.hasSuffix("/messages")
+        let requestID = UUID()
         do {
             if path.hasSuffix("/messages/count_tokens") {
                 var estimate = json; estimate["max_tokens"] = 1
@@ -868,20 +869,22 @@ final class CodexProxyServer: @unchecked Sendable {
             }
             let adapted = try GatewayWireAdapter.request(json, path: path)
             let requirements = try GatewayRequirements(chat: adapted.chat)
-            let selected = try await gateway.begin(requirements, requestBytes: request.body?.count ?? 0)
+            let selected = try await gateway.begin(requirements, requestBytes: request.body?.count ?? 0, requestID: requestID)
             plan = selected
-            let deadline = Date().addingTimeInterval(60)
+            let requestDeadline = Date().addingTimeInterval(Double(selected.requestTimeoutSeconds))
+            let deadline = min(requestDeadline, Date().addingTimeInterval(Double(selected.retryBudgetSeconds)))
             var lastFailure: Error = GatewayFailure.coolingDown
             var remaining = selected.candidates
             while !remaining.isEmpty {
                 try Self.throwIfInterrupted(nil)
-                guard Date() < deadline else { break }
+                guard Date() < deadline else { throw GatewayFailure.upstream(504) }
                 guard let candidate = try await gateway.acquireAttempt(remaining, plan: selected,
                     waitTimeout: deadline.timeIntervalSinceNow) else { break }
                 remaining.removeAll { $0.member.id == candidate.member.id }
                 do {
                     try await forwardGatewayCandidate(connection, request: request, adapted: adapted,
-                        candidate: candidate, plan: selected, headWritten: &headWritten)
+                        candidate: candidate, plan: selected, headWritten: &headWritten,
+                        retryDeadline: deadline, requestDeadline: requestDeadline)
                     await gateway.finish(selected)
                     return
                 } catch {
@@ -902,7 +905,8 @@ final class CodexProxyServer: @unchecked Sendable {
                 let message = (error as? GatewayFailure)?.localizedDescription
                     ?? "自动网关请求失败，请检查模型池或稍后重试。"
                 let failure = error as? GatewayFailure
-                let event: [String: Any] = ["type": "error", "error": ["type": "gateway_error", "code": failure?.code ?? "gateway_error", "message": message]]
+                let event: [String: Any] = ["type": "error", "request_id": requestID.uuidString,
+                    "error": ["type": "gateway_error", "code": failure?.code ?? "gateway_error", "message": message]]
                 if headWritten {
                     if anthropic { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
                     else if path.hasSuffix("/responses") {
@@ -915,7 +919,8 @@ final class CodexProxyServer: @unchecked Sendable {
                     // Before any head is sent, preserve a real HTTP error even
                     // for stream clients; never pretend a failed request is 200.
                     await respond(connection, status: "\(max(400, code)) Error", contentType: "application/json",
-                        body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data(), retryAfter: failure?.retryAfter)
+                        body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data(), retryAfter: failure?.retryAfter,
+                        requestID: requestID.uuidString)
                 }
             }
         }
@@ -924,8 +929,11 @@ final class CodexProxyServer: @unchecked Sendable {
 
     private func forwardGatewayCandidate(_ connection: NWConnection, request: HTTPRequest,
         adapted: GatewayWireAdapter.Request, candidate: FreeModelGateway.Candidate,
-        plan: FreeModelGateway.Plan, headWritten: inout Bool) async throws {
+        plan: FreeModelGateway.Plan, headWritten: inout Bool, retryDeadline: Date, requestDeadline: Date) async throws {
         let started = Date()
+        let deadline = GatewayDeadline(firstOutput: min(Double(plan.firstOutputTimeoutSeconds), retryDeadline.timeIntervalSinceNow),
+                                       total: requestDeadline.timeIntervalSinceNow, onTotalTimeout: { connection.cancel() })
+        defer { deadline.stop() }
         let streamUpstream = adapted.stream || adapted.wire != .chat
         let outbound = FreeModelGateway.outbound(adapted.chat, candidate: candidate, stream: streamUpstream)
         let outData = try JSONSerialization.data(withJSONObject: outbound)
@@ -947,11 +955,12 @@ final class CodexProxyServer: @unchecked Sendable {
         defer { task?.cancel() }
         do {
             guard let url = chatCompletionsURL(candidate.endpoint.baseURL) else { throw GatewayFailure.invalidRequest }
-            var req = URLRequest(url: url, timeoutInterval: 20)
+            var req = URLRequest(url: url, timeoutInterval: Double(plan.streamIdleTimeoutSeconds))
             req.httpMethod = "POST"; req.httpBody = outData
             req.setValue("Bearer \(candidate.endpoint.apiKey)", forHTTPHeaderField: "Authorization")
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+            req.setValue(plan.id.uuidString, forHTTPHeaderField: "X-Request-ID")
             req.setValue(streamUpstream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
             try Self.throwIfInterrupted(tap)
             let lifetime = Self.gatewayLifetime
@@ -960,14 +969,15 @@ final class CodexProxyServer: @unchecked Sendable {
                     Self.attachUpstream(tap, task: $0)
                     // Delegate callbacks do not inherit the caller's task locals.
                     lifetime?.attach($0)
+                    deadline.attach($0)
                 })
             task = bytes.task
             Self.attachUpstream(tap, task: bytes.task)
             guard let http = response as? HTTPURLResponse else { throw GatewayFailure.upstream(502) }
-            retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            retryAfter = GatewayWireAdapter.retryAfter(http.value(forHTTPHeaderField: "Retry-After"))
             guard (200..<300).contains(http.statusCode) else { throw GatewayFailure.upstream(http.statusCode) }
             await FreeModelGateway.shared.receivedHeaders(candidate, plan: plan)
-            let latency = Date().timeIntervalSince(started)
+            var latency = Date().timeIntervalSince(started)
             if !streamUpstream {
                 var data = Data()
                 for try await byte in bytes {
@@ -981,9 +991,11 @@ final class CodexProxyServer: @unchecked Sendable {
                     throw GatewayFailure.upstream(502)
                 }
                 tap?.applyChat(value); totals.applyChat(value)
+                deadline.receivedOutput()
+                latency = Date().timeIntervalSince(started)
                 await FreeModelGateway.shared.receivedOutput(candidate, plan: plan)
                 headWritten = true
-                await respond(connection, status: "200 OK", contentType: "application/json", body: data)
+                await respond(connection, status: "200 OK", contentType: "application/json", body: data, requestID: plan.id.uuidString)
             } else {
                 guard http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true else {
                     throw GatewayFailure.upstream(502)
@@ -997,6 +1009,9 @@ final class CodexProxyServer: @unchecked Sendable {
                 var sawData = false
                 var accumulatedBytes = 0
                 var lastVisualOutput = Date.distantPast
+                var decoder = GatewaySSEDecoder()
+                let doneMarker = Data("[DONE]".utf8)
+                var decodedBytes = 0
                 func deliver(_ events: [[String: Any]]) async throws {
                     for event in events {
                         if adapted.stream {
@@ -1008,27 +1023,38 @@ final class CodexProxyServer: @unchecked Sendable {
                         }
                     }
                 }
-                for try await line in bytes.lines {
+                for try await byte in bytes {
+                    decodedBytes &+= 1
+                    if decodedBytes & 4095 == 0 { try Self.throwIfInterrupted(tap) }
+                    guard let data = try decoder.append(byte) else { continue }
                     try Self.throwIfInterrupted(tap)
-                    guard line.utf8.count <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
-                    guard line.hasPrefix("data:") else { continue }
-                    let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                    if payload == "[DONE]" { break }
-                    guard let data = payload.data(using: .utf8),
-                          var delta = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    if data == doneMarker { break }
+                    guard var delta = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                         throw GatewayFailure.upstream(502)
                     }
                     if let error = delta["error"] as? [String: Any] {
                         throw GatewayFailure.upstream(error["code"] as? Int ?? 502)
+                    }
+                    try GatewayWireAdapter.validateChunk(delta)
+                    // Usage-only chunks do not commit the downstream response.
+                    // Keep failover possible until an actual choice arrives.
+                    if (delta["choices"] as? [[String: Any]])?.isEmpty == true {
+                        tap?.applyChat(delta); totals.applyChat(delta); log.note(tokens: totals)
+                        if sawData, adapted.wire == .chat { try await writeMigration(connection, data: CodexProxyTransform.sse(delta)) }
+                        continue
                     }
                     accumulatedBytes += data.count
                     guard accumulatedBytes <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.invalidRequest }
                     log.noteOutput(delta, kind: .openaiChat)
                     // Delay the client head until the first valid data frame.
                     // OpenRouter can report a provider error in a 200 stream.
-                    if !sawData, adapted.stream {
-                        headWritten = true
-                        try await writeMigration(connection, data: sseHead())
+                    if !sawData {
+                        deadline.receivedOutput()
+                        latency = Date().timeIntervalSince(started)
+                        if adapted.stream {
+                            headWritten = true
+                            try await writeMigration(connection, data: sseHead(requestID: plan.id.uuidString))
+                        }
                     }
                     sawData = true
                     let visualNow = Date()
@@ -1065,7 +1091,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     let value = adapted.wire == .anthropic ? try message.result() : (responseBody ?? [:])
                     headWritten = true
                     await respond(connection, status: "200 OK", contentType: "application/json",
-                        body: try JSONSerialization.data(withJSONObject: value))
+                        body: try JSONSerialization.data(withJSONObject: value), requestID: plan.id.uuidString)
                 }
             }
             tap?.finish(state: .done, status: 200, error: nil)
@@ -1073,15 +1099,16 @@ final class CodexProxyServer: @unchecked Sendable {
             task?.cancel()
             await FreeModelGateway.shared.report(candidate, plan: plan, status: 200, latency: latency)
         } catch {
-            let interrupted = Self.wasInterrupted() || GatewayWireAdapter.status(error) == 0
-            let status = interrupted ? 0 : GatewayWireAdapter.status(error)
+            let effectiveError: Error = deadline.timedOut ? GatewayFailure.upstream(504) : error
+            let interrupted = !deadline.timedOut && (Self.wasInterrupted() || GatewayWireAdapter.status(effectiveError) == 0)
+            let status = interrupted ? 0 : GatewayWireAdapter.status(effectiveError)
             tap?.finish(state: interrupted ? .aborted : .error, status: status,
                         error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）")
             log.finish(status: status, error: interrupted ? "已中断" : "自动路由失败（HTTP \(status)）", tokens: totals)
             task?.cancel()
             await FreeModelGateway.shared.report(candidate, plan: plan, status: status,
                 latency: Date().timeIntervalSince(started), retryAfter: retryAfter)
-            throw error
+            throw effectiveError
         }
     }
 
@@ -1603,16 +1630,26 @@ final class CodexProxyServer: @unchecked Sendable {
     }
 
     private func readRequest(_ connection: NWConnection) async -> HTTPRequest? {
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            connection.cancel()
+        }
+        defer { deadline.cancel() }
         var buffer = Data()
         // Headers + body, with a generous cap (Codex bodies with big model
         // catalogs can be a few MB).
         let cap = 64 * 1024 * 1024
-        while buffer.range(of: Data("\r\n\r\n".utf8)) == nil, buffer.count < cap {
+        let separator = Data("\r\n\r\n".utf8)
+        var scanStart = 0
+        var headerEnd: Range<Data.Index>?
+        while headerEnd == nil, buffer.count <= 64 * 1024 {
             guard let chunk = await receive(connection) else { return nil }
             buffer.append(chunk)
+            headerEnd = buffer.range(of: separator, in: scanStart..<buffer.count)
+            scanStart = max(0, buffer.count - 3)
         }
-        guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else { return nil }
-        let headerText = String(data: buffer[..<headerEnd.lowerBound], encoding: .utf8) ?? ""
+        guard let headerEnd, headerEnd.lowerBound <= 64 * 1024,
+              let headerText = String(data: buffer[..<headerEnd.lowerBound], encoding: .utf8) else { return nil }
         var lines = headerText.components(separatedBy: "\r\n")
         guard !lines.isEmpty else { return nil }
         let requestLine = lines.removeFirst()
@@ -1620,14 +1657,18 @@ final class CodexProxyServer: @unchecked Sendable {
         guard parts.count >= 2 else { return nil }
         var headers: [String: String] = [:]
         for line in lines {
-            guard let idx = line.firstIndex(of: ":") else { continue }
+            guard let idx = line.firstIndex(of: ":") else { return nil }
             let key = line[..<idx].trimmingCharacters(in: .whitespaces).lowercased()
             let value = line[line.index(after: idx)...].trimmingCharacters(in: .whitespaces)
+            guard headers[key] == nil else { return nil }
             headers[key] = value
         }
 
+        let head = HTTPRequest(method: String(parts[0]), path: String(parts[1]), headers: headers, body: nil)
+        guard isAuthorized(head) else { return head }
+
         var body = buffer[headerEnd.upperBound...]
-        if let te = headers["transfer-encoding"], te.lowercased().contains("chunked") {
+        if headers["transfer-encoding"] != nil {
             return nil // 411-equivalent: Codex always sends content-length
         }
         // The declared length is untrusted input arriving **before**
@@ -1637,10 +1678,11 @@ final class CodexProxyServer: @unchecked Sendable {
         // anyone who can reach the loopback port; a huge one drove the loop
         // below past `cap`, which the header loop had already stopped reading
         // at, so the documented 64 MiB ceiling did not exist for the body.
-        let declared = Int(headers["content-length"] ?? "0") ?? 0
-        guard declared >= 0, declared <= cap else { return nil }
+        let length = headers["content-length"] ?? "0"
+        guard !length.isEmpty, length.utf8.allSatisfy({ (48...57).contains($0) }),
+              let declared = Int(length), declared >= 0, declared <= cap else { return nil }
         while body.count < declared {
-            guard let chunk = await receive(connection) else { break }
+            guard let chunk = await receive(connection) else { return nil }
             body.append(chunk)
         }
         return HTTPRequest(
@@ -1663,8 +1705,9 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
-    private func sseHead() -> Data {
-        Data("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n".utf8)
+    private func sseHead(requestID: String? = nil) -> Data {
+        let trace = requestID.flatMap(UUID.init(uuidString:)).map { "X-Request-ID: \($0.uuidString)\r\n" } ?? ""
+        return Data("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\(trace)Connection: close\r\n\r\n".utf8)
     }
 
     /// Awaited send: completion fires before we proceed. Without this,
@@ -1679,9 +1722,10 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
-    private func respond(_ connection: NWConnection, status: String, contentType: String, body: Data, retryAfter: Int? = nil) async {
+    private func respond(_ connection: NWConnection, status: String, contentType: String, body: Data, retryAfter: Int? = nil, requestID: String? = nil) async {
         let retry = retryAfter.map { "Retry-After: \(max(1, $0))\r\n" } ?? ""
-        let head = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n\(retry)Connection: close\r\n\r\n"
+        let trace = requestID.flatMap(UUID.init(uuidString:)).map { "X-Request-ID: \($0.uuidString)\r\n" } ?? ""
+        let head = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n\(retry)\(trace)Connection: close\r\n\r\n"
         await write(connection, data: Data(head.utf8) + body)
     }
 }

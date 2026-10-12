@@ -591,7 +591,7 @@ struct FreeModelGatewayView: View {
 
             SettingsDivider()
             GatewaySettingRow(title: "每分钟上限", caption: "计入备用尝试，避免失败时连续消耗免费额度。") {
-                GatewayNumberControl(title: "每分钟上限", value: binding(\.requestsPerMinute), range: 1...60, unit: "次")
+                GatewayNumberControl(title: "每分钟上限", value: binding(\.requestsPerMinute), range: 1...6000, unit: "次")
             }
         }.disabled(!editable)
     }
@@ -601,23 +601,40 @@ struct FreeModelGatewayView: View {
             SettingsGroup(title: "并发与队列", symbol: "line.3.horizontal.decrease",
                           caption: "同一供应商配置下的模型共享并发额度。队列按到达顺序安排可运行请求；繁忙供应商不会阻塞其他供应商。") {
                 GatewaySettingRow(title: "全局并发", caption: "流式请求直到完成或断开才释放额度。") {
-                    GatewayNumberControl(title: "全局并发", value: binding(\.maxConcurrent), range: 1...8, unit: "个")
+                    GatewayNumberControl(title: "全局并发", value: binding(\.maxConcurrent), range: 1...64, unit: "个")
                 }
                 SettingsDivider()
                 GatewaySettingRow(title: "供应商默认并发", caption: "新加入的供应商沿用此值，可在下方单独覆盖。") {
-                    GatewayNumberControl(title: "供应商默认并发", value: binding(\.defaultProviderConcurrent), range: 1...8, unit: "个")
+                    GatewayNumberControl(title: "供应商默认并发", value: binding(\.defaultProviderConcurrent), range: 1...64, unit: "个")
                 }
                 SettingsDivider()
                 GatewaySettingRow(title: "等待队列容量", caption: "含备用等待；正文合计最多 64 MiB。0 表示不排队。") {
-                    GatewayNumberControl(title: "等待队列容量", value: binding(\.maxQueued), range: 0...128, unit: "个")
+                    GatewayNumberControl(title: "等待队列容量", value: binding(\.maxQueued), range: 0...1024, unit: "个")
                 }
                 SettingsDivider()
                 GatewaySettingRow(title: "每供应商队列", caption: "防止单一供应商占满全局等待队列。") {
-                    GatewayNumberControl(title: "每供应商队列", value: binding(\.providerQueueCapacity), range: 1...128, unit: "个")
+                    GatewayNumberControl(title: "每供应商队列", value: binding(\.providerQueueCapacity), range: 1...1024, unit: "个")
                 }
                 SettingsDivider()
                 GatewaySettingRow(title: "最长排队时间", caption: "队列满返回 429，等待超时返回 504；排队不消耗每分钟额度。") {
                     GatewayNumberControl(title: "最长排队时间", value: binding(\.queueTimeoutSeconds), range: 1...120, unit: "秒")
+                }
+            }
+            SettingsGroup(title: "请求时限", symbol: "timer") {
+                GatewaySettingRow(title: "首个有效输出") {
+                    GatewayNumberControl(title: "首个有效输出", value: binding(\.firstOutputTimeoutSeconds), range: 1...min(120, gateway.pool.requestTimeoutSeconds), unit: "秒")
+                }
+                SettingsDivider()
+                GatewaySettingRow(title: "备用尝试总预算") {
+                    GatewayNumberControl(title: "备用尝试总预算", value: binding(\.retryBudgetSeconds), range: 1...300, unit: "秒")
+                }
+                SettingsDivider()
+                GatewaySettingRow(title: "上游无数据超时") {
+                    GatewayNumberControl(title: "上游无数据超时", value: binding(\.streamIdleTimeoutSeconds), range: 1...300, unit: "秒")
+                }
+                SettingsDivider()
+                GatewaySettingRow(title: "请求总时限") {
+                    GatewayNumberControl(title: "请求总时限", value: binding(\.requestTimeoutSeconds), range: gateway.pool.firstOutputTimeoutSeconds...1800, unit: "秒")
                 }
             }
             if !admissionProviders.isEmpty {
@@ -630,9 +647,25 @@ struct FreeModelGatewayView: View {
                             GatewayNumberControl(title: provider.name, value: Binding(
                                 get: { gateway.pool.concurrentLimit(for: provider.id) },
                                 set: { limit in gateway.change { $0.providerConcurrent[provider.id.uuidString] = limit } }),
-                                range: 1...8, unit: "个", onReset: gateway.pool.providerConcurrent[provider.id.uuidString] == nil ? nil : {
+                                range: 1...64, unit: "个", onReset: gateway.pool.providerConcurrent[provider.id.uuidString] == nil ? nil : {
                                     gateway.change { $0.providerConcurrent[provider.id.uuidString] = nil }
                                 })
+                        }
+                        GatewaySettingRow(title: "每分钟上限") {
+                            GatewayNumberControl(title: "每分钟上限", value: Binding(
+                                get: { gateway.pool.providerRequestsPerMinute[provider.id.uuidString] ?? gateway.pool.requestsPerMinute },
+                                set: { limit in gateway.change { $0.providerRequestsPerMinute[provider.id.uuidString] = limit } }),
+                                range: 1...6000, unit: "次", onReset: gateway.pool.providerRequestsPerMinute[provider.id.uuidString] == nil ? nil : {
+                                    gateway.change { $0.providerRequestsPerMinute[provider.id.uuidString] = nil }
+                                })
+                        }
+                        if gateway.pool.strategy == .weighted {
+                            GatewaySettingRow(title: "分发权重") {
+                                GatewayNumberControl(title: "分发权重", value: Binding(
+                                    get: { gateway.pool.providerWeights[provider.id.uuidString] ?? 1 },
+                                    set: { weight in gateway.change { $0.providerWeights[provider.id.uuidString] = weight } }),
+                                    range: 1...100, unit: "")
+                            }
                         }
                     }
                 }

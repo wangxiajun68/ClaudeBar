@@ -25,15 +25,21 @@ struct FreeModelPool: Codable, Equatable, Sendable {
     var providerQueueCapacity = 8
     var queueTimeoutSeconds = 30
     var requestsPerMinute = 20
+    var providerRequestsPerMinute: [String: Int] = [:]
+    var providerWeights: [String: Int] = [:]
+    var firstOutputTimeoutSeconds = 20
+    var streamIdleTimeoutSeconds = 30
+    var retryBudgetSeconds = 60
+    var requestTimeoutSeconds = 180
     var openRouterProviderID: UUID?
     var members: [Member] = []
     var catalog: [CatalogModel] = []
     var discoveredAt: Date?
 
     enum Strategy: String, Codable, CaseIterable, Sendable {
-        case balanced, priority, latency
+        case balanced, priority, latency, weighted
         var title: String {
-            switch self { case .balanced: return "均衡轮转"; case .priority: return "池内顺序"; case .latency: return "低延迟优先" }
+            switch self { case .balanced: return "均衡轮转"; case .priority: return "池内顺序"; case .latency: return "低延迟优先"; case .weighted: return "供应商加权" }
         }
     }
 
@@ -71,11 +77,16 @@ struct FreeModelPool: Codable, Equatable, Sendable {
     var validationError: String? {
         guard version == 1 else { return "网关配置版本不受支持，原文件已保留。" }
         guard [1, 6, 24].contains(refreshHours), (1...5).contains(maxAttempts),
-              (1...8).contains(maxConcurrent), (1...8).contains(defaultProviderConcurrent),
+              (1...64).contains(maxConcurrent), (1...64).contains(defaultProviderConcurrent),
               providerConcurrent.count <= 200,
-              providerConcurrent.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...8).contains($0.value) }),
-              (0...128).contains(maxQueued), (1...128).contains(providerQueueCapacity), (1...120).contains(queueTimeoutSeconds),
-              (1...60).contains(requestsPerMinute),
+              providerConcurrent.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...64).contains($0.value) }),
+              (0...1024).contains(maxQueued), (1...1024).contains(providerQueueCapacity), (1...120).contains(queueTimeoutSeconds),
+              (1...6000).contains(requestsPerMinute),
+              providerRequestsPerMinute.count <= 200, providerWeights.count <= 200,
+              providerRequestsPerMinute.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...6000).contains($0.value) }),
+              providerWeights.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...100).contains($0.value) }),
+              (1...120).contains(firstOutputTimeoutSeconds), (1...300).contains(streamIdleTimeoutSeconds), (1...300).contains(retryBudgetSeconds),
+              (1...1800).contains(requestTimeoutSeconds), firstOutputTimeoutSeconds <= requestTimeoutSeconds,
               members.count <= 200, catalog.count <= 1000,
               Set(members.map(\.id)).count == members.count else { return "网关配置超出允许范围。" }
         guard members.allSatisfy({ !$0.model.isEmpty && $0.model.utf8.count <= 200 && $0.contextLength > 0
@@ -260,6 +271,7 @@ extension FreeModelPool {
         case version, enabled, interceptAll, discoveryEnabled, automaticallyJoin, refreshHours, strategy
         case maxAttempts, maxConcurrent, requestsPerMinute, openRouterProviderID, members, catalog, discoveredAt
         case defaultProviderConcurrent, providerConcurrent, maxQueued, providerQueueCapacity, queueTimeoutSeconds
+        case providerRequestsPerMinute, providerWeights, firstOutputTimeoutSeconds, streamIdleTimeoutSeconds, retryBudgetSeconds, requestTimeoutSeconds
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -282,5 +294,11 @@ extension FreeModelPool {
         maxQueued = try c.decodeIfPresent(Int.self, forKey: .maxQueued) ?? 32
         providerQueueCapacity = try c.decodeIfPresent(Int.self, forKey: .providerQueueCapacity) ?? 8
         queueTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .queueTimeoutSeconds) ?? 30
+        providerRequestsPerMinute = try c.decodeIfPresent([String: Int].self, forKey: .providerRequestsPerMinute) ?? [:]
+        providerWeights = try c.decodeIfPresent([String: Int].self, forKey: .providerWeights) ?? [:]
+        firstOutputTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .firstOutputTimeoutSeconds) ?? 20
+        streamIdleTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .streamIdleTimeoutSeconds) ?? 30
+        retryBudgetSeconds = try c.decodeIfPresent(Int.self, forKey: .retryBudgetSeconds) ?? 60
+        requestTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .requestTimeoutSeconds) ?? 180
     }
 }

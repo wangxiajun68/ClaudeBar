@@ -44,6 +44,39 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
 @main struct Policy {
     static func main() async throws {
         let folder = URL(fileURLWithPath: CommandLine.arguments[1])
+        var decoder = GatewaySSEDecoder()
+        var decoded: [Data] = []
+        for byte in Data("\u{FEFF}: keepalive\r\ndata: {\"choices\":\r\ndata: []}\r\n\r\ndata: [DONE]\n\n".utf8) {
+            if let frame = try decoder.append(byte) { decoded.append(frame) }
+        }
+        precondition(decoded.count == 2 && decoded[1] == Data("[DONE]".utf8))
+        precondition((try JSONSerialization.jsonObject(with:decoded[0]) as? [String:Any])?["choices"] is [Any])
+        for field in ["data: ", ": ", "ignored: "] {
+            var oversized = GatewaySSEDecoder()
+            do {
+                for byte in (field + String(repeating:"x",count:GatewaySSEDecoder.maxEventBytes + 1)).utf8 { _ = try oversized.append(byte) }
+                fatalError("unbounded SSE line")
+            } catch { precondition(error as? GatewayFailure == .upstream(502)) }
+        }
+        precondition(GatewayWireAdapter.retryAfter("NaN") == nil && GatewayWireAdapter.retryAfter("-1") == nil)
+        precondition(GatewayWireAdapter.retryAfter("12") == 12)
+        precondition(GatewayWireAdapter.retryAfter("Thu, 01 Jan 1970 00:01:00 GMT",now:Date(timeIntervalSince1970:0)) == 60)
+        precondition(GatewayWireAdapter.status(URLError(.timedOut)) == 504)
+        do { try GatewayWireAdapter.validateChunk(["hello":"world"]); fatalError() }
+        catch { precondition(error as? GatewayFailure == .upstream(502)) }
+        let parserStarted = ContinuousClock.now
+        let parserInput = Data(String(repeating:"data: {\"choices\":[{\"delta\":{\"content\":\"hello 世界\"}}]}\n\n",count:10000).utf8)
+        var parser = GatewaySSEDecoder(), parsedCount = 0
+        for byte in parserInput { if try parser.append(byte) != nil { parsedCount += 1 } }
+        precondition(parsedCount == 10000)
+        print("MEASURE: SSE \(parserInput.count) bytes / 10000 events: \(parserStarted.duration(to:.now))")
+        let timeout = GatewayDeadline(firstOutput:0.01,total:1)
+        try await Task.sleep(for:.milliseconds(30)); precondition(timeout.timedOut); timeout.stop()
+        let outputDeadline = GatewayDeadline(firstOutput:0.01,total:0.1)
+        outputDeadline.receivedOutput()
+        try await Task.sleep(for:.milliseconds(30)); precondition(!outputDeadline.timedOut)
+        try await Task.sleep(for:.milliseconds(100)); precondition(outputDeadline.timedOut); outputDeadline.stop()
+        print("PASS: bounded multi-line/CRLF/BOM SSE, Retry-After dates, first-output and total deadlines")
         let price: [String:Any] = ["prompt":"0", "completion":"0", "request":"0"]
         let free: [String:Any] = ["id":"fixture/free", "name":"Fixture", "context_length":32000,
             "pricing":price, "architecture":["input_modalities":["text","image"],"output_modalities":["text"]],
@@ -542,17 +575,81 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         print("MEASURE: 40 concurrent synthetic requests, including 2ms service per request: \(burstStart.duration(to: .now))")
 
         var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(pool)) as! [String:Any]
-        for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds"] { legacy.removeValue(forKey:key) }
+        for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds",
+                    "providerRequestsPerMinute","providerWeights","firstOutputTimeoutSeconds","retryBudgetSeconds","requestTimeoutSeconds"] { legacy.removeValue(forKey:key) }
         let loaded = try JSONDecoder().decode(FreeModelPool.self,from:JSONSerialization.data(withJSONObject:legacy))
         check(loaded.maxConcurrent == pool.maxConcurrent && loaded.defaultProviderConcurrent == 2 && loaded.maxQueued == 32 && loaded.queueTimeoutSeconds == 30)
         check(loaded.members == pool.members && loaded.providerConcurrent.isEmpty && loaded.providerQueueCapacity == 8)
+        check(loaded.providerWeights.isEmpty && loaded.providerRequestsPerMinute.isEmpty && loaded.firstOutputTimeoutSeconds == 20 && loaded.requestTimeoutSeconds == 180)
         for mutate: (inout FreeModelPool) -> Void in [
-            { $0.defaultProviderConcurrent = 0 }, { $0.providerConcurrent[a.uuidString] = 9 },
-            { $0.providerConcurrent["not-a-provider"] = 1 }, { $0.maxQueued = 129 },
-            { $0.maxQueued = -1 }, { $0.providerQueueCapacity = 0 }, { $0.providerQueueCapacity = 129 }, { $0.queueTimeoutSeconds = 0 }, { $0.queueTimeoutSeconds = 121 }] {
+            { $0.defaultProviderConcurrent = 0 }, { $0.providerConcurrent[a.uuidString] = 65 },
+            { $0.providerConcurrent["not-a-provider"] = 1 }, { $0.maxQueued = 1025 },
+            { $0.maxQueued = -1 }, { $0.providerQueueCapacity = 0 }, { $0.providerQueueCapacity = 1025 }, { $0.queueTimeoutSeconds = 0 }, { $0.queueTimeoutSeconds = 121 },
+            { $0.providerWeights[a.uuidString] = 0 }, { $0.providerRequestsPerMinute[a.uuidString] = 6001 },
+            { $0.firstOutputTimeoutSeconds = 0 }, { $0.requestTimeoutSeconds = 10 }, { $0.retryBudgetSeconds = 301 }] {
             var invalid = pool; mutate(&invalid); check(invalid.validationError != nil)
         }
         check(GatewayFailure.queueFull.status == 429 && GatewayFailure.queueTimedOut.status == 504)
+        var weighted = pool; weighted.strategy = .weighted; weighted.requestsPerMinute = 6000
+        weighted.members = [member(a,"a",[.medium]),member(b,"b",[.medium])]
+        weighted.providerWeights = [a.uuidString:3,b.uuidString:1]
+        let weightedGateway = await configured(weighted)
+        var distribution: [UUID:Int] = [:]
+        for _ in 0..<80 {
+            let p = try await weightedGateway.begin(medium)
+            let c = p.candidates[0]; distribution[c.endpoint.id,default:0] += 1
+            try await weightedGateway.started(c,plan:p)
+            await weightedGateway.report(c,plan:p,status:200,latency:0.01)
+            await weightedGateway.finish(p)
+        }
+        check(abs(distribution[a,default:0] - 60) <= 1 && abs(distribution[b,default:0] - 20) <= 1,"3:1 weighted dispatch")
+        weighted.providerRequestsPerMinute = [a.uuidString:1,b.uuidString:1]
+        let rates = await configured(weighted)
+        let rateNow = Date()
+        let one = try await rates.begin(medium,now:rateNow); await rates.finish(one)
+        let two = try await rates.begin(medium,now:rateNow); await rates.finish(two)
+        check(one.candidates[0].endpoint.id != two.candidates[0].endpoint.id,"provider RPM must route around exhausted account")
+        await expect(.rateLimited) { _ = try await rates.begin(medium,now:rateNow) }
+        let renewed = try await rates.begin(medium,now:rateNow.addingTimeInterval(61)); await rates.finish(renewed)
+        weighted.providerRequestsPerMinute = [:]; weighted.defaultProviderConcurrent = 8
+        weighted.members = [member(a,"a",[.medium])]
+        let recovery = await configured(weighted)
+        let failed = try await recovery.begin(medium,now:rateNow)
+        try await recovery.started(failed.candidates[0],plan:failed,now:rateNow)
+        await recovery.report(failed.candidates[0],plan:failed,status:429,latency:0.1,retryAfter:1,now:rateNow)
+        await recovery.finish(failed)
+        let recoveredAt = rateNow.addingTimeInterval(2)
+        let halfOpen = try await recovery.begin(medium,now:recoveredAt)
+        let behindProbe = Task { try await recovery.begin(medium,now:recoveredAt) }
+        try await queued(recovery,1)
+        check((await recovery.snapshot()).active == 1,"only one recovery probe may enter an account")
+        try await recovery.started(halfOpen.candidates[0],plan:halfOpen,now:recoveredAt)
+        await recovery.report(halfOpen.candidates[0],plan:halfOpen,status:200,latency:0.1,now:recoveredAt)
+        let healed = try await behindProbe.value
+        await recovery.finish(halfOpen); await recovery.finish(healed)
+        print("PASS: weighted distribution, provider RPM recovery, single half-open probe, timeout defaults and limits")
+        var stressPool = weighted
+        stressPool.maxConcurrent = 64; stressPool.defaultProviderConcurrent = 64
+        stressPool.maxQueued = 1024; stressPool.providerQueueCapacity = 1024
+        stressPool.queueTimeoutSeconds = 30
+        let stress = await configured(stressPool)
+        let stressStart = ContinuousClock.now
+        try await withThrowingTaskGroup(of:Void.self) { group in
+            for _ in 0..<512 {
+                group.addTask {
+                    let p = try await stress.begin(medium,requestBytes:1024)
+                    try await stress.started(p.candidates[0],plan:p)
+                    let current = await stress.snapshot()
+                    check(current.active <= 64 && current.queuedBytes == current.queued * 1024,"64-slot pressure bounds")
+                    try await Task.sleep(for:.milliseconds(2))
+                    await stress.finish(p)
+                }
+            }
+            try await group.waitForAll()
+        }
+        let stressDone = await stress.snapshot()
+        check(stressDone.requests == 512 && stressDone.active == 0 && stressDone.queuedBytes == 0 && stressDone.queued == 0)
+        print("MEASURE: 512 requests / 64 slots / 2ms synthetic service: \(stressStart.duration(to:.now))")
         print("PASS: per-provider shared permits, free-provider selection, FIFO/global/byte bounds, cancellation, timeout, fallback transfer, live reconfiguration, shutdown, burst isolation and legacy migration")
     }
 }
@@ -784,6 +881,7 @@ enum CodexProxyState {
         let settings = try JSONSerialization.jsonObject(with:data) as! [String:Any]
         let firstID = UUID(), secondID = UUID()
         var pool = FreeModelPool(); pool.enabled = true; pool.strategy = .priority; pool.requestsPerMinute = 60
+        pool.firstOutputTimeoutSeconds = 1
         pool.members = [FreeModelPool.Member(providerID:firstID,model:"first",name:"First",contextLength:128000,supportsTools:true,supportsImages:false,supportsJSON:true),
                         FreeModelPool.Member(providerID:secondID,model:"second",name:"Second",contextLength:128000,supportsTools:true,supportsImages:false,supportsJSON:true)]
         if let tiers = settings["tiers"] as? [String] {
@@ -853,6 +951,23 @@ class Upstream(BaseHTTPRequestHandler):
         if self.mode == 'slow':
             # A comment opens URLSession's bytes delivery without model output.
             self.wfile.write(b': heartbeat\n\n'); self.wfile.flush(); time.sleep(0.3)
+        if first and self.mode == 'heartbeat-timeout':
+            for _ in range(15):
+                self.wfile.write(b': heartbeat\n\n'); self.wfile.flush(); time.sleep(0.1)
+            return
+        if first and self.mode in ('malformed-first', 'usage-first-error', 'oversized-line'):
+            if self.mode == 'malformed-first':
+                self.wfile.write(b'data: {"unexpected":"shape"}\n\n')
+            elif self.mode == 'oversized-line':
+                self.wfile.write(b'data: '+b'x'*(1024*1024+1))
+            else:
+                self.wfile.write(b'data: {"choices":[],"usage":{"prompt_tokens":1}}\n\n')
+                self.wfile.write(b'data: {"error":{"code":503}}\n\n')
+            return
+        if self.mode == 'multiline':
+            self.wfile.write(b'data: {"choices":\r\ndata: [{"index":0,"delta":{"content":"fixture answer"}}]}\r\n\r\n')
+            self.wfile.write(b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+            return
         if first and self.mode == 'sse-error':
             self.wfile.write(b'data: {"error":{"code":429,"message":"fixture unavailable"}}\n\n'); return
         self.wfile.write(b'data: {"id":"fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"fixture answer"}}]}\n\n')
@@ -952,7 +1067,10 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                 headers = {'Content-Type':'application/json','User-Agent':'fixture-third-party'}
                 if auth: headers['Authorization'] = 'Bearer ' + token
                 connection.request('POST',path,json.dumps(payload),headers)
-                response = connection.getresponse(); data = response.read(); status = response.status; connection.close()
+                response = connection.getresponse(); data = response.read(); status = response.status
+                if auth and mode != 'count-tokens':
+                    assert response.getheader('X-Request-ID'), (mode,dict(response.getheaders()))
+                connection.close()
                 return status,data
             status,_ = send(False); assert status == 401 and not Upstream.calls
             def telemetry():
@@ -1153,6 +1271,12 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
         data,calls = run_case('count-tokens','/v1/messages/count_tokens',dict(message,task_difficulty='high'))
         assert json.loads(data)['input_tokens'] > 0 and not calls
         streaming = dict(chat,stream=True)
+        for mode in ['heartbeat-timeout','malformed-first','usage-first-error','oversized-line']:
+            data,calls = run_case(mode,'/v1/chat/completions',streaming)
+            assert b'fixture answer' in data and len(calls) == 2, (mode,data,len(calls))
+            assert {k.lower():v for k,v in calls[0][1].items()}['x-request-id'] == {k.lower():v for k,v in calls[1][1].items()}['x-request-id']
+        data,calls = run_case('multiline','/v1/chat/completions',streaming)
+        assert b'fixture answer' in data and len(calls) == 1
         data,calls = run_case('sse-error','/v1/chat/completions',streaming)
         assert b'fixture answer' in data and b'[DONE]' in data and len(calls) == 2
         data,calls = run_case('incomplete','/v1/chat/completions',streaming)

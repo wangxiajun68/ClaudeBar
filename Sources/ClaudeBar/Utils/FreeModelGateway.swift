@@ -23,6 +23,10 @@ actor FreeModelGateway {
         var routing: GatewayTaskRouting
         var difficulty: GatewayTaskDifficulty { routing.difficulty }
         var selection: String
+        var firstOutputTimeoutSeconds = 20
+        var streamIdleTimeoutSeconds = 30
+        var retryBudgetSeconds = 60
+        var requestTimeoutSeconds = 180
     }
     struct Health: Equatable, Sendable {
         var successes = 0
@@ -35,6 +39,7 @@ actor FreeModelGateway {
     }
     struct Route: Equatable, Identifiable, Sendable {
         var id = UUID()
+        var requestID: UUID?
         var memberID = ""
         var date: Date
         var model: String
@@ -103,7 +108,24 @@ actor FreeModelGateway {
     private var endpoints: [UUID: Endpoint] = [:]
     private var health: [String: Health] = [:]
     private var providerCooldown: [UUID: Date] = [:]
-    private var admitted: [Date] = []
+    private struct RateWindow {
+        private var values: [Date] = []
+        private var head = 0
+        var count: Int { values.count - head }
+        mutating func prune(now: Date) {
+            while head < values.count, now.timeIntervalSince(values[head]) >= 60 { head += 1 }
+            if head > 1024 || head == values.count {
+                values.removeFirst(head); head = 0
+            }
+        }
+        mutating func append(_ now: Date) { values.append(now) }
+    }
+    private var admitted = RateWindow()
+    private var providerAdmissions: [UUID: RateWindow] = [:]
+    private var providerService: [UUID: Double] = [:]
+    private var catalogByID: [String: FreeModelPool.CatalogModel] = [:]
+    private var providerOccupancy: [UUID: Int] = [:]
+    private var memberOccupancy: [String: Int] = [:]
     private var active = Set<UUID>()
     private struct Reservation {
         var providerID: UUID
@@ -131,12 +153,15 @@ actor FreeModelGateway {
     }
     private var reservations: [UUID: Reservation] = [:]
     private var waiters: [Waiter] = []
+    private var queuedBytes = 0
+    private var queuedByProvider: [UUID: Int] = [:]
     private var attempts: [UUID: Int] = [:]
     private var requestCount = 0
     private var routes: [Route] = []
     private var flights: [Flight] = []
     private var observers: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
     private var revision: UInt = 0
+    private var outputPublication: Task<Void, Never>?
 
     func configure(_ pool: FreeModelPool, endpoints: [Endpoint]) {
         guard pool.validationError == nil else { return }
@@ -149,6 +174,9 @@ actor FreeModelGateway {
         health = health.filter { key, _ in pool.members.contains { $0.id == key } }
         self.pool = pool
         self.endpoints = next
+        catalogByID = Dictionary(pool.catalog.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        providerAdmissions = providerAdmissions.filter { next[$0.key] != nil }
+        providerService = providerService.filter { next[$0.key] != nil }
         revision &+= 1
         failWaiters(pool.enabled ? GatewayFailure.interrupted : GatewayFailure.disabled)
         // In-flight transports still own their slots until report/finish.
@@ -161,11 +189,13 @@ actor FreeModelGateway {
         thirdParty && (["auto", "claudebar/auto"].contains(model.lowercased()) || (pool.enabled && pool.interceptAll))
     }
 
-    func begin(_ requirements: GatewayRequirements, requestBytes: Int = 0, now: Date = Date(), testingMemberID: String? = nil) async throws -> Plan {
+    func begin(_ requirements: GatewayRequirements, requestBytes: Int = 0, now: Date = Date(), testingMemberID: String? = nil,
+               requestID: UUID = UUID()) async throws -> Plan {
         try Task.checkCancellation()
         guard (0...64 * 1024 * 1024).contains(requestBytes) else { throw GatewayFailure.invalidRequest }
         drain(now: now)
-        let plan = try prepare(requirements, requestBytes: requestBytes, now: now, testingMemberID: testingMemberID)
+        var plan = try prepare(requirements, requestBytes: requestBytes, now: now, testingMemberID: testingMemberID)
+        plan.id = requestID
         try checkRate(now: now)
         if let admitted = admit(plan, now: now) {
             if Task.isCancelled { finish(admitted); throw CancellationError() }
@@ -201,7 +231,7 @@ actor FreeModelGateway {
                       member.enabled, let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return nil }
                 if FreeModelPool.isOpenRouter(endpoint.baseURL) {
                     guard let discovered = pool.discoveredAt, now.timeIntervalSince(discovered) < 48 * 3600,
-                          let catalog = pool.catalog.first(where: { $0.id == member.model }),
+                          let catalog = catalogByID[member.model],
                           requirements.output <= (catalog.maxOutput ?? Int.max) else { return nil }
                     var current = catalog.member(providerID: member.providerID)
                     current.difficulties = member.difficulties
@@ -226,12 +256,17 @@ actor FreeModelGateway {
         let ready = free.filter { _, candidate in
             (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
                 && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
+                && providerRateAvailable(candidate.endpoint.id, now: now)
         }.sorted { lhs, rhs in
             let left = health[lhs.1.member.id] ?? Health(), right = health[rhs.1.member.id] ?? Health()
             switch pool.strategy {
             case .priority: return lhs.0 < rhs.0
+            case .weighted:
+                let a = providerService[lhs.1.endpoint.id] ?? 0, b = providerService[rhs.1.endpoint.id] ?? 0
+                if a != b { return a < b }
+                fallthrough
             case .latency:
-                if left.latency != right.latency { return (left.latency ?? 0) < (right.latency ?? 0) }
+                if pool.strategy == .latency, left.latency != right.latency { return (left.latency ?? 0) < (right.latency ?? 0) }
                 fallthrough
             case .balanced:
                 if left.consecutiveFailures != right.consecutiveFailures { return left.consecutiveFailures < right.consecutiveFailures }
@@ -239,15 +274,26 @@ actor FreeModelGateway {
                 return lhs.0 < rhs.0
             }
         }
-        guard !ready.isEmpty else { throw GatewayFailure.coolingDown }
+        guard !ready.isEmpty else {
+            if free.contains(where: { _, c in
+                (health[c.member.id]?.cooldownUntil ?? .distantPast) <= now
+                    && (providerCooldown[c.endpoint.id] ?? .distantPast) <= now
+                    && !providerRateAvailable(c.endpoint.id, now: now)
+            }) { throw GatewayFailure.rateLimited }
+            throw GatewayFailure.coolingDown
+        }
         let selection: String
         switch pool.strategy {
         case .priority: selection = "同档位 · 池内优先级"
         case .balanced: selection = "同档位 · 故障与使用频率"
         case .latency: selection = "同档位 · 观测响应延迟"
+        case .weighted: selection = "同档位 · 供应商权重"
         }
         return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, testingMemberID: testingMemberID,
-                    candidates: ready.map(\.1), routing: routing, selection: testingMemberID == nil ? selection : "手动测试 · 指定模型")
+                    candidates: ready.map(\.1), routing: routing, selection: testingMemberID == nil ? selection : "手动测试 · 指定模型",
+                    firstOutputTimeoutSeconds: pool.firstOutputTimeoutSeconds, streamIdleTimeoutSeconds: pool.streamIdleTimeoutSeconds,
+                    retryBudgetSeconds: pool.retryBudgetSeconds,
+                    requestTimeoutSeconds: pool.requestTimeoutSeconds)
     }
 
     /// A concurrent request may have put the next model/account into cooldown
@@ -257,6 +303,7 @@ actor FreeModelGateway {
               (attempts[plan.id] ?? 0) < pool.maxAttempts else { return false }
         return (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
             && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
+            && (reservations[plan.id]?.providerID == candidate.endpoint.id || providerRateAvailable(candidate.endpoint.id, now: now))
     }
 
     func isCurrent(_ plan: Plan) -> Bool { active.contains(plan.id) && plan.revision == revision }
@@ -269,10 +316,10 @@ actor FreeModelGateway {
            !flights.contains(where: { $0.requestID == plan.id && $0.phase.isActive }) {
             // Another call can cool the account before this call starts.
             // Drop its unused reservation before selecting a different account.
-            reservations[plan.id] = nil
+            reserve(nil, for: plan.id)
             drain(now: now); publish()
         }
-        return ready.first { reservations[plan.id]?.memberID == $0.member.id || hasCapacity($0.endpoint.id) }
+        return ready.first { reservations[plan.id]?.memberID == $0.member.id || (hasCapacity($0.endpoint.id) && recoveryAvailable($0)) }
             ?? ready.first
     }
 
@@ -314,30 +361,60 @@ actor FreeModelGateway {
 
     private func hasCapacity(_ providerID: UUID) -> Bool {
         reservations.count < pool.maxConcurrent
-            && reservations.values.filter { $0.providerID == providerID }.count < pool.concurrentLimit(for: providerID)
+            && providerOccupancy[providerID, default: 0] < pool.concurrentLimit(for: providerID)
+    }
+    private func reserve(_ value: Reservation?, for id: UUID) {
+        if let old = reservations[id] {
+            providerOccupancy[old.providerID, default: 0] -= 1
+            memberOccupancy[old.memberID, default: 0] -= 1
+            if providerOccupancy[old.providerID] == 0 { providerOccupancy[old.providerID] = nil }
+            if memberOccupancy[old.memberID] == 0 { memberOccupancy[old.memberID] = nil }
+        }
+        reservations[id] = value
+        if let value {
+            providerOccupancy[value.providerID, default: 0] += 1
+            memberOccupancy[value.memberID, default: 0] += 1
+        }
+    }
+    private func recoveryAvailable(_ candidate: Candidate) -> Bool {
+        if providerCooldown[candidate.endpoint.id] != nil, providerOccupancy[candidate.endpoint.id, default: 0] > 0 { return false }
+        return (health[candidate.member.id]?.consecutiveFailures ?? 0) == 0 || memberOccupancy[candidate.member.id, default: 0] == 0
+    }
+    private func providerRateAvailable(_ id: UUID, now: Date) -> Bool {
+        guard let limit = pool.providerRequestsPerMinute[id.uuidString] else { return true }
+        providerAdmissions[id]?.prune(now: now)
+        return (providerAdmissions[id]?.count ?? 0) < limit
+    }
+    private func debitProvider(_ id: UUID, now: Date) {
+        if pool.providerRequestsPerMinute[id.uuidString] != nil {
+            providerAdmissions[id, default: RateWindow()].prune(now: now)
+            providerAdmissions[id, default: RateWindow()].append(now)
+        }
+        providerService[id, default: 0] += 1 / Double(pool.providerWeights[id.uuidString] ?? 1)
     }
     private func checkRate(now: Date) throws {
-        admitted.removeAll { now.timeIntervalSince($0) >= 60 }
+        admitted.prune(now: now)
         guard admitted.count < pool.requestsPerMinute else { throw GatewayFailure.rateLimited }
     }
     private func checkQueue(requestBytes: Int, providers: [UUID]) throws -> UUID {
         guard pool.maxQueued > 0 else { throw GatewayFailure.busy }
         guard waiters.count < pool.maxQueued, requestBytes >= 0,
-              requestBytes <= 64 * 1024 * 1024 - waiters.reduce(0, { $0 + $1.requestBytes }) else {
+              requestBytes <= 64 * 1024 * 1024 - queuedBytes else {
             throw GatewayFailure.queueFull
         }
         guard let provider = providers.first(where: { id in
-            waiters.filter { $0.providerID == id }.count < pool.providerQueueCapacity
+            queuedByProvider[id, default: 0] < pool.providerQueueCapacity
         }) else { throw GatewayFailure.queueFull }
         return provider
     }
     private func admit(_ plan: Plan, now: Date) -> Plan? {
         guard reservations.count < pool.maxConcurrent,
-              let index = plan.candidates.firstIndex(where: { hasCapacity($0.endpoint.id) }) else { return nil }
+              let index = plan.candidates.firstIndex(where: { hasCapacity($0.endpoint.id) && recoveryAvailable($0) }) else { return nil }
         var result = plan
         let selected = result.candidates.remove(at: index)
         result.candidates.insert(selected, at: 0)
-        reservations[result.id] = .init(providerID: selected.endpoint.id, memberID: selected.member.id)
+        reserve(.init(providerID: selected.endpoint.id, memberID: selected.member.id), for: result.id)
+        debitProvider(selected.endpoint.id, now: now)
         admitted.append(now); active.insert(result.id); requestCount += 1
         return result
     }
@@ -350,10 +427,11 @@ actor FreeModelGateway {
         if let held = reservations[plan.id] {
             guard held.memberID == candidate.member.id else { throw GatewayFailure.interrupted }
         } else {
-            guard hasCapacity(candidate.endpoint.id) else { return false }
+            guard hasCapacity(candidate.endpoint.id), recoveryAvailable(candidate) else { return false }
         }
         if (attempts[plan.id] ?? 0) > 0 { try checkRate(now: now); admitted.append(now) }
-        reservations[plan.id] = .init(providerID: candidate.endpoint.id, memberID: candidate.member.id)
+        if reservations[plan.id] == nil { debitProvider(candidate.endpoint.id, now: now) }
+        reserve(.init(providerID: candidate.endpoint.id, memberID: candidate.member.id), for: plan.id)
         attempts[plan.id, default: 0] += 1
         var value = health[candidate.member.id] ?? Health()
         value.lastUsed = now
@@ -375,22 +453,32 @@ actor FreeModelGateway {
             await self?.expireWaiter(id)
         }
         waiters.append(waiter)
+        queuedBytes += waiter.requestBytes
+        queuedByProvider[waiter.providerID, default: 0] += 1
         publish()
+    }
+    @discardableResult private func removeWaiter(at index: Int) -> Waiter {
+        let waiter = waiters.remove(at: index)
+        queuedBytes -= waiter.requestBytes
+        queuedByProvider[waiter.providerID, default: 0] -= 1
+        if queuedByProvider[waiter.providerID] == 0 { queuedByProvider[waiter.providerID] = nil }
+        return waiter
     }
     private func cancelWaiter(_ id: UUID) {
         guard let i = waiters.firstIndex(where: { $0.id == id }) else { return }
-        let waiter = waiters.remove(at: i)
+        let waiter = removeWaiter(at: i)
         waiter.timeout?.cancel(); waiter.fail(CancellationError())
         drain(); publish()
     }
     private func expireWaiter(_ id: UUID) {
         guard let i = waiters.firstIndex(where: { $0.id == id }) else { return }
-        let waiter = waiters.remove(at: i)
+        let waiter = removeWaiter(at: i)
         waiter.fail(GatewayFailure.queueTimedOut)
         drain(); publish()
     }
     private func failWaiters(_ error: Error) {
         let pending = waiters; waiters.removeAll()
+        queuedBytes = 0; queuedByProvider.removeAll()
         for waiter in pending { waiter.timeout?.cancel(); waiter.fail(error) }
     }
     /// Oldest runnable request wins. A blocked provider never stops another
@@ -413,19 +501,19 @@ actor FreeModelGateway {
                     try checkRate(now: now)
                     guard let admitted = admit(plan, now: now) else { i += 1; continue }
                     changed = true
-                    waiters.remove(at: i); waiter.timeout?.cancel(); continuation.resume(returning: admitted)
+                    removeWaiter(at: i); waiter.timeout?.cancel(); continuation.resume(returning: admitted)
                 case .attempt(let candidates, let plan, let continuation):
                     let ready = candidates.filter { canAttempt($0, plan: plan, now: now) }
-                    guard let candidate = ready.first(where: { hasCapacity($0.endpoint.id) }) ?? ready.first else {
+                    guard let candidate = ready.first(where: { hasCapacity($0.endpoint.id) && recoveryAvailable($0) }) ?? ready.first else {
                         throw plan.revision == revision ? GatewayFailure.coolingDown : .interrupted
                     }
                     guard try startAttempt(candidate, plan: plan, now: now) else { i += 1; continue }
                     changed = true
-                    waiters.remove(at: i); waiter.timeout?.cancel(); continuation.resume(returning: candidate)
+                    removeWaiter(at: i); waiter.timeout?.cancel(); continuation.resume(returning: candidate)
                 }
             } catch {
                 changed = true
-                waiters.remove(at: i); waiter.timeout?.cancel(); waiter.fail(error)
+                removeWaiter(at: i); waiter.timeout?.cancel(); waiter.fail(error)
             }
         }
     }
@@ -450,9 +538,10 @@ actor FreeModelGateway {
         guard plan.revision == revision, active.contains(plan.id),
               let i = flights.firstIndex(where: { $0.requestID == plan.id && $0.memberID == candidate.member.id && $0.phase.isActive }) else { return }
         if output, flights[i].phase == .streaming, now.timeIntervalSince(flights[i].updatedAt) < 0.125 { return }
+        let outputOnly = output && flights[i].phase == .streaming
         flights[i].phase = phase; flights[i].updatedAt = now
         if output { flights[i].outputPulses += 1 }
-        publish()
+        publish(outputOnly: outputOnly)
     }
 
     func report(_ candidate: Candidate, plan: Plan, status: Int, latency: Double,
@@ -464,12 +553,13 @@ actor FreeModelGateway {
         // Configuration changes invalidate health writes, but must still end
         // the actual in-flight visualization; otherwise a line would glow forever.
         defer { drain(now: now); publish() }
-        if reservations[plan.id]?.memberID == candidate.member.id { reservations[plan.id] = nil }
+        if reservations[plan.id]?.memberID == candidate.member.id { reserve(nil, for: plan.id) }
         guard plan.revision == revision, active.contains(plan.id) else { return }
         var value = health[candidate.member.id] ?? Health()
         value.lastStatus = status
         if (200..<300).contains(status) {
             value.successes += 1; value.consecutiveFailures = 0; value.cooldownUntil = nil
+            if let until = providerCooldown[candidate.endpoint.id], until <= now { providerCooldown[candidate.endpoint.id] = nil }
             value.latency = value.latency.map { $0 * 0.7 + latency * 0.3 } ?? latency
         } else if status != 0 {
             value.failures += 1; value.consecutiveFailures += 1
@@ -479,24 +569,27 @@ actor FreeModelGateway {
                 delay = 300
                 providerCooldown[candidate.endpoint.id] = now.addingTimeInterval(delay)
             case 404, 410: delay = 1800
-            case 429: delay = min(3600, max(60, retryAfter ?? 60))
-            default: delay = min(300, 15 * pow(2, Double(min(5, value.consecutiveFailures - 1))))
+            case 429:
+                delay = min(3600, max(1, retryAfter ?? 60))
+                providerCooldown[candidate.endpoint.id] = now.addingTimeInterval(delay)
+            default: delay = max(min(300, 15 * pow(2, Double(min(5, value.consecutiveFailures - 1)))), min(3600, max(0, retryAfter ?? 0)))
             }
             value.cooldownUntil = now.addingTimeInterval(delay)
         }
         health[candidate.member.id] = value
-        routes.insert(.init(memberID: candidate.member.id, date: now, model: candidate.member.model, provider: candidate.endpoint.name,
+        routes.insert(.init(requestID: plan.id, memberID: candidate.member.id, date: now, model: candidate.member.model, provider: candidate.endpoint.name,
                             status: status, latency: latency, routing: plan.routing, selection: plan.selection), at: 0)
         if routes.count > 40 { routes.removeLast(routes.count - 40) }
     }
 
     func finish(_ plan: Plan) {
-        active.remove(plan.id); attempts[plan.id] = nil; reservations[plan.id] = nil
+        active.remove(plan.id); attempts[plan.id] = nil; reserve(nil, for: plan.id)
         let owned = waiters.filter {
             if case .attempt(_, let owner, _) = $0.work { return owner.id == plan.id }
             return false
         }
-        waiters.removeAll { waiter in owned.contains(where: { $0.id == waiter.id }) }
+        let ownedIDs = Set(owned.map(\.id))
+        for i in waiters.indices.reversed() where ownedIDs.contains(waiters[i].id) { removeWaiter(at: i) }
         for waiter in owned { waiter.timeout?.cancel(); waiter.fail(GatewayFailure.interrupted) }
         for i in flights.indices where flights[i].requestID == plan.id && flights[i].phase.isActive {
             flights[i].phase = .cancelled; flights[i].updatedAt = Date()
@@ -548,11 +641,27 @@ actor FreeModelGateway {
         }
         return pair.stream
     }
-    private func removeObserver(_ id: UUID) { observers[id] = nil }
-    private func publish() {
+    private func removeObserver(_ id: UUID) {
+        observers[id] = nil
+        if observers.isEmpty { outputPublication?.cancel(); outputPublication = nil }
+    }
+    private func publish(outputOnly: Bool = false) {
         guard !observers.isEmpty else { return }
+        if outputOnly {
+            guard outputPublication == nil else { return }
+            outputPublication = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                await self?.flushOutput()
+            }
+            return
+        }
+        outputPublication?.cancel(); outputPublication = nil
         let value = snapshot()
         for observer in observers.values { observer.yield(value) }
+    }
+    private func flushOutput() {
+        guard !Task.isCancelled else { return }
+        publish()
     }
 
     func advertisedModels() -> [String] {
@@ -599,13 +708,16 @@ final class GatewayNetwork: NSObject, URLSessionTaskDelegate, @unchecked Sendabl
         }
     }
     static let shared = GatewayNetwork()
-    lazy var session: URLSession = {
+    private(set) var session: URLSession!
+    override init() {
+        super.init()
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 180
+        config.timeoutIntervalForResource = 1800
+        config.httpMaximumConnectionsPerHost = 64
         config.httpCookieStorage = nil; config.urlCache = nil
-        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
-    }()
+        session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
@@ -680,6 +792,11 @@ final class GatewayNetwork: NSObject, URLSessionTaskDelegate, @unchecked Sendabl
         if !apiKey.isEmpty { request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
         let (bytes, response) = try await session.bytes(for: request)
         defer { bytes.task.cancel() }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            bytes.task.cancel()
+        }
+        defer { deadline.cancel() }
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
             throw GatewayFailure.discoveryFailed((response as? HTTPURLResponse)?.statusCode ?? 502)
         }

@@ -90,6 +90,111 @@ enum GatewayWireAdapter {
         if let failure = error as? GatewayFailure { return failure.status }
         if error is CancellationError || error is NWError || (error as? URLError)?.code == .cancelled { return 0 }
         if error is AgentProtocolBridge.Failure { return 400 }
+        if (error as? URLError)?.code == .timedOut { return 504 }
         return 502
     }
+
+    static func retryAfter(_ value: String?, now: Date = Date()) -> TimeInterval? {
+        guard let value, value.utf8.count <= 128 else { return nil }
+        if let seconds = Double(value), seconds.isFinite, seconds >= 0 { return min(3600, seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        guard let date = formatter.date(from: value) else { return nil }
+        return min(3600, max(0, date.timeIntervalSince(now)))
+    }
+
+    static func validateChunk(_ value: [String: Any]) throws {
+        guard let choices = value["choices"] as? [[String: Any]] else { throw GatewayFailure.upstream(502) }
+        if choices.isEmpty {
+            guard value["usage"] is [String: Any] else { throw GatewayFailure.upstream(502) }
+        } else {
+            guard choices.count == 1, let first = choices.first,
+                  (first["index"] as? Int ?? 0) == 0,
+                  first["delta"] is [String: Any] || first["finish_reason"] is String else {
+                throw GatewayFailure.upstream(502)
+            }
+        }
+    }
+}
+
+/// Incremental SSE framing bounds memory before a newline arrives, including
+/// ignored fields/comments. Each input byte is visited once; no growing scans.
+struct GatewaySSEDecoder {
+    static let maxEventBytes = 1024 * 1024
+    private var line = [UInt8]()
+    private var event = Data()
+    private var hasData = false
+    private var carriageReturn = false
+    private var firstLine = true
+    private var totalBytes = 0
+
+    mutating func append(_ byte: UInt8) throws -> Data? {
+        totalBytes += 1
+        guard totalBytes <= AgentProtocolBridge.maxBytes else { throw GatewayFailure.upstream(502) }
+        if byte == 10, carriageReturn { carriageReturn = false; return nil }
+        carriageReturn = byte == 13
+        if byte == 10 || byte == 13 { return try finishLine() }
+        guard line.count < Self.maxEventBytes else { throw GatewayFailure.upstream(502) }
+        line.append(byte)
+        return nil
+    }
+    private mutating func finishLine() throws -> Data? {
+        defer { line.removeAll(keepingCapacity: true); firstLine = false }
+        if firstLine, line.starts(with: [0xEF, 0xBB, 0xBF]) { line.removeFirst(3) }
+        if line.isEmpty {
+            guard hasData else { return nil }
+            let result = event
+            event = Data(); hasData = false
+            return result
+        }
+        guard line.starts(with: [100, 97, 116, 97]), line.count == 4 || line[4] == 58 else { return nil }
+        var offset = min(5, line.count)
+        if offset < line.count, line[offset] == 32 { offset += 1 }
+        guard event.count + line.count - offset + (hasData ? 1 : 0) <= Self.maxEventBytes else { throw GatewayFailure.upstream(502) }
+        if hasData { event.append(10) }
+        event.append(contentsOf: line[offset...]); hasData = true
+        return nil
+    }
+}
+
+/// One attempt owns both clocks. A trickle of SSE comments cannot extend the
+/// first-output deadline; accepted output only disarms that clock, not total time.
+final class GatewayDeadline: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var expired = false
+    private var firstOutput = false
+    private var stopped = false
+    private var timers: [Task<Void, Never>] = []
+    private let onTotalTimeout: @Sendable () -> Void
+
+    init(firstOutput: TimeInterval, total: TimeInterval, onTotalTimeout: @escaping @Sendable () -> Void = {}) {
+        self.onTotalTimeout = onTotalTimeout
+        timers = [(firstOutput, true), (total, false)].map { seconds, first in
+            Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(max(0.001, seconds))) } catch { return }
+                self?.expire(first: first)
+            }
+        }
+    }
+    func attach(_ task: URLSessionTask) {
+        lock.lock(); self.task = task; let cancel = expired; lock.unlock()
+        if cancel { task.cancel() }
+    }
+    func receivedOutput() { lock.lock(); firstOutput = true; lock.unlock() }
+    var timedOut: Bool { lock.lock(); defer { lock.unlock() }; return expired }
+    func stop() {
+        lock.lock(); stopped = true; task = nil; lock.unlock()
+        timers.forEach { $0.cancel() }
+    }
+    private func expire(first: Bool) {
+        lock.lock()
+        guard !stopped, !first || (!firstOutput && !expired) else { lock.unlock(); return }
+        expired = true; let task = task; lock.unlock()
+        task?.cancel()
+        if !first { onTotalTimeout() }
+    }
+    deinit { timers.forEach { $0.cancel() } }
 }
