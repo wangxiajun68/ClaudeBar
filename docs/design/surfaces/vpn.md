@@ -76,21 +76,17 @@ statistics live in historical analytics, avoiding mixed single-line/three-line c
 
 ## Historical analytics
 
-One chart only. Today / 7 days / 30 days / all selects the period. The reading
-strip gives its kernel total, upload/download and lifetime total. A single blue
-248pt area/line plot switches between total, download and upload; it never mixes
-kernel totals with route sampling. Straight segments connect actual buckets
-without invented smoothed peaks. Axes carry bytes and calendar dates, including
-year/month for all-time data. Idle marks the peak; hover or select snaps to the
-nearest bucket and presents its date, amount, upload and download in a fixed
-52pt inspection row. Section text stays readable at 560pt.
-
-Proxy, direct and unclassified amounts are three aligned numeric readings, with
-no proportion or comparison chart. Domain detail defaults collapsed; expanding
-it exposes a compact numeric table and existing route sorting, without small
-bars. Top 20 remains a display limit and never truncates storage or totals.
-The prior paired route bars, hourly histogram and three overlapping trend curves
-were removed at the user's request to prioritize data expression over chart count.
+One fixed chart with no internal vertical scroll. Today / 7 days / 30 days / all
+selects the period. Three aligned readings show kernel total, proxy and direct
+traffic with upload/download beneath each. The single chart compares sampled
+proxy traffic (blue solid line) and direct traffic (green dashed line), with a
+shared byte axis, legend and total/download/upload selector. Kernel totals stay
+out of the route curves. Straight segments connect actual buckets; the chart
+uses the workspace's remaining height. A fixed 40pt inspection row shows the
+nearest selected bucket or the peak combined route bucket and both route values.
+The footer retains lifetime and unclassified totals and the sampling boundary.
+Domain tables remain in the summary workspace; analytics presents only the chart
+and its statistics. All historical domain data remains stored.
 
 Statistics use a private daily archive, independent of log clear. Empty, loading
 and storage-error states remain explicit. The page states each point is a bucket
@@ -111,7 +107,7 @@ row preparation and old-core total accumulation run in a cancellable detached
 task; only a typed Sendable snapshot crosses back to the main actor. Malformed
 payloads preserve the last live snapshot, while an explicit empty connection
 array clears it. Trend selection and measure state belong to the single chart view, so pointer
-movement never re-evaluates the totals, route readings or domain detail. Hover dates snap to the nearest sorted calendar bucket with
+movement never re-evaluates the totals or route readings. Hover dates snap to the nearest sorted calendar bucket with
 binary search, suppressing redundant updates within the same bucket. The
 inspection row has a fixed height so hover never changes scroll geometry. Typing
 uses 150ms debounce. Domain folding and sorting run only in summary mode, in the

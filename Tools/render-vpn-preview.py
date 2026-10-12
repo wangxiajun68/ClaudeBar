@@ -152,8 +152,8 @@ extension VpnDomainLogSection {
                 ("detail", AnyView(VpnDomainLogSection(fixtureMode: .detail, entries: entries)), 900, 600),
                 ("detail-compact", AnyView(VpnDomainLogSection(fixtureMode: .detail, entries: entries)), 560, 600),
                 ("summary", AnyView(VpnDomainLogSection(fixtureMode: .summary, entries: entries)), 1100, 600),
-                ("analytics", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 900, 950),
-                ("analytics-compact", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 560, 950)
+                ("analytics", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 900, 600),
+                ("analytics-compact", AnyView(VpnDomainLogSection(fixtureMode: .analytics, entries: entries)), 560, 540)
             ]
             for (name, view, width, height) in views {
                 let content = view.frame(width: width, height: height)
