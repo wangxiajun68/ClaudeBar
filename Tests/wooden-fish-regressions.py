@@ -151,12 +151,15 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         expect(!staleCompletion, "mute/teardown cancels queued playback and late UI callbacks")
         var failureReported = false
+        output.prewarm()
         output.play(volume: 0.5) { success in failureReported = !success }
         let failureDeadline = Date().addingTimeInterval(1)
         while !failureReported && Date() < failureDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
         expect(failureReported, "unavailable prepared audio reports asynchronously")
+        expect(factoryStarted.wait(timeout: .now()) == .timedOut,
+               "rewarming after stop reuses allocated voices without regenerating PCM")
         output.stop()
         for lane in 0..<7 {
             let start = WoodenFishMotion.particle(progress: -1, lane: lane, reducedMotion: false)

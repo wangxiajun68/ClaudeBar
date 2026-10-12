@@ -645,9 +645,14 @@ automatic play, hiding and confirmed reset. A 5pt native drag threshold
 prevents movement from awarding a strike. Keyboard accessibility remains.
 
 A single Canvas renders the object and bounded feedback, with an active-only
-60fps absolute-deadline cancellable refresh task, at most two dual-line rewards
-(功德 +1 / Token +1) and three particles per combo strike from
-eight onward. Reduce Motion keeps only the latest reward pair's stationary fade.
+60fps absolute-deadline cancellable refresh task. Two dual-line rewards
+(功德 +1 / Token +1) play fully; older pairs keep their original trajectories
+and fade over 180ms with a bounded tail pool. Three particles appear per combo
+strike from eight onward and fade with their pair. Reduce Motion keeps the
+latest stationary reward pair and outgoing fades. Press transitions take 80ms
+and resume from the current transform; strike impulses add without resetting
+existing rebound. Glyph layout is warmed on appearance, while audio preparation
+and playback use a serial background queue with cancellable ownership.
 No idle animation, per-move path allocation or animation-driven window sizing.
 Artwork scales are 0.36 / 0.46 / 0.56; the default body is about 90pt wide.
 The shared outline preserves transparent desktop click-through. Detailed

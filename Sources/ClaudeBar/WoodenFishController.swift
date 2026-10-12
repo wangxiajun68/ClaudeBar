@@ -119,7 +119,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard AppPresentation.allowsInterface, panel?.isVisible == true else { return }
         model.strike(automatic: automatic)
         guard !model.muted, model.volume > 0 else { return }
-        prepareAudio()
+        if audio == nil { prepareAudio() }
         guard let sound = audio else { return }
         sound.play(volume: model.volume) { [weak self, weak sound] success in
             guard let self, let sound, self.audio === sound,
@@ -131,8 +131,9 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
 
     private func prepareAudio() {
         guard AppPresentation.allowsInterface, panel?.isVisible == true,
-              !model.muted, model.volume > 0, audio == nil else { return }
-        audio = WoodenFishAudio()
+              !model.muted, model.volume > 0 else { return }
+        if let audio { audio.prewarm() }
+        else { audio = WoodenFishAudio() }
     }
 
     private func configureTimer(automatic: Bool, interval: Double) {

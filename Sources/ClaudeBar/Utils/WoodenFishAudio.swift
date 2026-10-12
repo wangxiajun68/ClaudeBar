@@ -46,17 +46,22 @@ final class WoodenFishAudio: @unchecked Sendable {
     private var voices: [AVAudioPlayer] = []
     private var cursor = 0
     private var prepared = false
+    private var ready = false
     private let voiceFactory: @Sendable (Data) -> [AVAudioPlayer]
 
     init(voiceFactory: @escaping @Sendable (Data) -> [AVAudioPlayer] = { wave in
         (0..<4).compactMap { _ in
-            guard let player = try? AVAudioPlayer(data: wave), player.prepareToPlay() else { return nil }
-            return player
+            try? AVAudioPlayer(data: wave)
         }
     }) {
         self.voiceFactory = voiceFactory
+        prewarm()
+    }
+
+    func prewarm() {
+        let ticket = lock.withLock { generation }
         queue.async { [weak self] in
-            guard let self, self.owns(0) else { return }
+            guard let self, self.owns(ticket) else { return }
             self.prepare()
         }
     }
@@ -71,7 +76,9 @@ final class WoodenFishAudio: @unchecked Sendable {
             if !self.voices.isEmpty {
                 let voice = self.voices[self.cursor]
                 self.cursor = (self.cursor + 1) % self.voices.count
-                voice.stop()
+                // stop() releases the prepared audio hardware synchronously.
+                // Pause keeps a warmed voice ready when rapid taps reuse it.
+                voice.pause()
                 voice.currentTime = 0
                 voice.volume = Float(min(1, max(0, volume)))
                 success = voice.play()
@@ -87,14 +94,22 @@ final class WoodenFishAudio: @unchecked Sendable {
     func stop() {
         // Invalidate queued requests immediately, even during a slow prepare.
         lock.withLock { generation &+= 1 }
-        queue.async { [weak self] in self?.voices.forEach { $0.stop() } }
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.voices.forEach { $0.stop() }
+            self.ready = false
+        }
     }
 
     private func owns(_ ticket: UInt) -> Bool { lock.withLock { generation == ticket } }
 
     private func prepare() {
-        guard !prepared else { return }
-        prepared = true
-        voices = voiceFactory(WoodenFishTone.wave())
+        if !prepared {
+            prepared = true
+            voices = voiceFactory(WoodenFishTone.wave())
+        }
+        guard !ready else { return }
+        voices.forEach { _ = $0.prepareToPlay() }
+        ready = true
     }
 }
