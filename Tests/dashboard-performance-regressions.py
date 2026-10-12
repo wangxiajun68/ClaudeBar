@@ -28,6 +28,10 @@ fixture = r'''
 import SwiftUI
 import Foundation
 enum Counter { static var formatted = 0 }
+enum UsageSource: String { case claude, codex }
+struct SessionUsageSummary {
+    struct Request: Hashable { let source: UsageSource; let sessionId: String }
+}
 enum PillMark { case claude, cursor, codex }
 enum Theme {
     static let claude = Color.orange, cursor = Color.blue, external = Color.green
@@ -74,6 +78,7 @@ struct DashboardFixture {
     ROW
     ROWS
     TOTAL
+    REQUESTS
 }
 @main struct Regression {
     static func main() {
@@ -93,6 +98,17 @@ struct DashboardFixture {
             precondition(Array(rows.prefix(6)).map(\.id) == Array(expected), "Source priority and visible rows must stay identical")
             precondition(f.totalSessionCount == cc + cursor + external, "Overflow count must include every live session")
             if !BASELINE { precondition(rows.count <= 6 && Counter.formatted == rows.count, "Never format a hidden overview row") }
+            if !BASELINE {
+                let requests = f.usageRequests
+                precondition(requests.count == rows.filter { $0.platform != "Cursor" }.count)
+                for row in rows {
+                    if row.platform == "Cursor" { precondition(row.usageRequest == nil) }
+                    else {
+                        precondition(row.usageRequest?.source == (row.platform == "CC" ? .claude : .codex))
+                        precondition(row.usageRequest?.sessionId != nil)
+                    }
+                }
+            }
             for row in rows.prefix(6) {
                 precondition(row.contextRatio == 0.4 && row.contextLabel == "40%" && row.updated == "刚刚")
                 precondition(row.busy && !row.waiting)
@@ -124,9 +140,13 @@ struct DashboardFixture {
     }
 }
 '''
-fixture = fixture.replace('ROW', declaration('    struct OverviewRow: Identifiable {'), 1)
+row_declaration = declaration('    struct OverviewRow: Identifiable {')
+if 'usageRequest' not in row_declaration:
+    row_declaration = row_declaration[:-1] + 'var usageRequest: SessionUsageSummary.Request? = nil\n}'
+fixture = fixture.replace('ROW', row_declaration, 1)
 fixture = fixture.replace('ROWS', declaration('    private var overviewRows:'))
 fixture = fixture.replace('TOTAL', declaration('    private var totalSessionCount:'))
+fixture = fixture.replace('REQUESTS', declaration('    private var usageRequests:') if not a.baseline_ref else 'var usageRequests: [SessionUsageSummary.Request] { [] }')
 fixture = fixture.replace('BASELINE', 'true' if a.baseline_ref else 'false')
 with tempfile.TemporaryDirectory(prefix='claudebar-dashboard-') as temporary:
     out = Path(temporary)

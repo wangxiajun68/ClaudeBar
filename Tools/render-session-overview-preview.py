@@ -165,6 +165,11 @@ for marker in ['private struct SessionActionChips', 'private struct SessionClien
                'private struct CursorTileFull', 'private struct SessionAgentDetailRow',
                'private struct ExternalSessionGridCard']:
     source += declaration('Sources/ClaudeBar/Views/Pages/SessionsView.swift', marker)
+# The dashboard shares the cumulative readout but keeps its compact card body.
+source += (root / 'Sources/ClaudeBar/Views/Shared/SessionStatusViews.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Views/Shared/ContextBar.swift').read_text() + '\n'
+source += 'struct DashboardView {\n' + declaration('Sources/ClaudeBar/Views/Pages/DashboardView.swift', '    struct OverviewRow:') + '}\n'
+source += declaration('Sources/ClaudeBar/Views/Pages/DashboardView.swift', 'private struct OverviewTile:')
 source += r'''
 @main struct Probe {
     @MainActor static func main() throws {
@@ -242,6 +247,41 @@ source += r'''
                 .environment(\.sessionUsageSummaries, summaries)
                 .environment(\.colorScheme, dark ? .dark : .light)
                 .background(Theme.bgPrimary)
+                let dashboardRows: [DashboardView.OverviewRow] = [
+                    .init(id: "cc", platform: "CC", mark: .claude, tint: Theme.claude,
+                          pillInk: Theme.Ink.claude, busy: true, project: "完善会话工作台",
+                          activity: "Bash · swift test", contextRatio: 0.188, contextLabel: "94K / 500K",
+                          updated: "18m", load: .pid(101), usageRequest: .init(source: .claude, sessionId: claude[0].sessionId)),
+                    .init(id: "cc2", platform: "CC", mark: .claude, tint: Theme.claude,
+                          pillInk: Theme.Ink.claude, busy: false, project: "梳理索引与查询流程",
+                          activity: "Read · index.swift", contextRatio: 0.825, contextLabel: "165K / 200K",
+                          updated: "4h", load: .pid(102), usageRequest: .init(source: .claude, sessionId: claude[1].sessionId)),
+                    .init(id: "cursor", platform: "Cursor", mark: .cursor, tint: Theme.cursor,
+                          pillInk: Theme.Ink.cursor, busy: false, project: "OpenClaw session debugging",
+                          activity: "Shell · git", contextRatio: 0.44, contextLabel: "44%", updated: "4h", load: .cursor),
+                    .init(id: "codex", platform: "Codex", mark: .codex, tint: Theme.external,
+                          pillInk: Theme.Ink.success, busy: true, project: "验证迁移记录和重试行为",
+                          activity: "exec", contextRatio: 0.1875, contextLabel: "48K / 256K", updated: "45m",
+                          load: .standardizedCwd("/Projects/ClaudeBar"), usageRequest: .init(source: .codex, sessionId: codex.sessionId))
+                ]
+                let overview = VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(icon: "rectangle.stack", title: "活跃会话",
+                                  tint: Theme.claude, ink: Theme.Ink.claude, count: 4)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), alignment: .top)], spacing: 16) {
+                        ForEach(dashboardRows) { row in OverviewTile(row: row, action: {}) }
+                    }
+                }
+                .padding(16).panelCard(tint: Theme.claude)
+                .padding(24).frame(width: CGFloat(width))
+                .environment(\.sessionUsageSummaries, summaries)
+                .environment(\.colorScheme, dark ? .dark : .light)
+                .background(Theme.bgPrimary)
+                let overviewRenderer = ImageRenderer(content: overview)
+                overviewRenderer.scale = 2
+                guard let overviewImage = overviewRenderer.cgImage,
+                      let overviewPNG = NSBitmapImageRep(cgImage: overviewImage).representation(using: .png, properties: [:])
+                else { fatalError("Dashboard render failed") }
+                try overviewPNG.write(to: out.appendingPathComponent("dashboard-\(width)-\(dark ? "dark" : "light").png"))
                 let renderer = ImageRenderer(content: sheet)
                 renderer.scale = 2
                 guard let image = renderer.cgImage,

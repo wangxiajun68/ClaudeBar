@@ -16,6 +16,14 @@ struct DashboardView: View {
     /// live sky without invalidating this page (see `PageScrollActivity`).
     @State private var scrollActivity = PageScrollActivity()
     @State private var scrollOwner = UUID()
+    @State private var sessionUsage: [SessionUsageSummary.Request: SessionUsageSummary] = [:]
+    @State private var usageRevision = 0
+
+    /// Query only visible cards, using the same indexed families as Sessions.
+    private var usageRequests: [SessionUsageSummary.Request] {
+        Array(Set(overviewRows.compactMap(\.usageRequest)))
+            .sorted { ($0.source.rawValue, $0.sessionId) < ($1.source.rawValue, $1.sessionId) }
+    }
 
     var body: some View {
         ScrollView {
@@ -41,6 +49,18 @@ struct DashboardView: View {
         }
         .resourceMonitorScope(.dashboard)
         .background(Theme.bgPrimary)
+        .environment(\.sessionUsageSummaries, sessionUsage)
+        .task(id: usageRevision) {
+            let requests = usageRequests
+            let result = await Task.detached(priority: .utility) { SessionUsageSummary.fetch(requests) }.value
+            guard !Task.isCancelled else { return }
+            if sessionUsage != result { sessionUsage = result }
+        }
+        .onChange(of: usageRequests) { usageRevision += 1 }
+        .onReceive(providerStore.usageIndexDidRefresh.debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)) { _ in
+            usageRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .modelPriceDidChange)) { _ in usageRevision += 1 }
     }
 
     // MARK: Title
@@ -200,6 +220,7 @@ struct DashboardView: View {
         let updated: String
         let load: ProcessSampler.Key
         var loadShared: Bool = false
+        var usageRequest: SessionUsageSummary.Request? = nil
     }
 
     private var overviewRows: [OverviewRow] {
@@ -223,7 +244,8 @@ struct DashboardView: View {
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,
-                    load: .pid(s.pid)
+                    load: .pid(s.pid),
+                    usageRequest: .init(source: .claude, sessionId: s.sessionId)
                 )
             }
         let cursorRows = providerStore.cursorSessions
@@ -265,7 +287,8 @@ struct DashboardView: View {
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,
-                    load: .standardizedCwd(s.cwd)
+                    load: .standardizedCwd(s.cwd),
+                    usageRequest: s.kind == .codex ? .init(source: .codex, sessionId: s.sessionId) : nil
                 )
             }
         return claudeRows + cursorRows + externalRows
@@ -310,9 +333,14 @@ private struct OverviewTile: View {
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                HStack(alignment: .firstTextBaseline) {
+                SessionUsageReadout(source: row.usageRequest?.source,
+                                    sessionId: row.usageRequest?.sessionId ?? row.id)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("上下文")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textSecondary)
                     RollingNumberText(row.contextRatio > 0 ? row.contextLabel : "—")
-                        .font(Theme.Font.tileValueSmall)
+                        .font(Theme.Font.caption)
                         .foregroundColor(row.contextRatio > 0 ? Theme.contextInk(row.contextRatio) : Theme.textTertiary())
                         .lineLimit(1)
                     Spacer()

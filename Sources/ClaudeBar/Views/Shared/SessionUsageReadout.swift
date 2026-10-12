@@ -29,7 +29,7 @@ struct SessionUsageReadout: View {
         let shown = usage.map { ModelPricing.present($0.cost.cost, display: costDisplay, rate: fx.effectiveRate) }
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Label("Token", systemImage: "sum")
+                Text("Token")
                     .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                     .fixedSize()
                 RollingNumberText(usage.map { TokenMagnitude.format($0.total, style: tokenUnit.rawValue) }
@@ -40,7 +40,7 @@ struct SessionUsageReadout: View {
             }
             Spacer(minLength: 0)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Label(shown?.primary == nil ? "花费" : "估算", systemImage: "creditcard")
+                Label("花费", systemImage: "creditcard")
                     .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                     .fixedSize()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -79,7 +79,7 @@ struct SessionUsageReadout: View {
         }
         return "会话累计（含子代理与工作流），不同于上下文占用\n"
             + "输入 \(usage.input) · 输出 \(usage.output) · 缓存 \(usage.cache) · 合计 \(usage.total) tokens\n"
-            + "按各日生效价目表估算，非实际账单\n"
+            + "按各日生效价目表计算\n"
             + usage.cost.detailParts(presented: shown, includeDominant: true).joined(separator: " · ")
             + usage.cost.lines.compactMap { line in
                 line.unpriced.map { "\n" + line.model + "：" + $0.explanation }

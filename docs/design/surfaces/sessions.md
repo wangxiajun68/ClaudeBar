@@ -10,7 +10,7 @@ Mode: Operate。原生 macOS SwiftUI，继承 ClaudeBar 的浅冰色／石墨色
 
 普通卡片内边距 12pt，主要行间距 8pt，上下文读数与容量条间距 5pt，容量条高度 5pt、段间距 3pt。标题使用 14pt 半粗圆体，容量读数使用 15pt 中粗圆体，其余说明沿用系统 caption／caption2，活动与会话 ID 使用系统等宽字体。项目身份与任务标题分开，避免窄卡片被路径前缀占满；不为上下文另起标签行。Codex 的模型与前八位会话 ID 共用一行，完整 ID 在 help 中可见，下一行显示项目路径与动作。Claude 显示模型与终端名称；Cursor 仅在真实 subtitle 非空时增加说明行。迁移按钮使用中性 ActionButton，恢复／目录操作继续支持鼠标、键盘焦点和 VoiceOver 的显示规则。
 
-标题下方、上下文读数之前显示累计 Token 与估算费用主读数。有效数字使用 24pt 加粗圆体与等宽数字，Token 使用可读蓝色，费用使用主文字色；图标及「Token／估算」标签使用较小的 caption2，基线对齐，不另起标签行。缺失或未计价状态保持较小的 caption 字体；第二币种与部分未计价说明保留为金额下的小字。它统计 Claude／Codex 索引中该会话及子代理、工作流的已记录总用量，包含输入、输出、缓存读取与缓存写入，不把上下文占用当作累计 Token，也不重复叠加代理流量。Cursor 缺少独立会话的 Token／花费数据，显示「Token 未提供／花费未提供」；Claude／Codex 无索引用量时显示破折号，不将缺失伪装成零。
+标题下方、上下文读数之前显示累计 Token 与花费主读数。有效数字使用 24pt 加粗圆体与等宽数字，Token 使用可读蓝色，费用使用主文字色；图标及「Token／花费」标签使用较小的 caption2，基线对齐，不另起标签行。缺失或未计价状态保持较小的 caption 字体；第二币种与部分未计价说明保留为金额下的小字。它统计 Claude／Codex 索引中该会话及子代理、工作流的已记录总用量，包含输入、输出、缓存读取与缓存写入，不把上下文占用当作累计 Token，也不重复叠加代理流量。Cursor 缺少独立会话的 Token／花费数据，显示「Token 未提供／花费未提供」；Claude／Codex 无索引用量时显示破折号，不将缺失伪装成零。
 
 费用复用 ModelPricing 与现有 Token 单位、币种显示偏好。保留每个历史日的边界，按该日生效价目表估算后汇总；不以今天的价格重算全部历史。显示结果仍有两种币种时，两个金额同时保留。全部无法计价时显示「花费未计价」，部分模型无法计价时在估算金额后标「部分」。原生 help 展示输入／输出／缓存／合计的精确数量、估算口径、非实际账单说明及各模型未计价原因，不扩大卡片常驻说明区。
 
@@ -34,6 +34,8 @@ SessionsView 持有 SessionMigrationDraft，草稿跨总览／迁移子页面切
 
 开发版可浏览流程和选择控件，但不读取外部历史、不准备迁移、不打开目标客户端。副作用入口仍由原 SessionMigrationService 与 TerminalLauncher 的 BuildChannel 闸门保护。
 
+概览的活跃会话卡片复用同一累计用量组件，Token 与花费保持 24pt 大字，标签统一为「Token／花费」；上下文占用改为较小读数并保留进度条。概览只查询当前可见的最多六张卡片，沿用索引与价格变更通知和取消检查。
+
 累计用量由后台任务按客户端各读取一次索引快照，共享给卡片；请求 ID 去重并排序，不逐卡重扫完整日志。Codex 关系识别复用按文件修改时间与大小缓存的元数据头。会话 ID 集合、用量索引或模型价格变化会触发刷新，索引通知合并 500ms；取消后的旧结果不会更新页面。SessionUsageSummary.fetch 在入口执行 BuildChannel 闸门，开发版不查询外部会话用量。
 
 ## 验证与预览
@@ -42,6 +44,6 @@ SessionsView 持有 SessionMigrationDraft，草稿跨总览／迁移子页面切
 - `make test TEST=session-migration-workspace`：执行生产草稿状态与导航请求函数，验证校验、取消、来源切换、已提交记录保留及打开重试；使用内存 actor，不读写真实客户端。
 - `make test TEST='session-migration page-frontend module-scheduling swarm-grid'`：原生历史格式、外部集成限制、列表容器与代理布局回归。
 - `python3 Tools/render-session-migration-preview.py`：合成来源、预览和记录；生成 `.build/session-migration-preview/` 的 900／1440pt、明暗及空状态图片。
-- `python3 Tools/render-session-overview-preview.py`：切片读取真实模型、SessionUsageSummary、SessionUsageReadout 及普通会话卡片，使用合成用量调用生产计价函数；生成 `.build/session-overview-preview/` 的 900／1440pt 明暗图片。
+- `python3 Tools/render-session-overview-preview.py`：切片读取真实模型、SessionUsageSummary、SessionUsageReadout 及普通会话卡片、概览活跃会话卡片，使用合成用量调用生产计价函数；生成 `.build/session-overview-preview/` 的 900／1440pt 明暗图片。
 
 ImageRenderer 预览将滚动容器展开、文本输入变为同值文本，并省略无法离线绘制的 AppKit 阴影层；总览仅覆盖普通卡片，不覆盖代理／工作流。预览不启动应用、不读取真实历史、不执行迁移。签名与编译验证不代表真实客户端迁移、系统授权、键盘或 VoiceOver 运行验证。
