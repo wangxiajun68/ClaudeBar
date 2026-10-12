@@ -33,6 +33,11 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         }.store(in: &cancellables)
         model.$muted.dropFirst().sink { [weak self] muted in
             if muted { MainActor.assumeIsolated { self?.audio?.stop() } }
+            else { DispatchQueue.main.async { self?.prepareAudio() } }
+        }.store(in: &cancellables)
+        model.$volume.dropFirst().removeDuplicates().sink { [weak self] volume in
+            if volume <= 0 { MainActor.assumeIsolated { self?.audio?.stop() } }
+            else { DispatchQueue.main.async { self?.prepareAudio() } }
         }.store(in: &cancellables)
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -81,6 +86,7 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         panel.contentView = host
         self.panel = panel
         panel.orderFrontRegardless()
+        prepareAudio()
         installMouseMonitors()
         syncPointer()
         dayTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -113,11 +119,20 @@ final class WoodenFishController: NSObject, NSWindowDelegate {
         guard AppPresentation.allowsInterface, panel?.isVisible == true else { return }
         model.strike(automatic: automatic)
         guard !model.muted, model.volume > 0 else { return }
-        if audio == nil {
-            audio = WoodenFishAudio()
-            model.soundAvailable = audio?.available == true
+        prepareAudio()
+        guard let sound = audio else { return }
+        sound.play(volume: model.volume) { [weak self, weak sound] success in
+            guard let self, let sound, self.audio === sound,
+                  AppPresentation.allowsInterface, self.panel?.isVisible == true,
+                  !self.model.muted, self.model.volume > 0 else { return }
+            self.model.soundAvailable = success
         }
-        model.soundAvailable = audio?.play(volume: model.volume) == true
+    }
+
+    private func prepareAudio() {
+        guard AppPresentation.allowsInterface, panel?.isVisible == true,
+              !model.muted, model.volume > 0, audio == nil else { return }
+        audio = WoodenFishAudio()
     }
 
     private func configureTimer(automatic: Bool, interval: Double) {

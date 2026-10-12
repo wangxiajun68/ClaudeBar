@@ -97,13 +97,67 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(!pointer.end(at: .zero), "Escape or losing focus cancels pending strike")
         var bursts = WoodenFishBurstPool()
         for id in UInt(1)...UInt(1000) { bursts.emit(id) }
-        expect(bursts.ids == Array(UInt(997)...UInt(1000)), "rapid taps retain only four newest bursts")
+        expect(bursts.ids == Array(UInt(975)...UInt(1000)), "rapid input bounds active strikes plus fading tails")
         bursts.expire(1)
-        expect(bursts.ids.count == 4, "evicted burst cleanup cannot remove newer feedback")
+        expect(bursts.ids.count == 26, "evicted burst cleanup cannot remove newer feedback")
         bursts.emit(1000)
-        expect(bursts.ids.count == 4, "duplicate trigger cannot leak a burst")
+        expect(bursts.ids.count == 26, "duplicate trigger cannot leak a burst")
         for id in bursts.ids { bursts.expire(id) }
         expect(bursts.ids.isEmpty, "finished bursts release every entry")
+        var fading = WoodenFishBurstPool()
+        fading.emit(1, at: date)
+        fading.emit(2, at: date.addingTimeInterval(0.1))
+        let boundary = date.addingTimeInterval(0.2)
+        let beforeRetirement = fading.entries[0].opacity(at: boundary, reducedMotion: false)
+        fading.emit(3, at: boundary)
+        let old = fading.entries.first { $0.id == 1 }!
+        expect(old.createdAt == date && old.retiredAt == boundary, "retiring label keeps its original trajectory clock")
+        expect(abs(old.opacity(at: boundary, reducedMotion: false) - beforeRetirement) < 0.000001,
+               "new strike cannot instantly change an existing label's opacity")
+        let halfway = old.opacity(at: date.addingTimeInterval(0.29), reducedMotion: false)
+        expect(halfway > 0 && halfway < beforeRetirement, "outgoing words fade over subsequent frames")
+        expect(old.opacity(at: date.addingTimeInterval(0.39), reducedMotion: false) == 0, "tail reaches zero before removal")
+        fading.emit(4, at: date.addingTimeInterval(0.21))
+        expect(fading.entries.first { $0.id == 1 }?.retiredAt == boundary, "later strikes do not restart old fades")
+        fading.prune(at: date.addingTimeInterval(0.51))
+        expect(fading.ids == [3, 4], "transparent settled tails are pruned")
+        fading.prune(at: date.addingTimeInterval(2))
+        expect(fading.entries.isEmpty, "natural completion releases active and outgoing feedback")
+        expect(WoodenFishMotion.impact(age: 0) == 0 && WoodenFishMotion.impact(age: 0.4) == 0,
+               "rebound starts and ends continuously")
+        let existingRebound = WoodenFishMotion.impact(age: 0.1)
+        expect(existingRebound + WoodenFishMotion.impact(age: 0) == existingRebound,
+               "another click cannot reset an existing rebound")
+        let pressedHalfway = WoodenFishMotion.press(from: 0, to: 1, age: 0.03)
+        expect(pressedHalfway > 0 && pressedHalfway < 1, "press compresses over frames rather than snapping")
+        expect(WoodenFishMotion.press(from: pressedHalfway, to: 0, age: 0) == pressedHalfway,
+               "quick release continues from the current press transform")
+        expect(WoodenFishMotion.press(from: pressedHalfway, to: 0, age: 0.08) == 0,
+               "release settles to rest without an idle clock")
+        // Slow, blocked preparation uses an empty voice factory: no real audio.
+        let factoryStarted = DispatchSemaphore(value: 0)
+        let releaseFactory = DispatchSemaphore(value: 0)
+        let output = WoodenFishAudio(voiceFactory: { _ in
+            precondition(!Thread.isMainThread, "sound preparation must stay off the main thread")
+            factoryStarted.signal()
+            releaseFactory.wait()
+            return []
+        })
+        expect(factoryStarted.wait(timeout: .now() + 2) == .success, "background audio preparation starts")
+        var staleCompletion = false
+        output.play(volume: 0.5) { _ in staleCompletion = true }
+        output.stop()
+        releaseFactory.signal()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        expect(!staleCompletion, "mute/teardown cancels queued playback and late UI callbacks")
+        var failureReported = false
+        output.play(volume: 0.5) { success in failureReported = !success }
+        let failureDeadline = Date().addingTimeInterval(1)
+        while !failureReported && Date() < failureDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(failureReported, "unavailable prepared audio reports asynchronously")
+        output.stop()
         for lane in 0..<7 {
             let start = WoodenFishMotion.particle(progress: -1, lane: lane, reducedMotion: false)
             let middle = WoodenFishMotion.particle(progress: 0.4, lane: lane, reducedMotion: false)
@@ -121,13 +175,13 @@ func expect(_ condition: @autoclosure () -> Bool, _ reason: String, line: UInt =
         expect(abs(painted.width / painted.height - (1 + sqrt(5.0)) / 2) < 0.00001, "visible resonator follows the golden ratio")
         var coalesced = WoodenFishBurstPool()
         coalesced.emit(from: 0, through: 1000, feedback: WoodenFishStrikeFeedback(combo: 32, surprise: .cache))
-        expect(coalesced.ids == Array(UInt(997)...UInt(1000)), "coalesced input preserves four independent recent words")
+        expect(coalesced.ids == [999, 1000], "coalesced input keeps the two most recent visible strikes")
         expect(coalesced.entries.filter { $0.feedback.surprise != nil }.count == 1, "coalesced events cannot duplicate a surprise")
         coalesced.emit(from: 1000, through: 1000, feedback: .init())
-        expect(coalesced.entries.count == 4, "duplicate publication creates no feedback")
+        expect(coalesced.entries.count == 2, "duplicate publication creates no feedback")
         var wrapped = WoodenFishBurstPool()
         wrapped.emit(from: UInt.max - 1, through: 1, feedback: .init())
-        expect(wrapped.ids == [UInt.max, 0, 1], "strike ID overflow still emits recent words")
+        expect(wrapped.ids == [0, 1], "strike ID overflow still emits recent words")
         let flights = (1...32).map { WoodenFishMotion.word(progress: 0.6, id: UInt($0), reducedMotion: false, displayScale: 0.72) }
         expect(Set(flights.map { Int($0.offset.x * 100) }).count > 24, "rapid strikes spread across independent horizontal paths")
         expect(Set(flights.map { Int($0.offset.y * 100) }).count > 24, "rapid strikes have different rise distances and speeds")

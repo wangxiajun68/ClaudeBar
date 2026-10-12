@@ -4,40 +4,100 @@ import CoreGraphics
 /// A bounded, view-owned pool lets quick taps overlap without accumulating
 /// views or keeping an idle display loop alive.
 struct WoodenFishBurstPool {
-    static let capacity = 4
+    static let capacity = 2
+    // Enough fading tails for two coalesced visible strikes per 60Hz frame.
+    static let retiringCapacity = 24
+    static let fadeDuration = 0.18
     struct Entry: Identifiable {
         let id: UInt
-        let createdAt = Date()
+        let createdAt: Date
         let feedback: WoodenFishStrikeFeedback
+        var retiredAt: Date?
+
+        func opacity(at now: Date, reducedMotion: Bool) -> Double {
+            let progress = max(0, now.timeIntervalSince(createdAt)) / 1.35
+            let natural = reducedMotion ? max(0, min(1, (1 - progress) / 0.35)) :
+                min(1, progress / 0.06) * max(0, min(1, (1 - progress) / 0.35))
+            return natural * retirementOpacity(at: now)
+        }
+
+        func retirementOpacity(at now: Date) -> Double {
+            guard let retiredAt else { return 1 }
+            let p = min(1, max(0, now.timeIntervalSince(retiredAt) / WoodenFishBurstPool.fadeDuration))
+            return 1 - p * p * (3 - 2 * p)
+        }
+
+        func isFinished(at now: Date) -> Bool {
+            if now.timeIntervalSince(createdAt) >= 1.42 { return true }
+            guard let retiredAt else { return false }
+            // Keep the resonator impulse until it has also settled.
+            return now.timeIntervalSince(retiredAt) >= WoodenFishBurstPool.fadeDuration
+                && now.timeIntervalSince(createdAt) >= 0.4
+        }
     }
-    private(set) var entries: [Entry] = []
+    private(set) var active: [Entry] = []
+    private(set) var retiring: [Entry] = []
+    var entries: [Entry] { retiring + active }
     var ids: [UInt] { entries.map(\.id) }
     var celebration: WoodenFishSurprise? { entries.last { $0.feedback.surprise != nil }?.feedback.surprise }
 
-    mutating func emit(_ id: UInt, feedback: WoodenFishStrikeFeedback = .init()) {
+    mutating func emit(_ id: UInt, feedback: WoodenFishStrikeFeedback = .init(),
+                       at now: Date = Date(), reducedMotion: Bool = false) {
+        prune(at: now)
         guard !ids.contains(id) else { return }
-        entries.append(Entry(id: id, feedback: feedback))
-        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+        active.append(Entry(id: id, createdAt: now, feedback: feedback))
+        let limit = reducedMotion ? 1 : Self.capacity
+        while active.count > limit {
+            var entry = active.removeFirst()
+            entry.retiredAt = now
+            retiring.append(entry)
+        }
+        if retiring.count > Self.retiringCapacity {
+            retiring.removeFirst(retiring.count - Self.retiringCapacity)
+        }
     }
 
-    // SwiftUI can coalesce several events in one frame. Preserve each recent
-    // strike's word instead of silently drawing only the last one.
-    mutating func emit(from previous: UInt, through id: UInt, feedback: WoodenFishStrikeFeedback) {
-        let count = min(id &- previous, UInt(Self.capacity))
+    // Only the newest two events in one display transaction could be visible.
+    // Previously displayed entries retain their own clock and fade-out state.
+    mutating func emit(from previous: UInt, through id: UInt, feedback: WoodenFishStrikeFeedback,
+                       at now: Date = Date(), reducedMotion: Bool = false) {
+        let count = min(id &- previous, UInt(reducedMotion ? 1 : Self.capacity))
         guard count > 0 else { return }
         for step in 0..<count {
             var snapshot = feedback
             snapshot.combo = max(0, feedback.combo - Int(count - step - 1))
             if step != count - 1 { snapshot.surprise = nil }
-            emit(id &- (count - step - 1), feedback: snapshot)
+            emit(id &- (count - step - 1), feedback: snapshot, at: now, reducedMotion: reducedMotion)
         }
     }
 
-    mutating func expire(_ id: UInt) { entries.removeAll { $0.id == id } }
+    mutating func prune(at now: Date) {
+        active.removeAll { $0.isFinished(at: now) }
+        retiring.removeAll { $0.isFinished(at: now) }
+    }
 
+    mutating func expire(_ id: UInt) {
+        active.removeAll { $0.id == id }
+        retiring.removeAll { $0.id == id }
+    }
 }
 
 enum WoodenFishMotion {
+    static func press(from: Double, to: Double, age: Double) -> Double {
+        let p = min(1, max(0, age / 0.08))
+        return from + (to - from) * (1 - pow(1 - p, 3))
+    }
+
+    /// New impulses start at zero, so rapid taps add to the existing rebound
+    /// rather than snapping the instrument back to its resting transform.
+    static func impact(age: Double) -> Double {
+        guard age >= 0, age < 0.4 else { return 0 }
+        if age < 0.045 { return age / 0.045 }
+        let tail = min(1, max(0, (0.4 - age) / 0.1))
+        return exp(-(age - 0.045) * 14) * cos((age - 0.045) * 23)
+            * tail * tail * (3 - 2 * tail)
+    }
+
     struct Particle {
         var offset: CGPoint
         var opacity: Double

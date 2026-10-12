@@ -70,6 +70,7 @@ enum AppPresentation { static var allowsInterface = true }
             PreviewDrawCounter.times.removeAll(keepingCapacity: true)
             let activeStart = cpu()
             let start = Date()
+            let firstStrikeStart = ProcessInfo.processInfo.systemUptime
             for frame in 0..<180 {
                 RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 60))
                 if frame.isMultiple(of: 5) { model.strike() }
@@ -77,6 +78,7 @@ enum AppPresentation { static var allowsInterface = true }
             let activeCPU = cpu() - activeStart
             let activeDraws = PreviewDrawCounter.count
             let activeElapsed = Date().timeIntervalSince(start)
+            let firstFrameLatency = (PreviewDrawCounter.times.first ?? firstStrikeStart) - firstStrikeStart
             let intervals = zip(PreviewDrawCounter.times.dropFirst(), PreviewDrawCounter.times)
                 .map { $0 - $1 }.sorted()
             let p95 = intervals.isEmpty ? 0 : intervals[min(intervals.count - 1, Int(Double(intervals.count) * 0.95))]
@@ -91,7 +93,7 @@ enum AppPresentation { static var allowsInterface = true }
             for index in 0..<100_000 {
                 if WoodenFishGeometry.captures(CGPoint(x: index % 188, y: index % 222), scale: model.size.scale) { hits += 1 }
             }
-            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), settled_draws=\(PreviewDrawCounter.count - settledDrawStart), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total), active_draws=\(activeDraws), draws_per_second=\(Double(activeDraws) / activeElapsed), p95_interval_ms=\(p95 * 1000), intervals_over_25ms=\(slowFrames)")
+            print("MEASURE visible muted production-view fixture: idle_3s_cpu=\(idleCPU), 12_strikes_per_second_3s_cpu=\(activeCPU), settled_3s_cpu=\(settledCPU), settled_draws=\(PreviewDrawCounter.count - settledDrawStart), hit_test_100k_cpu=\(cpu() - hitStart), hits=\(hits), strikes=\(model.total), active_draws=\(activeDraws), first_frame_latency_ms=\(firstFrameLatency * 1000), draws_per_second=\(Double(activeDraws) / activeElapsed), p95_interval_ms=\(p95 * 1000), intervals_over_25ms=\(slowFrames)")
             window.orderOut(nil)
             window.contentView = nil
             return
@@ -181,8 +183,21 @@ enum AppPresentation { static var allowsInterface = true }
             var taps = 0
             for frame in 0..<360 {
                 RunLoop.current.run(until: start.addingTimeInterval(Double(frame) / 60))
-                // First strike, then 32 quick taps: cloud overlap and all combo tiers.
-                if frame == 2 || (90...214).contains(frame) && (frame - 90).isMultiple(of: 4) {
+                // Optional pointer phases cover press/release, rapid taps,
+                // and clicking again after the animation has returned to idle.
+                if CommandLine.arguments.contains("--pointer") {
+                    if frame == 1 || (90...214).contains(frame) && (frame - 90).isMultiple(of: 4) || frame == 338 {
+                        model.isPressed = true
+                    }
+                    if frame == 3 || (92...216).contains(frame) && (frame - 92).isMultiple(of: 4) || frame == 340 {
+                        model.isPressed = false
+                        model.strike()
+                        taps += 1
+                    }
+                    if frame == 218 {
+                        precondition(model.feedback.combo == 32 && model.feedback.surprise == .cache, "rapid pointer taps retain rhythm")
+                    }
+                } else if frame == 2 || (90...214).contains(frame) && (frame - 90).isMultiple(of: 4) {
                     model.strike()
                     taps += 1
                 }
@@ -193,8 +208,13 @@ enum AppPresentation { static var allowsInterface = true }
                     to: URL(fileURLWithPath: CommandLine.arguments[1])
                         .appendingPathComponent(String(format: "motion-%03d.png", frame)))
             }
-            precondition(taps == 33 && model.total == 33, "animation preserves rapid-tap counts")
-            precondition(model.feedback.combo == 32 && model.feedback.surprise == .cache, "real fast-tap rhythm reaches all tiers")
+            if CommandLine.arguments.contains("--pointer") {
+                precondition(taps == 34 && model.total == 34 && model.feedback.combo == 1,
+                             "pointer phases preserve counts and cold return starts a new chain")
+            } else {
+                precondition(taps == 33 && model.total == 33, "animation preserves rapid-tap counts")
+                precondition(model.feedback.combo == 32 && model.feedback.surprise == .cache, "real fast-tap rhythm reaches all tiers")
+            }
             window.orderOut(nil)
             window.contentView = nil
             print("Rendered real strike animation at 60fps, including overlapping rapid taps")

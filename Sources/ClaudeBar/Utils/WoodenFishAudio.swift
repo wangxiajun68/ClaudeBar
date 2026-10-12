@@ -1,4 +1,4 @@
-import AppKit
+import AVFAudio
 
 /// A short, damped wooden resonator. PCM lives in memory; no downloaded
 /// sound, microphone permission, audio session, or filesystem write.
@@ -37,25 +37,64 @@ enum WoodenFishTone {
     }
 }
 
-@MainActor
-final class WoodenFishAudio {
-    private let voices: [NSSound]
+/// All waveform preparation, player allocation and playback stay on one queue.
+/// The lock only invalidates ownership; voices are never touched off that queue.
+final class WoodenFishAudio: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "claudebar.wooden-fish-audio", qos: .userInteractive)
+    private let lock = NSLock()
+    private var generation: UInt = 0
+    private var voices: [AVAudioPlayer] = []
     private var cursor = 0
-    var available: Bool { !voices.isEmpty }
+    private var prepared = false
+    private let voiceFactory: @Sendable (Data) -> [AVAudioPlayer]
 
-    init() {
-        let wave = WoodenFishTone.wave()
-        voices = (0..<4).compactMap { _ in NSSound(data: wave) }
+    init(voiceFactory: @escaping @Sendable (Data) -> [AVAudioPlayer] = { wave in
+        (0..<4).compactMap { _ in
+            guard let player = try? AVAudioPlayer(data: wave), player.prepareToPlay() else { return nil }
+            return player
+        }
+    }) {
+        self.voiceFactory = voiceFactory
+        queue.async { [weak self] in
+            guard let self, self.owns(0) else { return }
+            self.prepare()
+        }
     }
 
-    @discardableResult func play(volume: Double) -> Bool {
-        guard !voices.isEmpty else { return false }
-        let voice = voices[cursor]
-        cursor = (cursor + 1) % voices.count
-        voice.stop()
-        voice.volume = Float(min(1, max(0, volume)))
-        return voice.play()
+    func play(volume: Double, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        let ticket = lock.withLock { generation }
+        queue.async { [weak self] in
+            guard let self, self.owns(ticket) else { return }
+            self.prepare()
+            guard self.owns(ticket) else { return }
+            var success = false
+            if !self.voices.isEmpty {
+                let voice = self.voices[self.cursor]
+                self.cursor = (self.cursor + 1) % self.voices.count
+                voice.stop()
+                voice.currentTime = 0
+                voice.volume = Float(min(1, max(0, volume)))
+                success = voice.play()
+            }
+            let result = success
+            Task { @MainActor [weak self] in
+                guard let self, self.owns(ticket) else { return }
+                completion(result)
+            }
+        }
     }
 
-    func stop() { voices.forEach { $0.stop() } }
+    func stop() {
+        // Invalidate queued requests immediately, even during a slow prepare.
+        lock.withLock { generation &+= 1 }
+        queue.async { [weak self] in self?.voices.forEach { $0.stop() } }
+    }
+
+    private func owns(_ ticket: UInt) -> Bool { lock.withLock { generation == ticket } }
+
+    private func prepare() {
+        guard !prepared else { return }
+        prepared = true
+        voices = voiceFactory(WoodenFishTone.wave())
+    }
 }

@@ -19,7 +19,7 @@ struct WoodenFishView: View {
         .frame(width: model.size.panelSize.width, height: model.size.panelSize.height, alignment: .top)
         .preferredColorScheme(Theme.isDark ? .dark : .light)
         .onChange(of: model.strikeID) { previous, id in
-            bursts.emit(from: previous, through: id, feedback: model.feedback)
+            bursts.emit(from: previous, through: id, feedback: model.feedback, reducedMotion: reduceMotion)
         }
         .onExitCommand { model.isAutomatic = false; model.endInteraction() }
         .onChange(of: model.isAutomatic) { _, _ in bursts = .init() }
@@ -71,20 +71,36 @@ struct WoodenFishView: View {
 }
 
 /// A single, bounded drawing pass replaces independent animated text subtrees.
-/// No refresh task exists at rest; fast tapping never adds more than four entries.
+/// No refresh task exists at rest; outgoing words keep a bounded fade-out tail.
 private struct WoodenFishScene: View {
     let entries: [WoodenFishBurstPool.Entry]
     let displayScale: CGFloat
     let isPressed: Bool
     @State private var frameDate = Date()
+    @State private var pressFrom = 0.0
+    @State private var pressTo = 0.0
+    @State private var pressChangedAt = Date.distantPast
+    private struct FrameActivity: Equatable {
+        let strike: UInt?
+        let pressChangedAt: Date
+    }
     let expire: (UInt) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        scene(at: entries.isEmpty ? .distantFuture : frameDate)
+        scene(at: frameDate)
             .frame(width: 260, height: 200 + 36 / displayScale)
-            .task(id: entries.last?.id) {
-                guard let latest = entries.last else { return }
+            .onChange(of: isPressed) { _, pressed in
+                let now = Date()
+                pressFrom = WoodenFishMotion.press(from: pressFrom, to: pressTo,
+                                                   age: now.timeIntervalSince(pressChangedAt))
+                pressTo = pressed ? 1 : 0
+                pressChangedAt = now
+            }
+            .task(id: FrameActivity(strike: entries.last?.id, pressChangedAt: pressChangedAt)) {
+                let feedbackEnd = entries.last?.createdAt.addingTimeInterval(1.42) ?? .distantPast
+                let end = max(feedbackEnd, pressChangedAt.addingTimeInterval(0.08))
+                guard end > Date() else { return }
                 frameDate = Date()
                 let clock = ContinuousClock()
                 let interval = Duration.nanoseconds(16_666_667)
@@ -92,7 +108,7 @@ private struct WoodenFishScene: View {
                 do {
                     // Absolute deadlines avoid accumulating rendering time into
                     // each frame. Missed frames are skipped instead of replayed.
-                    while Date().timeIntervalSince(latest.createdAt) < 1.42 {
+                    while Date() < end {
                         deadline = deadline.advanced(by: interval)
                         if deadline <= clock.now { deadline = clock.now.advanced(by: interval) }
                         try await clock.sleep(until: deadline, tolerance: .microseconds(500))
@@ -100,7 +116,7 @@ private struct WoodenFishScene: View {
                         frameDate = Date()
                     }
                 } catch { return }
-                for entry in entries { expire(entry.id) }
+                for entry in entries where entry.isFinished(at: frameDate) { expire(entry.id) }
             }
     }
 
@@ -109,29 +125,38 @@ private struct WoodenFishScene: View {
             // Include the mallet's outer caps in the drawing surface. The shared
             // hit geometry places the instrument ten points into this canvas.
             context.translateBy(x: 10, y: 36 / displayScale)
-            let age = entries.last.map { date.timeIntervalSince($0.createdAt) } ?? 10
-            let impact: Double = reduceMotion || age >= 0.4 ? 0 :
-                age < 0.045 ? max(0, age / 0.045) : exp(-(age - 0.045) * 14) * cos((age - 0.045) * 23)
+            let impact = reduceMotion ? 0 : min(1.3, max(-0.5, entries.reduce(0) {
+                $0 + WoodenFishMotion.impact(age: date.timeIntervalSince($1.createdAt))
+            }))
             var instrument = context
             instrument.translateBy(x: 120, y: 200)
-            let press = isPressed && !reduceMotion ? 0.94 : 1.0
+            let pressAmount = reduceMotion ? 0 : WoodenFishMotion.press(from: pressFrom, to: pressTo,
+                age: date.timeIntervalSince(pressChangedAt))
+            let press = 1 - 0.06 * pressAmount
             instrument.scaleBy(x: press * (1 - 0.10 * impact), y: press * (1 - 0.13 * impact))
             instrument.rotate(by: .degrees(-1.5 * impact))
             instrument.translateBy(x: -120, y: -200)
             WoodenFishArtwork.draw(in: &instrument, impact: impact)
             // Resolve each colour's two labels once per frame, then reuse them
             // across all strikes; font layout never scales with the burst count.
-            guard !entries.isEmpty else { return }
             let normalInk = Color(hex: 0xFFF6E7)
             let goldenInk = Color(hex: 0xFFE0A6)
             let merit = context.resolve(rewardLabel("功德", ink: normalInk))
             let token = context.resolve(rewardLabel("Token", ink: normalInk))
             let goldenMerit = context.resolve(rewardLabel("功德", ink: goldenInk))
             let goldenToken = context.resolve(rewardLabel("Token", ink: goldenInk))
-            for entry in entries.suffix(reduceMotion ? 1 : 2) {
+            guard !entries.isEmpty else {
+                // Resolve cold CJK/Latin glyph layout while the toy first appears,
+                // before the user asks it to render an interactive frame.
+                let bounds = CGSize(width: 80 / displayScale, height: 24 / displayScale)
+                _ = merit.measure(in: bounds)
+                _ = token.measure(in: bounds)
+                return
+            }
+            for entry in entries {
                 let progress = max(0, date.timeIntervalSince(entry.createdAt)) / 1.35
-                guard progress >= 0, progress < 1,
-                      !reduceMotion || entry.id == entries.last?.id else { continue }
+                let opacity = entry.opacity(at: date, reducedMotion: reduceMotion)
+                guard progress < 1, opacity > 0 else { continue }
                 let motion = WoodenFishMotion.word(progress: progress, id: entry.id,
                     reducedMotion: reduceMotion, displayScale: displayScale)
                 var word = context
@@ -139,7 +164,7 @@ private struct WoodenFishScene: View {
                                  y: 91 + motion.offset.y / displayScale)
                 word.rotate(by: .degrees(motion.angle))
                 word.scaleBy(x: motion.scale, y: motion.scale)
-                word.opacity = reduceMotion ? max(0, min(1, (1 - progress) / 0.35)) : motion.opacity
+                word.opacity = opacity
                 word.addFilter(.shadow(color: Color(hex: 0x382317).opacity(0.85),
                                        radius: 0.6 / displayScale, x: 0, y: 1 / displayScale))
                 let ink = entry.feedback.isGolden ? goldenInk : normalInk
@@ -151,7 +176,7 @@ private struct WoodenFishScene: View {
                     for lane in [0, 2, 4] {
                         let particle = WoodenFishMotion.particle(progress: progress, lane: lane, reducedMotion: false)
                         var spark = context
-                        spark.opacity = particle.opacity
+                        spark.opacity = particle.opacity * entry.retirementOpacity(at: date)
                         let point = CGPoint(x: 120 + particle.offset.x, y: 91 + particle.offset.y)
                         spark.fill(Path(ellipseIn: CGRect(x: point.x, y: point.y,
                             width: 2.5 / displayScale, height: 2.5 / displayScale)), with: .color(ink))
