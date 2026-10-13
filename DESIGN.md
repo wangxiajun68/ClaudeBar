@@ -631,15 +631,19 @@ those checks.
 
 ## Multi-display island
 
-The existing hardware-black island has an entry on each enabled display.
-Notched screens preserve the two wings; other screens use a 154×28pt rounded
-capsule eight points below the menu bar, or a 42×28pt minimal entry when
-readouts are hidden. Its contour uses the existing 9%-white rim and 92%-white
-readouts. Detached alerts and details have rounded top corners and no notch
-spacer. Every screen shares one model, one open-state timer and one mouse
-monitor pair. One panel expands or alerts at a time; visible alerts keep their
-screen and carry their remaining lifetime across disconnects. See
-[the multi-display brief](docs/design/surfaces/notch-island.md).
+Hardware-notched screens retain the black wings and existing session/usage
+layout. Unnotched screens use a detached graphite status bar (232×32pt, or
+42×32pt without readouts), eight points below the menu bar. Hovering for 300ms
+reveals a 280×64pt task preview; clicking opens a fixed 360×300pt single-column
+session panel with a neutral usage footer. Outside click, close and Escape
+dismiss clicked details; pointer exit does not. The 360×72pt alert never takes
+focus. Static marks, a single static shadow, lazy rows and a 220ms transition
+replace the detached surface's notch treatment and large usage chart.
+
+Every screen shares one model and one mouse-monitor pair. Collapsed and
+click-open external details run no close polling timer. One panel expands or
+alerts at a time; visible alerts keep their screen and remaining lifetime
+across disconnects. See [the multi-display brief](docs/design/surfaces/notch-island.md).
 
 ## Desktop wooden fish
 

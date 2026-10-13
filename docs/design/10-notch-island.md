@@ -215,3 +215,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 多屏回归：`make test TEST="island-display island-coalescing island-session-alert"`。生产视图预览：`python3 Tools/render-island-preview.py`，同时生成硬件刘海／外接胶囊、收起／提醒／展开和明暗背景。回归使用合成屏幕、内存偏好和输入替身，不移动真实鼠标、不访问真实会话、不请求权限；所有夹具面板退出前关闭。
 
 **返回** [设计文档](README.md)
+
+## 无刘海屏幕呈现（2026-10-13）
+
+外接屏改用状态条、悬停摘要和点击保持的单列会话面板，不再复用硬件刘海的两列布局及大用量卡。尺寸、行为和性能边界以[多屏表面规范](surfaces/notch-island.md)为准；本页原有黑色两翼描述继续适用于硬件刘海屏。
