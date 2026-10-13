@@ -339,6 +339,8 @@ struct IslandProbe: View {
             ("peek", .peek, nil),
             ("alert", .alert, finished),
             ("expanded", .expanded, nil),
+            ("expanded-empty", .expanded, nil),
+            ("expanded-waiting", .expanded, nil),
         ]
         // A hosting-view snapshot, not `ImageRenderer`: the session grid is a
         // real `ScrollView`, and `ImageRenderer` lays none of its content out —
@@ -353,13 +355,21 @@ struct IslandProbe: View {
           for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for (name, mode, alert) in scenes {
-                if !detached && mode == .peek { continue }
+                if !detached && (mode == .peek || name.hasPrefix("expanded-")) { continue }
                 let state = NotchIslandState(geometry: geometry, showsWings: true)
                 state.mode = mode
                 state.alert = alert
                 let model = IslandLiveModel()
                 model.sessions = sessions
+                if name == "expanded-empty" { model.sessions = [] }
+                if name == "expanded-waiting" {
+                    model.sessions[0] = IslandSession(id: "waiting-long", agent: .claude,
+                        project: "openclaw-docker-builder-production-workspace", activity: "", model: "deepseek-v4.1-flash",
+                        isBusy: false, isWaiting: true, waitingReason: "等待你确认 · Bash · 执行构建命令",
+                        contextRatio: 0.7, updatedAt: Date(), cwd: "/fixture/workspace", sessionId: "waiting")
+                }
                 model.usage = usage
+                if name == "expanded-waiting" { model.usage.todayCost = fixtureCost(102.34, 728.66) }
                 model.vpnRunning = true
                 model.claudeRoute = "DeepSeek · v4"
                 model.codexRoute = "OpenAI · gpt-6-astra"

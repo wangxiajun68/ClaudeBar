@@ -133,8 +133,8 @@ extension EnvironmentValues {
 /// (sessions + usage) — and the content for the current mode fades in on top.
 ///
 /// Performance: the morph animates only the frame and two shape parameters;
-/// transitions are opacity + scale (no blur), the island casts no shadow,
-/// and nothing below here runs a per-frame timeline.
+/// transitions are opacity + scale (no blur), hardware islands cast no shadow,
+/// detached surfaces use one static shadow and no decorative loops.
 struct NotchIslandView: View {
     @ObservedObject var state: NotchIslandState
     @ObservedObject var model: IslandLiveModel
@@ -229,7 +229,7 @@ struct NotchIslandView: View {
                 Spacer(minLength: 4)
                 Circle().fill(waiting > 0 ? IslandStyle.amber : (busy > 0 ? IslandStyle.mint : IslandStyle.textSecondary))
                     .frame(width: 5, height: 5)
-                Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "进行中" : "空闲"))
+                Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "\(model.sessions.count) 个会话" : "空闲"))
                     .foregroundStyle(IslandStyle.textSecondary)
             }
         }
@@ -868,6 +868,7 @@ private struct IslandIconButton: View {
         }
         .buttonStyle(IslandPressStyle())
         .help(help)
+        .accessibilityLabel(help)
         .onHover { if hovered != $0 { hovered = $0 } }
         .animation(IslandStyle.hoverSpring, value: hovered)
     }

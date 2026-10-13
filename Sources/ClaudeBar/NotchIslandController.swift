@@ -78,7 +78,7 @@ final class NotchIslandState: ObservableObject {
 // MARK: - Controller
 
 /// Owns a fixed, transparent panel on each enabled screen. Hardware notches
-/// grow two wings; unnotched screens carry a detached capsule. One shared
+/// grow two wings; unnotched screens carry a detached status bar. One shared
 /// model and one active-panel state machine serve every entry.
 ///
 ///     collapsed ──hover 120 ms──▶ expanded ──pointer away 250 ms──▶ collapsed
@@ -86,7 +86,10 @@ final class NotchIslandState: ObservableObject {
 ///         └──session finished──▶ alert ──click──┘
 ///                                  └──6 s (paused while hovered) / 继续──▶ collapsed
 ///
-/// Collapsed hardware entries ignore the mouse; capsules accept clicks only
+/// External entries preview on hover (300 ms); clicking opens persistent
+/// details with outside-click / Escape dismissal and no close timer. Only that
+/// explicitly opened panel can become key; previews and alerts never take focus.
+/// Collapsed hardware entries ignore the mouse; status bars accept clicks only
 /// inside their contour. A shared global + local mouse event
 /// monitor watches the hot zone (mouse-only monitors need no Accessibility
 /// permission). Open, the same monitors arm the mouse only while the pointer
@@ -434,18 +437,19 @@ final class NotchIslandController {
             MainActor.assumeIsolated { self?.handlePointerEvent(event) }
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask.union(.keyDown)) { [weak self] event in
-            MainActor.assumeIsolated {
-                if event.type == .keyDown {
-                    if event.keyCode == 53, self?.clickOpened == true {
-                        self?.collapse(animated: true)
-                        return nil
-                    }
-                    return event
-                }
+            let consumed = MainActor.assumeIsolated {
+                if event.type == .keyDown { return self?.handleKeyEvent(event) ?? false }
                 self?.handlePointerEvent(event)
-                return event
+                return false
             }
+            return consumed ? nil : event
         }
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 53, clickOpened else { return false }
+        collapse(animated: true)
+        return true
     }
 
     private func handlePointerEvent(_ event: NSEvent) {
@@ -715,7 +719,8 @@ final class NotchIslandController {
 
 // MARK: - Panel
 
-/// Borderless, non-activating, never-key panel above the menu bar.
+/// Borderless, non-activating panel. Keyboard focus is opt-in on an explicit
+/// external-details click so Escape works without global keyboard monitoring.
 private final class NotchIslandPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(origin: .zero, size: IslandStyle.panelSize),

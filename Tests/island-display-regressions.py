@@ -114,6 +114,20 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
                "outside click releases keyboard and closes details")
         controller.cancelArming()
         Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
+        externalHost.rootView.actions.expandFromAlert()
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: external.panel.windowNumber, context: nil, characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        expect(controller.handleKeyEvent(escape) && external.state.mode == .collapsed,
+               "Escape dismisses click-open details")
+        expect(!controller.handleKeyEvent(escape), "collapsed entry does not swallow keyboard input")
+        controller.pointerMoved(); pause(0.35)
+        expect(external.state.mode == .peek, "hover preview reopens after dismissal")
+        Pointer.location = .zero
+        controller.tick(); pause(0.35)
+        expect(external.state.mode == .collapsed && controller.tickTimer == nil,
+               "leaving preview closes it and releases polling")
+        Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
         var session = fixtureSessions()[0]
         session.pid = 1
         model.finished.send(session)
