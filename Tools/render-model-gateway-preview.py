@@ -58,8 +58,19 @@ enum FilePaths { static let proxyTokenFile = URL(fileURLWithPath:CommandLine.arg
 enum CodexProxyServer { static var configuredToken: String { "preview-token" } }
 struct CodexModelConfig: Identifiable, Equatable { var id = UUID(); var name: String; var contextWindow = "64000" }
 struct CodexProvider: Identifiable, Equatable {
-    var id: UUID; var name: String; var baseURL: String; var apiKey = "preview-key"; var models: [CodexModelConfig]
+    var id: UUID; var name: String; var baseURL: String; var apiKey = "preview-key"; var wireAPI = "chat"; var models: [CodexModelConfig]
     var activeModel: CodexModelConfig? { models.first }
+}
+enum ModelListFetcher {
+    struct ModelCapability {
+        var inputModalities: Set<String>?
+        var outputModalities: Set<String>?
+        var supportsTools: Bool?
+        var supportsJSON: Bool?
+    }
+    struct Payload { var capabilities: [String: ModelCapability] = [:] }
+    enum Outcome { case success(Payload), failure(String) }
+    static func fetch(baseURL: String, apiKey: String, wireAPI: String) async -> Outcome { .success(.init()) }
 }
 enum PreviewScreen { static var discovery = false; static var editor = false; static var settings = false; static var admission = false; static var importSelected = false; static var routes = false; static var connections = false; static var queue = false }
 enum PreviewMotion { static var reduce = false }

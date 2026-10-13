@@ -235,8 +235,15 @@ struct FreeModelGatewayView: View {
             Text("\(item.provider) · \(item.member.contextLength.formatted()) 上下文")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON, text: true,
-                media: item.member.discovered ? item.member.mediaCapabilities : (item.member.mediaCapabilities?.isEmpty == true ? nil : item.member.mediaCapabilities))
+            HStack(spacing: 8) {
+                GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON, text: true,
+                    media: item.member.discovered ? item.member.mediaCapabilities : (item.member.mediaCapabilities?.isEmpty == true ? nil : item.member.mediaCapabilities))
+                if !item.member.discovered && (item.member.mediaCapabilities?.isEmpty ?? true) {
+                    Button { edit(item.member) } label: { AppGlyph(name: "slider.horizontal.3", size: 13) }
+                        .buttonStyle(.plain).disabled(!editable).help("编辑并确认这个模型的能力")
+                        .accessibilityLabel("编辑并确认模型能力")
+                }
+            }
             HStack(spacing: 7) {
                 Circle().fill(item.state.tint).frame(width: 6, height: 6)
                 Text("\(item.state.title) · 成功 \(health?.successes ?? 0) / 失败 \(health?.failures ?? 0)")
