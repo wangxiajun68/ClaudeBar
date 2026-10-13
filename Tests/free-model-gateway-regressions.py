@@ -83,6 +83,12 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         let multimodal: [String:Any] = ["messages":[["role":"user","content":[audioPart,videoPart,pdfPart]]],"max_tokens":1]
         let mediaRequirements = try GatewayRequirements(chat:multimodal)
         precondition(mediaRequirements.media == [.audioInput,.videoInput,.fileInput])
+        for content: Any in [42, true, ["unsupported":"shape"]] {
+            do { _ = try GatewayRequirements(chat:["messages":[["role":"user","content":content]]]); fatalError("silently discarded Chat content") }
+            catch { precondition(error as? GatewayFailure == .invalidRequest) }
+        }
+        do { _ = try GatewayRequirements(chat:["messages":[["role":"assistant","content":"", "audio":["id":"foreign-audio"]]]]); fatalError("replayed foreign audio ID") }
+        catch { precondition(error as? GatewayFailure == .invalidRequest) }
         precondition(mediaRequirements.context == 1 + 1024 + 8192 + 16384 + 16384)
         var mediaMember = FreeModelPool.Member(providerID:UUID(),model:"multimodal",name:"Multimodal",contextLength:128000,
             supportsTools:true,supportsImages:true,supportsJSON:true)
@@ -112,6 +118,14 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
             ["type":"input_file","file_url":"https://media.example/report.pdf"]]]]]
         let mediaAdapted = try GatewayWireAdapter.request(mediaResponses,path:"/v1/responses")
         precondition(try GatewayRequirements(chat:mediaAdapted.chat).media == [.audioInput,.videoInput,.fileInput])
+        for malformed: [String:Any] in [
+            ["instructions":"must not silently become the entire request","input":[1,2]],
+            ["input":[["role":"user","content":42]]],
+            ["input":[["type":"function_call_output","call_id":"call","output":[audioPart]]]]
+        ] {
+            do { _ = try GatewayWireAdapter.request(malformed,path:"/v1/responses"); fatalError("silently discarded input") }
+            catch { precondition(error as? GatewayFailure == .invalidRequest) }
+        }
         let mediaMessages: [String:Any] = ["max_tokens":100,"messages":[["role":"user","content":[
             ["type":"document","source":["type":"base64","media_type":"application/pdf","data":"JVBERg=="]]]]]]
         precondition(try GatewayRequirements(chat:GatewayWireAdapter.request(mediaMessages,path:"/v1/messages").chat).media == [.fileInput])
@@ -702,6 +716,9 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         await vectorGateway.report(vectorTwo.candidates[0],plan:vectorTwo,status:429,latency:0.1,retryAfter:60,now:rateNow)
         await vectorGateway.finish(vectorTwo)
         await expect(.coolingDown) { _ = try await vectorGateway.begin(vectorRequirements,now:rateNow) }
+        vectors.members[0].contextLength = 1
+        let shortVectors = await configured(vectors)
+        await expect(.noCompatibleModel) { _ = try await shortVectors.begin(vectorRequirements,now:rateNow) }
         print("PASS: embeddings never fail over or balance into a different vector space")
         var stressPool = weighted
         stressPool.maxConcurrent = 64; stressPool.defaultProviderConcurrent = 64
@@ -1188,7 +1205,15 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                 headers = {'Content-Type':'application/json','User-Agent':'fixture-third-party'}
                 if auth: headers['Authorization'] = 'Bearer ' + token
                 connection.request('POST',path,json.dumps(payload),headers)
-                response = connection.getresponse(); data = response.read(); status = response.status
+                response = connection.getresponse(); status = response.status
+                try:
+                    data = response.read()
+                except http.client.IncompleteRead as error:
+                    assert auth and mode == 'media-native-speech-truncated', mode
+                    assert response.getheader('Content-Length') == '999999'
+                    data = error.partial
+                else:
+                    assert not auth or mode != 'media-native-speech-truncated', 'client must detect truncated audio'
                 if auth and mode != 'count-tokens':
                     assert response.getheader('X-Request-ID'), (mode,dict(response.getheaders()))
                 connection.close()

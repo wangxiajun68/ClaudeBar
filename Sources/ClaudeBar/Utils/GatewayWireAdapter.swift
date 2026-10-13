@@ -69,12 +69,18 @@ enum GatewayWireAdapter {
                     guard ["message", "function_call", "function_call_output", "reasoning"].contains(value["type"] as? String ?? "") else {
                         throw GatewayFailure.invalidRequest
                     }
-                    if value["type"] as? String == "message", let parts = value["content"] as? [[String: Any]] {
-                        value["content"] = try parts.map(normalizeResponsePart)
+                    if value["type"] as? String == "message" {
+                        if let parts = value["content"] as? [[String: Any]] { value["content"] = try parts.map(normalizeResponsePart) }
+                        else if !(value["content"] is String) { throw GatewayFailure.invalidRequest }
+                    }
+                    if value["type"] as? String == "function_call_output", let parts = value["output"] as? [[String: Any]] {
+                        guard parts.allSatisfy({ ["text", "input_text", "output_text", "input_image", "image_url"].contains($0["type"] as? String ?? "") }) else {
+                            throw GatewayFailure.invalidRequest
+                        }
                     }
                     return value
                 }
-            }
+            } else { throw GatewayFailure.invalidRequest }
             try validateResponsesTools(responses["tools"] as? [[String: Any]] ?? [])
             var chat = CodexProxyTransform.responsesToChatRequest(responses, registry: &registry, allowMedia: true)
             carryParameters(json, into: &chat)

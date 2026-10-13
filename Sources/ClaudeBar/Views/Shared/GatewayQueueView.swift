@@ -82,7 +82,7 @@ struct GatewayQueueView: View {
         let displayedItems = items
         VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
-                HStack { heading; Spacer(minLength: 8); capacity }
+                HStack { heading.fixedSize(); Spacer(minLength: 8); capacity }
                 VStack(alignment: .leading, spacing: 8) { heading; capacity }
             }
             GeometryReader { proxy in
@@ -135,10 +135,11 @@ struct GatewayQueueView: View {
     }
     private var capacity: some View {
         HStack(spacing: 8) {
-            Text("并发 \(snapshot.active) / \(pool.maxConcurrent)").font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary)
+            Text("并发 \(snapshot.active) / \(pool.maxConcurrent)").font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary).fixedSize()
             HStack(spacing: 3) {
-                ForEach(0..<pool.maxConcurrent, id: \.self) { index in
-                    Capsule().fill(index < snapshot.active ? Theme.Ink.claude : Theme.hairline).frame(width: 4, height: 12)
+                ForEach(0..<min(16, pool.maxConcurrent), id: \.self) { index in
+                    Capsule().fill(index * pool.maxConcurrent < snapshot.active * min(16, pool.maxConcurrent)
+                                   ? Theme.Ink.claude : Theme.hairline).frame(width: 4, height: 12)
                 }
             }.accessibilityHidden(true)
         }.help("全局实际占用 \(snapshot.active) 个并发额度，上限 \(pool.maxConcurrent)。每供应商另有独立上限。")

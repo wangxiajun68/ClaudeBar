@@ -992,6 +992,11 @@ final class CodexProxyServer: @unchecked Sendable {
             if adapted.operation == .speech {
                 let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased().split(separator: ";").first.map(String.init) ?? ""
                 guard ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/flac", "audio/ogg", "audio/opus", "audio/aac", "audio/pcm", "application/octet-stream"].contains(contentType) else { throw GatewayFailure.upstream(502) }
+                var lengthHeader = ""
+                if let length = http.value(forHTTPHeaderField: "Content-Length") {
+                    guard let size = Int(length), size > 0, size <= responseLimit else { throw GatewayFailure.upstream(502) }
+                    lengthHeader = "Content-Length: \(size)\r\n"
+                }
                 var chunk = Data(), count = 0
                 for try await byte in bytes {
                     count += 1
@@ -1001,7 +1006,7 @@ final class CodexProxyServer: @unchecked Sendable {
                         deadline.receivedOutput(); latency = Date().timeIntervalSince(started)
                         await FreeModelGateway.shared.receivedOutput(candidate, plan: plan)
                         headWritten = true
-                        try await writeMigration(connection, data: Data("HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nX-Request-ID: \(plan.id.uuidString)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8))
+                        try await writeMigration(connection, data: Data("HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\n\(lengthHeader)X-Request-ID: \(plan.id.uuidString)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8))
                     }
                     if chunk.count >= 16 * 1024 {
                         try Self.throwIfInterrupted(tap)
@@ -1069,7 +1074,8 @@ final class CodexProxyServer: @unchecked Sendable {
                         throw GatewayFailure.upstream(502)
                     }
                     if let error = delta["error"] as? [String: Any] {
-                        throw GatewayFailure.upstream(error["code"] as? Int ?? 502)
+                        let status = error["code"] as? Int ?? 502
+                        throw GatewayFailure.upstream((400...599).contains(status) ? status : 502)
                     }
                     try GatewayWireAdapter.validateChunk(delta)
                     // Usage-only chunks do not commit the downstream response.

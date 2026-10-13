@@ -107,6 +107,8 @@ OpenRouter 使用 `require_parameters` 避免静默丢弃工具或 JSON 参数�
 
 本次并未支持 Gemini 原生入口、Realtime/WebSocket、multipart 转录/翻译/图像编辑、视频生成及异步任务 API。完整矩阵和对应官方协议依据见对比文档。
 
+Chat 音频历史中的供应商私有 `audio.id` 不能跨供应商重放，请携带实际音频输入或文本转录；Responses 工具结果内的音频/视频/PDF 不进行有损降级。二进制语音保留上游声明的响应长度，传输不足时客户端可以检测截断；已经输出后只关闭失败连接，不重试、不向音频尾部拼接 JSON/SSE。
+
 第三方远端供应商复用已保存的 HTTP／HTTPS Chat 地址与 Key，不因 HTTP 协议阻止入池。Base URL 不接受内嵌凭据、查询或片段；本机上游仍禁止，避免回到自身代理。OpenRouter 免费目录仍限官方 HTTPS 地址，不能通过 HTTP 绕过免费目录校验。重定向不携带任何密钥继续请求。本机代理仍要求本机令牌，客户端供应商凭据不透传。模型池只持久化供应商 UUID 和模型元数据，文件通过 `PrivateFileWriter` 原子写入、权限 0600，使用 `FilePaths.freeModelPoolFile` 随 dev / release 隔离。损坏或未知版本文件保留原样，不自动覆盖。
 
 发现目录的连接选择将地址与 Key 相同的 Claude Code／Codex 配置显示为一个共享连接；选中时沿用原供应商 UUID，不合并或改写保存的配置、模型池成员和并发额度。不同 Key 的连接保持独立，显示来源和配置标识，搜索支持来源与主机名。

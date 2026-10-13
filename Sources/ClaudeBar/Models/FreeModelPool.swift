@@ -268,6 +268,8 @@ struct GatewayRequirements: Sendable {
             if values.contains("image") { media.insert(.imageOutput) }
         }
         for message in messages {
+            // Audio IDs belong to an upstream's private conversation state.
+            guard message["audio"] == nil else { throw GatewayFailure.invalidRequest }
             if message["tool_calls"] != nil || message["role"] as? String == "tool" {
                 tools = true
                 if let calls = message["tool_calls"] { bytes += (try JSONSerialization.data(withJSONObject: calls)).count }
@@ -298,6 +300,8 @@ struct GatewayRequirements: Sendable {
                     default: throw GatewayFailure.invalidRequest
                     }
                 }
+            } else if let content = message["content"], !(content is NSNull) {
+                throw GatewayFailure.invalidRequest
             }
         }
         if let declarations = chat["tools"] { bytes += (try JSONSerialization.data(withJSONObject: declarations)).count }

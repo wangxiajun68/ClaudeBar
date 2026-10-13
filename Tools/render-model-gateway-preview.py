@@ -262,6 +262,7 @@ private final class VisibleFixtureWindow: NSWindow {
             ("queue",900.0,500.0,false,5,true,false),
             ("queue-dark",900.0,500.0,true,5,true,false),
             ("queue-compact",560.0,760.0,false,5,true,false),
+            ("queue-capacity",400.0,760.0,false,5,true,false),
             ("queue-idle",900.0,500.0,false,5,false,false),
             ("connections",350.0,410.0,false,1,false,false),
             ("connections-dark",350.0,410.0,true,1,false,false),
@@ -297,6 +298,7 @@ private final class VisibleFixtureWindow: NSWindow {
             AppPreferences.shared.isDark = dark
             store.seed(count:count,live:live,long:long)
             if PreviewScreen.queue && live {
+                if name == "queue-capacity" { store.pool.maxConcurrent = 64 }
                 let routing = GatewayTaskRouting(kind:.coding,difficulty:.medium,source:.automatic,reason:"fixture")
                 store.snapshot.active = 3; store.snapshot.queued = 5
                 store.snapshot.queue = (0..<5).map { i in

@@ -221,6 +221,10 @@ actor FreeModelGateway {
         var routing = requirements.routing
         let levels = routing.source == .explicit ? [routing.difficulty]
             : Array(GatewayTaskDifficulty.allCases.drop { $0 != routing.difficulty })
+        // Pin before capability/context/health filtering: a longer input or a
+        // missing credential must not silently change the embedding space.
+        let pinnedEmbedding = requirements.nativeEndpoint && requirements.media.contains(.embeddings)
+            ? pool.members.first { $0.enabled && ($0.mediaCapabilities ?? []).contains(.embeddings) }?.model : nil
         var free: [(Int, Candidate)] = []
         // Automatic estimates may rise to a configured stronger tier when
         // none fits. Explicit client tiers are strict. Admission and every
@@ -228,6 +232,7 @@ actor FreeModelGateway {
         for level in levels {
             free = pool.members.enumerated().compactMap { index, member -> (Int, Candidate)? in
                 guard testingMemberID == nil || member.id == testingMemberID,
+                      pinnedEmbedding == nil || member.model == pinnedEmbedding,
                       member.enabled, let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return nil }
                 if FreeModelPool.isOpenRouter(endpoint.baseURL) {
                     guard !requirements.nativeEndpoint,
@@ -253,11 +258,6 @@ actor FreeModelGateway {
                 throw GatewayFailure.noCompatibleModel
             }
             throw GatewayFailure.emptyPool
-        }
-        // Embeddings from different models do not share a vector space, even
-        // when their dimensions match. Pin before health/weight ordering.
-        if requirements.nativeEndpoint, requirements.media.contains(.embeddings), let model = free.first?.1.member.model {
-            free.removeAll { $0.1.member.model != model }
         }
         let ready = free.filter { _, candidate in
             (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
