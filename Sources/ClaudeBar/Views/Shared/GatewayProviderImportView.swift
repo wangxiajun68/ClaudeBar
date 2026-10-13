@@ -40,6 +40,8 @@ struct GatewayProviderImportView: View {
     @FocusState private var contextFocus: String?
     private var joined: Set<String> { Set(gateway.pool.members.map(\.id)) }
     private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) && issue(for: $0.providerID) == nil } }
+    private var syncableCount: Int { gateway.pool.members.filter { !$0.discovered
+        && fetchedCapabilities[$0.providerID.uuidString + ":" + $0.model.lowercased()] != nil }.count }
     private var validSelection: Bool {
         !selectedEntries.isEmpty && selectedEntries.allSatisfy { (Int($0.context) ?? 0) > 0 }
     }
@@ -119,7 +121,7 @@ struct GatewayProviderImportView: View {
                     ActionButton("读取模型能力", symbol: "arrow.down.circle", action: fetchCapabilities)
                         .disabled(!gateway.canEdit || submitted || fetchingCapabilities)
                     ActionButton("同步已入池", symbol: "arrow.triangle.2.circlepath", action: syncExistingCapabilities)
-                        .disabled(!gateway.canEdit || submitted || fetchedCapabilities.isEmpty)
+                        .disabled(!gateway.canEdit || submitted || syncableCount == 0)
                     if fetchingCapabilities { ProgressView().controlSize(.small) }
                     if let capabilityMessage {
                         Text(capabilityMessage).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
@@ -272,6 +274,7 @@ struct GatewayProviderImportView: View {
     }
 
     private func syncExistingCapabilities() {
+        guard syncableCount > 0 else { return }
         let known = fetchedCapabilities
         gateway.change { pool in
             for index in pool.members.indices where !pool.members[index].discovered {

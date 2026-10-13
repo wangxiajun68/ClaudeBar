@@ -473,6 +473,10 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         let advertisedMedia = await directory.advertisedCapabilities()
         precondition(advertisedMedia.input == ["audio","file","image","text"])
         precondition(advertisedMedia.output == ["text"] && advertisedMedia.features == ["imageGeneration"])
+        advertised.members[0].supportsChat = false
+        let nativeOnlyDirectory = await configured(advertised)
+        let nativeOnlyMedia = await nativeOnlyDirectory.advertisedCapabilities()
+        precondition(nativeOnlyMedia.input == ["image","text"] && nativeOnlyMedia.features == ["imageGeneration"])
         // Actor scheduling must not let an expired waiter race its timeout
         // task and consume a newly available permit.
         let deadlines = await configured(pool)
@@ -1054,7 +1058,9 @@ class Upstream(BaseHTTPRequestHandler):
                     self.wfile.write(b'<html>not audio</html>'); return
                 if self.mode.endswith('-truncated'):
                     self.send_response(200); self.send_header('Content-Type','audio/mpeg'); self.send_header('Content-Length','999999'); self.end_headers()
-                    self.wfile.write(b'ID3'+b'x'*32765); self.wfile.flush(); return
+                    for _ in range(8):
+                        self.wfile.write(b'ID3'+b'x'*32765); self.wfile.flush()
+                    return
                 self.send_response(200); self.send_header('Content-Type','audio/mpeg'); self.end_headers()
                 for _ in range(8):
                     self.wfile.write(b'ID3'+b'x'*32765); self.wfile.flush()

@@ -677,17 +677,25 @@ actor FreeModelGateway {
 
     func advertisedCapabilities() -> (input: [String], output: [String], features: [String]) {
         guard pool.enabled else { return ([], [], []) }
-        let members = pool.members.filter { $0.enabled && !(endpoints[$0.providerID]?.apiKey.isEmpty ?? true) }
+        let catalogFresh = Date().timeIntervalSince(pool.discoveredAt ?? .distantPast) < 48 * 3600
+        let members = pool.members.filter { member in
+            guard member.enabled, !member.difficulties.isEmpty,
+                  let endpoint = endpoints[member.providerID], !endpoint.apiKey.isEmpty else { return false }
+            return !FreeModelPool.isOpenRouter(endpoint.baseURL)
+                || catalogFresh && catalogByID[member.model] != nil
+        }
         var input = Set<String>(), output = Set<String>(), features = Set<String>()
         for member in members {
             if member.supportsChat { input.insert("text"); output.insert("text") }
-            if member.supportsImages { input.insert("image") }
             let media = member.mediaCapabilities ?? []
-            if media.contains(.audioInput) { input.insert("audio") }
-            if media.contains(.videoInput) { input.insert("video") }
-            if media.contains(.fileInput) { input.insert("file") }
-            if media.contains(.audioOutput) { output.insert("audio") }
-            if media.contains(.imageOutput) { output.insert("image") }
+            if member.supportsChat {
+                if member.supportsImages { input.insert("image") }
+                if media.contains(.audioInput) { input.insert("audio") }
+                if media.contains(.videoInput) { input.insert("video") }
+                if media.contains(.fileInput) { input.insert("file") }
+                if media.contains(.audioOutput) { output.insert("audio") }
+                if media.contains(.imageOutput) { output.insert("image") }
+            }
             for capability in [GatewayMediaCapability.imageGeneration, .speechSynthesis, .embeddings, .rerank]
                 where media.contains(capability) { features.insert(capability.rawValue) }
         }
