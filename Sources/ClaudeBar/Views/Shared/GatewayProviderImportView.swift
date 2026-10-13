@@ -37,6 +37,7 @@ struct GatewayProviderImportView: View {
     @State private var fetchingCapabilities = false
     @State private var capabilityMessage: String?
     @State private var capabilityTask: Task<Void, Never>?
+    @State private var hasAutoFetched = false
     @FocusState private var contextFocus: String?
     private var joined: Set<String> { Set(gateway.pool.members.map(\.id)) }
     private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) && issue(for: $0.providerID) == nil } }
@@ -149,8 +150,8 @@ struct GatewayProviderImportView: View {
             }.padding(20).background(Theme.cardSurface)
         }.frame(width: 620, height: 680).background(Theme.bgPrimary).foregroundStyle(Theme.textPrimary)
             .interactiveDismissDisabled(submitted)
-            .onAppear { syncEntries() }
-            .onChange(of: gateway.connections) { _, _ in syncEntries() }
+            .onAppear { syncEntries(); autoFetchIfReady() }
+            .onChange(of: gateway.connections) { _, _ in syncEntries(); autoFetchIfReady() }
             .onDisappear { capabilityTask?.cancel() }
     }
 
@@ -185,6 +186,7 @@ struct GatewayProviderImportView: View {
         let catalog = gateway.connections.contains { $0.id == item.providerID && FreeModelPool.isOpenRouter($0.baseURL) }
         let blocked = issue(for: item.providerID) != nil
         let invalid = (Int(item.context) ?? 0) <= 0
+        let capability = capability(for: item.providerID, model: item.model)
         return HStack(spacing: 12) {
             if exists {
                 AppGlyph(name: "checkmark.circle", size: 18).foregroundStyle(Theme.Ink.success).frame(width: 22)
@@ -198,6 +200,11 @@ struct GatewayProviderImportView: View {
                 Text(item.model).font(Theme.Font.chromeEmph).lineLimit(1).truncationMode(.middle).help(item.model)
                 Text(item.providerName + (exists ? " · 已在池内" : (blocked ? " · 请先完善接口" : "")))
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).lineLimit(1).help(item.providerName)
+                if !catalog {
+                    Text(capability.map(capabilitySummary) ?? "模态待确认")
+                        .font(Theme.Font.micro).foregroundStyle(capability == nil ? Theme.textSecondary : Theme.Ink.success)
+                        .lineLimit(1).help(capability.map(capabilitySummary) ?? "供应商未提供逐模型模态，可手动声明")
+                }
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
@@ -246,6 +253,29 @@ struct GatewayProviderImportView: View {
 
     private func capability(for providerID: UUID, model: String) -> ModelListFetcher.ModelCapability? {
         fetchedCapabilities[providerID.uuidString + ":" + model.lowercased()]
+    }
+
+    private func capabilitySummary(_ value: ModelListFetcher.ModelCapability) -> String {
+        var names: [String] = []
+        if let input = value.inputModalities {
+            if input.contains("image") { names.append("图片输入") }
+            if input.contains("audio") { names.append("音频输入") }
+            if input.contains("video") { names.append("视频输入") }
+            if input.contains("file") { names.append("PDF 输入") }
+        }
+        if let output = value.outputModalities {
+            if output.contains("image") { names.append("图片输出") }
+            if output.contains("audio") { names.append("语音输出") }
+        }
+        return names.isEmpty ? "目录未声明其他模态" : names.joined(separator: " · ")
+    }
+
+    private func autoFetchIfReady() {
+        guard !hasAutoFetched, gateway.canEdit,
+              gateway.connections.contains(where: { providerIDs.contains($0.id) && issue(for: $0.id) == nil
+                  && !FreeModelPool.isOpenRouter($0.baseURL) }) else { return }
+        hasAutoFetched = true
+        fetchCapabilities()
     }
 
     private func fetchCapabilities() {
