@@ -66,7 +66,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         let model = controller.model!
         expect(controller.surfaces.count == 2 && IslandLiveModel.instances == 1, "two panels share one model")
         let external = controller.surfaces[b.id]!
-        expect(external.state.collapsedSize == CGSize(width: 232, height: 32), "compact external capsule has no hardware gap")
+        expect(external.state.collapsedSize == CGSize(width: 440, height: 48), "compact external capsule has no hardware gap")
         expect(external.panel.frame.maxY == b.geometry.anchorY, "capsule canvas starts below the menu bar")
         let entry = b.geometry.topRect(external.state.collapsedSize)
         expect(!external.contains(CGPoint(x: entry.minX + 1, y: entry.maxY - 1)), "rounded transparent corners pass through")
@@ -102,7 +102,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         let externalHost = external.panel.contentView!.subviews[0] as! NSHostingView<NotchIslandView>
         externalHost.rootView.actions.expandFromAlert()
         expect(external.state.mode == .expanded && controller.clickOpened, "click opens persistent external details")
-        expect(external.state.expandedSize == CGSize(width: 360, height: 300), "external details use a compact fixed layout")
+        expect(external.state.expandedSize == CGSize(width: 440, height: 184), "external details use a compact fixed layout")
         expect(controller.tickTimer == nil && external.panel.acceptsKeyboard, "click details accept Escape without a polling timer")
         Pointer.location = CGPoint(x: aEntry.midX, y: aEntry.midY)
         controller.pointerMoved(); controller.tick(); pause(0.35)
@@ -163,7 +163,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         prefs.notchIslandInFullScreen = true
         expect(controller.surfaces.values.allSatisfy { $0.panel.collectionBehavior.contains(.fullScreenAuxiliary) }, "full screen preference applies to every display")
         prefs.notchIslandShowsWings = false
-        expect(controller.surfaces[b.id]?.state.collapsedSize.width == 42 && !model.periodicRefresh, "minimal external entry survives hidden readouts without usage timer")
+        expect(controller.surfaces[b.id]?.state.collapsedSize.width == 44 && !model.periodicRefresh, "minimal external entry survives hidden readouts without usage timer")
         prefs.notchIslandShowsWings = true
         expect(model.periodicRefresh, "one shared usage refresh resumes")
         controller.activate(a.id); controller.expand()

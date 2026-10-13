@@ -30,14 +30,14 @@ final class NotchIslandState: ObservableObject {
 
     var collapsedSize: CGSize {
         if !geometry.hasHardwareNotch {
-            return CGSize(width: showsWings ? 232 : 42, height: 32)
+            return CGSize(width: showsWings ? 440 : 44, height: 48)
         }
         let wings = showsWings ? 2 * IslandStyle.wingWidth : 0
         return CGSize(width: notch.width + 2 * IslandStyle.topFlare + wings, height: notch.height)
     }
 
     var alertSize: CGSize {
-        if !geometry.hasHardwareNotch { return CGSize(width: 360, height: 72) }
+        if !geometry.hasHardwareNotch { return CGSize(width: 440, height: 72) }
         return CGSize(width: max(IslandStyle.minAlertWidth, notch.width + 2 * IslandStyle.topFlare + 200),
                height: notch.height + IslandStyle.alertBodyHeight)
     }
@@ -47,7 +47,7 @@ final class NotchIslandState: ObservableObject {
     var sessionsLaneHeight: CGFloat { IslandStyle.expandedLaneHeight }
 
     var expandedSize: CGSize {
-        if !geometry.hasHardwareNotch { return CGSize(width: 360, height: 300) }
+        if !geometry.hasHardwareNotch { return CGSize(width: 440, height: 184) }
         let width = max(IslandStyle.minExpandedWidth, notch.width + 2 * IslandStyle.topFlare + 320)
         let height = notch.height + IslandStyle.contentTopGap + sessionsLaneHeight
             + IslandStyle.sectionGap + IslandStyle.usageCardHeight + IslandStyle.bottomPadding
@@ -57,7 +57,7 @@ final class NotchIslandState: ObservableObject {
     var islandSize: CGSize {
         switch mode {
         case .collapsed: return collapsedSize
-        case .peek: return CGSize(width: 280, height: 64)
+        case .peek: return CGSize(width: 440, height: 80)
         case .alert: return alertSize
         case .expanded: return expandedSize
         }
@@ -65,7 +65,7 @@ final class NotchIslandState: ObservableObject {
 
     var topFlare: CGFloat { geometry.hasHardwareNotch ? IslandStyle.topFlare : 0 }
     var bottomRadius: CGFloat {
-        if !geometry.hasHardwareNotch { return mode == .collapsed ? 12 : 16 }
+        if !geometry.hasHardwareNotch { return 16 }
         switch mode {
         case .collapsed: return geometry.hasHardwareNotch ? IslandStyle.collapsedBottomRadius : notch.height / 2
         case .peek: return 16

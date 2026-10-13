@@ -632,13 +632,15 @@ those checks.
 ## Multi-display island
 
 Hardware-notched screens retain the black wings and existing session/usage
-layout. Unnotched screens use a detached graphite status bar (232×32pt, or
-42×32pt without readouts), eight points below the menu bar. Hovering for 300ms
-reveals a 280×64pt task preview; clicking opens a fixed 360×300pt single-column
-session panel with a neutral usage footer. Outside click, close and Escape
-dismiss clicked details; pointer exit does not. The 360×72pt alert never takes
-focus. Static marks, a single static shadow, lazy rows and a 220ms transition
-replace the detached surface's notch treatment and large usage chart.
+layout. Unnotched screens use the approved A · Focus deck: a silver-edged
+indigo instrument, 440×48pt closed and 440×184pt expanded. The same header
+persists through the 220ms vertical reveal. Three real session marks plus an
+all-session menu select one focused task; only waiting actions use warm orange.
+A silver 40pt lip carries token usage and mixed-currency estimates. Hovering
+for 300ms reveals a 440×80pt preview. Outside click, collapse and Escape dismiss
+clicked details; pointer exit does not. The 440×72pt alert never takes focus.
+All chrome is opaque native geometry with a static directional shadow; there
+is no blur, decorative animation clock or numeric rolling.
 
 Every screen shares one model and one mouse-monitor pair. Collapsed and
 click-open external details run no close polling timer. One panel expands or

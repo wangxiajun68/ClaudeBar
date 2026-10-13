@@ -144,6 +144,7 @@ struct NotchIslandView: View {
     /// unrelated settings change.
     @State private var tokenStyle = AppPreferences.shared.tokenUnitStyle
     @State private var vpnEnabled = AppPreferences.shared.vpnEnabled
+    @State private var selectedSessionID: String?
 
     var body: some View {
         island
@@ -158,35 +159,25 @@ struct NotchIslandView: View {
         let shape = IslandShape(topFlare: state.topFlare, bottomRadius: state.bottomRadius,
                                 detached: !state.geometry.hasHardwareNotch)
         return ZStack(alignment: .top) {
-            shape.fill(state.geometry.hasHardwareNotch ? Color.black : Color(hex: 0x202328).opacity(0.98))
+            shape.fill(state.geometry.hasHardwareNotch ? Color.black : FocusDeck.ink)
 
-            switch state.mode {
-            case .collapsed:
-                if !state.geometry.hasHardwareNotch {
-                    capsule
-                        .contentShape(shape)
-                        .onTapGesture(perform: actions.expandFromAlert)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("查看会话与用量")
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityAction { actions.expandFromAlert() }
-                } else if state.showsWings {
-                    wings.transition(.opacity)
-                }
-            case .peek:
-                detachedPeek
-                    .transition(.opacity)
-            case .alert:
-                if let alert = state.alert {
-                    IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions, detached: !state.geometry.hasHardwareNotch)
-                        .id(alert.id)
-                        .transition(.islandContent)
-                }
-            case .expanded:
-                if state.geometry.hasHardwareNotch {
+            if !state.geometry.hasHardwareNotch && state.mode != .alert {
+                detachedContent
+            } else {
+
+                switch state.mode {
+                case .collapsed:
+                    if state.showsWings { wings.transition(.opacity) }
+                case .peek:
+                    EmptyView()
+                case .alert:
+                    if let alert = state.alert {
+                        IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions, detached: !state.geometry.hasHardwareNotch)
+                            .id(alert.id)
+                            .transition(.islandContent)
+                    }
+                case .expanded:
                     expandedContent.transition(.islandContent)
-                } else {
-                    detachedContent.transition(.opacity)
                 }
             }
         }
@@ -207,7 +198,7 @@ struct NotchIslandView: View {
         // Collapsed must be edge-less to melt into the notch; the rim light
         // only appears once the island has grown out of it.
         .overlay {
-            shape.stroke(IslandStyle.rim, lineWidth: 1)
+            shape.stroke(state.geometry.hasHardwareNotch ? IslandStyle.rim : Color(hex: 0xDCE4EE), lineWidth: state.geometry.hasHardwareNotch ? 1 : 2)
                 .opacity(state.mode == .collapsed && state.geometry.hasHardwareNotch ? 0 : 1)
         }
         .shadow(color: .black.opacity(state.geometry.hasHardwareNotch ? 0 : 0.18), radius: 10, x: 0, y: 4)
@@ -216,119 +207,166 @@ struct NotchIslandView: View {
 
     // MARK: Collapsed
 
-    private var capsule: some View {
-        let busy = model.sessions.filter(\.isBusy).count
-        let waiting = model.sessions.filter(\.isWaiting).count
-        return HStack(spacing: 8) {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(IslandStyle.textSecondary)
-            if state.showsWings {
-                Text(busy > 0 ? "\(busy) 个运行中" : "ClaudeBar")
-                    .foregroundStyle(IslandStyle.textPrimary)
-                Spacer(minLength: 4)
-                Circle().fill(waiting > 0 ? IslandStyle.amber : (busy > 0 ? IslandStyle.mint : IslandStyle.textSecondary))
-                    .frame(width: 5, height: 5)
-                Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "\(model.sessions.count) 个会话" : "空闲"))
-                    .foregroundStyle(IslandStyle.textSecondary)
-            }
-        }
-        .font(.system(size: 11, weight: .medium).monospacedDigit())
-        .lineLimit(1)
-        .padding(.horizontal, 12)
-        .frame(width: state.collapsedSize.width, height: state.collapsedSize.height)
-        .help("悬停查看摘要，点击打开会话")
+    private var focusedSession: IslandSession? {
+        model.sessions.first { $0.id == selectedSessionID } ?? model.sessions.first
     }
 
-    private var detachedPeek: some View {
-        Button(action: actions.expandFromAlert) {
-            HStack(spacing: 10) {
-                if let session = model.sessions.first {
-                    IslandAgentBadge(agent: session.agent, size: 28)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(session.project.isEmpty ? session.agent.label : session.project)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(IslandStyle.textPrimary)
-                        Text(DetachedSessionRow.detail(session))
-                            .font(.system(size: 11))
-                            .foregroundStyle(IslandStyle.textSecondary)
-                    }
-                } else {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(IslandStyle.textSecondary)
-                    Text("暂无会话 · 点击查看用量")
-                        .font(.system(size: 12))
-                        .foregroundStyle(IslandStyle.textPrimary)
+    // The header has one identity throughout the morph. Only the lower stage
+    // enters; live index updates never reset a deliberately selected session.
+
+    private func sessionTab(_ session: IslandSession) -> some View {
+        let selected = session.id == focusedSession?.id
+        let tint: Color = session.isWaiting ? FocusDeck.orange : FocusDeck.blue
+        return Button {
+            selectedSessionID = session.id
+            if state.mode != .expanded { actions.expandFromAlert() }
+        } label: {
+            IslandAgentBadge(agent: session.agent, size: 22)
+                .padding(3)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(selected ? 0.09 : 0)))
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(tint).frame(width: 10, height: 2)
+                        .offset(y: 2).opacity(selected ? 1 : 0)
                 }
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(IslandStyle.textSecondary)
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 16)
-            .frame(width: 280, height: 64)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("打开会话面板")
+        .help(session.agent.label + " · " + session.project)
+        .accessibilityLabel(session.agent.label + " · " + session.project)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var deckHeader: some View {
+        HStack(spacing: 10) {
+            if !state.showsWings && state.mode == .collapsed {
+                Button(action: actions.expandFromAlert) {
+                    Image(systemName: "rectangle.topthird.inset.filled")
+                        .frame(width: 40, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("打开会话面板")
+            } else {
+                Button("ClaudeBar", action: actions.openMainWindow)
+                    .font(.system(size: 11, weight: .semibold))
+                    .buttonStyle(.plain)
+                    .help("打开工作台")
+                Rectangle().fill(FocusDeck.rule).frame(width: 1, height: 20)
+                HStack(spacing: 4) {
+                    ForEach(Array(model.sessions.prefix(3))) { session in
+                        sessionTab(session)
+                    }
+                    Menu {
+                        ForEach(model.sessions) { session in
+                            Button {
+                                selectedSessionID = session.id
+                                if state.mode != .expanded { actions.expandFromAlert() }
+                            } label: {
+                                Text((session.id == focusedSession?.id ? "✓ " : "") + session.agent.label + " · " + session.project + (session.isWaiting ? " · 待确认" : ""))
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 10, weight: .semibold))
+                            .frame(width: 18, height: 28)
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .disabled(model.sessions.isEmpty)
+                    .help("选择会话（共 \(model.sessions.count) 个）")
+                    .accessibilityLabel("选择全部 \(model.sessions.count) 个会话")
+                }
+                Rectangle().fill(FocusDeck.rule).frame(width: 1, height: 20)
+                Button(action: actions.expandFromAlert) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(focusedSession?.agent.label ?? "就绪")
+                            .font(.system(size: 11, weight: .medium))
+                        Text(focusedSession.map { $0.isWaiting ? $0.project : DetachedSessionRow.detail($0) } ?? "暂无会话")
+                            .truncationMode(.middle)
+                            .font(.system(size: 9)).foregroundStyle(FocusDeck.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                let waiting = model.sessions.filter(\.isWaiting).count
+                Button {
+                    if let session = model.sessions.first(where: \.isWaiting) { selectedSessionID = session.id }
+                    if state.mode != .expanded { actions.expandFromAlert() }
+                } label: {
+                    Text(waiting > 0 ? "\(waiting) 待确认" : (focusedSession?.isBusy == true ? "运行中" : "待命"))
+                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(waiting > 0 ? FocusDeck.orange : FocusDeck.blue)
+                        .padding(.horizontal, 8).frame(height: 23)
+                        .background(RoundedRectangle(cornerRadius: 7)
+                            .fill((waiting > 0 ? FocusDeck.orange : FocusDeck.blue).opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help(waiting > 0 ? "查看待确认会话" : "查看当前会话")
+                Button(action: state.mode == .expanded ? actions.dismissAlert : actions.expandFromAlert) {
+                    Image(systemName: state.mode == .expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold)).frame(width: 20, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help(state.mode == .expanded ? "收起面板 · Esc" : "展开会话")
+                .accessibilityLabel(state.mode == .expanded ? "收起面板" : "展开会话")
+            }
+        }
+        .lineLimit(1)
+        .padding(.horizontal, state.showsWings || state.mode != .collapsed ? 16 : 0)
+        .frame(height: 48)
     }
 
     private var detachedContent: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text("会话").font(.system(size: 13, weight: .semibold))
-                Text("\(model.sessions.count)")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(IslandStyle.textSecondary)
-                Spacer()
-                IslandIconButton(symbol: "arrow.up.forward", help: "打开工作台", action: actions.openMainWindow)
-                IslandIconButton(symbol: "xmark", help: "收起面板", action: actions.dismissAlert)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 48)
-            if model.sessions.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "rectangle.stack").font(.system(size: 22, weight: .light))
-                    Text("暂无会话").font(.system(size: 13, weight: .medium))
-                    Text("开始使用 Claude、Codex 或 Cursor 后显示")
-                        .font(.system(size: 10))
-                }
-                .foregroundStyle(IslandStyle.textSecondary)
-                .frame(maxWidth: .infinity).frame(height: 168)
-            } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.sessions) { session in
-                            DetachedSessionRow(session: session) { actions.openSession(session) }
-                        }
+            deckHeader
+            if state.mode == .expanded {
+                Rectangle().fill(FocusDeck.rule).frame(height: 1)
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(focusedSession.map { $0.isWaiting ? "需要你确认" : ($0.project.isEmpty ? $0.agent.label : $0.project) } ?? "一切就绪")
+                            .font(.system(size: 22, weight: .semibold)).tracking(-0.5)
+                            .lineLimit(1).truncationMode(.middle)
+                        Text(focusedSession.map(DetachedSessionRow.detail) ?? "开始使用 Claude、Codex 或 Cursor")
+                            .font(.system(size: 11)).foregroundStyle(FocusDeck.secondary)
+                            .lineLimit(1).truncationMode(.middle)
                     }
-                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(focusedSession.map { $0.project + "\n" + DetachedSessionRow.detail($0) } ?? "暂无会话")
+                    Button {
+                        if let session = focusedSession { actions.openSession(session) }
+                        else { actions.openMainWindow() }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Text(focusedSession == nil ? "打开工作台" : (focusedSession?.isWaiting == true ? "去确认" : "回到会话"))
+                            Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(focusedSession?.isWaiting == true ? Color(hex: 0x241306) : Color(hex: 0xE4EDFF))
+                        .padding(.horizontal, 13).frame(height: 36)
+                        .background(RoundedRectangle(cornerRadius: 10)
+                            .fill(focusedSession?.isWaiting == true ? FocusDeck.orange : Color(hex: 0x203A65)))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5))
+                    }
+                    .buttonStyle(IslandPressStyle())
                 }
-                .scrollIndicators(.visible)
-                .scrollDisabled(model.sessions.count <= 3)
-                .frame(height: 168)
-            }
-            HStack {
-                Text(model.sessions.count > 3 ? "滚动查看更多会话" : "点击会话，回到工作现场")
-                Spacer()
-                if vpnEnabled {
-                    Circle().fill(model.vpnRunning ? IslandStyle.mint : IslandStyle.textSecondary)
-                        .frame(width: 5, height: 5)
-                    Text(model.vpnRunning ? "代理已连接" : "代理未连接")
+                .padding(.horizontal, 20).frame(height: 95)
+                .transition(.opacity)
+                DetachedUsageSummary(usage: model.usage)
+                    .frame(height: 40)
+                    .background(LinearGradient(colors: [Color(hex: 0xDCE3ED), Color(hex: 0xBEC9D8)], startPoint: .top, endPoint: .bottom))
+                    .transition(.opacity)
+            } else if state.mode == .peek {
+                HStack(spacing: 8) {
+                    Text(focusedSession?.project ?? "暂无会话").lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Text("点击展开").foregroundStyle(FocusDeck.secondary)
                 }
+                .font(.system(size: 10)).padding(.horizontal, 16).frame(height: 32)
+                .overlay(alignment: .top) { Rectangle().fill(FocusDeck.rule).frame(height: 1) }
+                .contentShape(Rectangle()).onTapGesture(perform: actions.expandFromAlert)
             }
-            .font(.system(size: 10))
-            .foregroundStyle(IslandStyle.textSecondary)
-            .padding(.horizontal, 16)
-            .frame(height: 32)
-            DetachedUsageSummary(usage: model.usage)
-                .frame(height: 52)
-                .background(Color.white.opacity(0.035))
-                .overlay(alignment: .top) { Rectangle().fill(IslandStyle.rim).frame(height: 0.5) }
         }
-        .foregroundStyle(IslandStyle.textPrimary)
-        .frame(width: 360, height: 300)
+        .foregroundStyle(Color(hex: 0xF1F5FF))
+        .frame(width: state.islandSize.width, alignment: .top)
+        .background(LinearGradient(colors: [Color(hex: 0x18263D), FocusDeck.ink], startPoint: .topLeading, endPoint: .bottomTrailing))
     }
 
     private var wings: some View {
@@ -471,51 +509,20 @@ struct NotchIslandView: View {
     }
 }
 
-/// The detached surface uses static marks and fixed status columns. No per-row
-/// timelines, numeric transitions or busy orbits on this always-available HUD.
-private struct DetachedSessionRow: View {
-    let session: IslandSession
-    let action: () -> Void
-    @State private var hovered = false
+/// Native, opaque chrome: no backdrop blur, raster assets or animation clock.
+private enum FocusDeck {
+    static let ink = Color(hex: 0x0D1728)
+    static let secondary = Color(hex: 0xACBED8)
+    static let rule = Color(hex: 0x33445E)
+    static let blue = Color(hex: 0x8ABEFF)
+    static let orange = Color(hex: 0xFFAE62)
+}
 
+private enum DetachedSessionRow {
     static func detail(_ session: IslandSession) -> String {
         if session.isWaiting { return IslandSessionRow.waitingLine(for: session) }
         if session.isBusy { return session.activity.isEmpty ? "正在思考…" : session.activity }
         return session.completionID == nil ? "等待输入" : "本轮已完成"
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                IslandAgentBadge(agent: session.agent, size: 28)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(session.project.isEmpty ? session.agent.label : session.project)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(IslandStyle.textPrimary)
-                    Text(session.agent.label + " · " + Self.detail(session))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(IslandStyle.textSecondary)
-                }
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(session.isWaiting ? "待确认" : (session.isBusy ? "运行中" : "待命"))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(session.isWaiting ? IslandStyle.amber : IslandStyle.textSecondary)
-                    .frame(width: 40, alignment: .trailing)
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(IslandStyle.textSecondary)
-                    .opacity(hovered ? 1 : 0.4)
-                    .frame(width: 12)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 56)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovered ? 0.06 : 0)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { if hovered != $0 { hovered = $0 } }
-        .help(session.cwd + "\n" + Self.detail(session))
     }
 }
 
@@ -530,22 +537,25 @@ private struct DetachedUsageSummary: View {
         let shown = ModelPricing.present(estimate.cost, display: costDisplay, rate: fx.effectiveRate)
         let money = [shown.primary, shown.secondary].compactMap { $0 }
             .map { ModelPricing.format($0.amount, currency: $0.currency) }.joined(separator: " + ")
-        return HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("今日 Token").font(.system(size: 10)).foregroundStyle(IslandStyle.textSecondary)
-                Text(UsageStats.formatTokens(usage.today)).id(tokenStyle)
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+        return HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "cylinder.split.1x2").foregroundStyle(Color(hex: 0x495B74))
+                Text("今日").foregroundStyle(Color(hex: 0x495B74))
+                Text(UsageStats.formatTokens(usage.today)).id(tokenStyle).fontWeight(.semibold)
+                Text("Token").foregroundStyle(Color(hex: 0x495B74))
+                Spacer(minLength: 0)
             }
+            .frame(width: 170)
+            Rectangle().fill(Color(hex: 0xA4B2C5)).frame(width: 1, height: 14)
             Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(estimate.unpricedModels > 0 ? "今日估算 · 含未计价" : "今日估算")
-                    .font(.system(size: 10)).foregroundStyle(IslandStyle.textSecondary)
-                Text(money.isEmpty ? "—" : money)
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-            }
+            Text(estimate.unpricedModels > 0 ? "估算*" : "估算")
+                .foregroundStyle(Color(hex: 0x495B74))
+            Text(money.isEmpty ? "—" : money).fontWeight(.semibold)
         }
+        .font(.system(size: 10).monospacedDigit())
+        .foregroundStyle(Color(hex: 0x1B2A40))
         .lineLimit(1)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
         .help(estimate.detailParts(presented: shown).joined(separator: " · "))
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }

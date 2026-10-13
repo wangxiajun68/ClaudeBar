@@ -497,7 +497,7 @@ struct SettingsView: View {
                     }
                 }
                 SettingsGroup(title: "显示与提醒", symbol: "bell") {
-                    SettingsToggleRow(title: "收起时显示状态与用量", caption: "刘海两侧显示状态与用量；无刘海屏显示运行与待确认数量。", isOn: $prefs.notchIslandShowsWings)
+                    SettingsToggleRow(title: "收起时显示状态与用量", caption: "刘海两侧显示状态与用量；无刘海屏显示会话切换、当前活动与待确认数量。", isOn: $prefs.notchIslandShowsWings)
                     SettingsDivider()
                     SettingsToggleRow(title: "会话完成时提醒", caption: "在鼠标所在屏幕提醒一次，6 秒后自动收起；悬停可延长。", isOn: $prefs.notchIslandAlertsEnabled)
                     SettingsDivider()
