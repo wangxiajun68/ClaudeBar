@@ -33,6 +33,10 @@ struct GatewayProviderImportView: View {
     @State private var submitted = false
     @State private var importError: String?
     @State private var showSettings = false
+    @State private var fetchedCapabilities: [String: ModelListFetcher.ModelCapability] = [:]
+    @State private var fetchingCapabilities = false
+    @State private var capabilityMessage: String?
+    @State private var capabilityTask: Task<Void, Never>?
     @FocusState private var contextFocus: String?
     private var joined: Set<String> { Set(gateway.pool.members.map(\.id)) }
     private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) && issue(for: $0.providerID) == nil } }
@@ -102,7 +106,7 @@ struct GatewayProviderImportView: View {
                             }
                         }
                     }
-                    Text("未配置上下文时暂用 32,768，请核对。其他供应商采用本次声明的能力；OpenRouter 使用免费目录中的上下文与能力，不覆盖已入池模型。")
+                    Text("未配置上下文时暂用 32,768，请核对。可从供应商读取逐模型模态；未声明的能力需在档位与能力中确认。OpenRouter 使用免费目录，不覆盖已入池模型。")
                         .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }.padding(.horizontal, 20).padding(.bottom, 20)
@@ -111,6 +115,17 @@ struct GatewayProviderImportView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Toggle("确认所选模型可免费使用", isOn: $confirmedFree)
                     .toggleStyle(InstrumentToggleStyle()).disabled(!gateway.canEdit || submitted)
+                HStack(spacing: 10) {
+                    ActionButton("读取模型能力", symbol: "arrow.down.circle", action: fetchCapabilities)
+                        .disabled(!gateway.canEdit || submitted || fetchingCapabilities)
+                    ActionButton("同步已入池", symbol: "arrow.triangle.2.circlepath", action: syncExistingCapabilities)
+                        .disabled(!gateway.canEdit || submitted || fetchedCapabilities.isEmpty)
+                    if fetchingCapabilities { ProgressView().controlSize(.small) }
+                    if let capabilityMessage {
+                        Text(capabilityMessage).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(gateway.saving ? "正在保存…" : "已选 \(selectedEntries.count) 个模型")
@@ -134,6 +149,7 @@ struct GatewayProviderImportView: View {
             .interactiveDismissDisabled(submitted)
             .onAppear { syncEntries() }
             .onChange(of: gateway.connections) { _, _ in syncEntries() }
+            .onDisappear { capabilityTask?.cancel() }
     }
 
     private var importSettings: some View {
@@ -226,11 +242,63 @@ struct GatewayProviderImportView: View {
         selected.formIntersection(Set(entries.filter { issue(for: $0.providerID) == nil }.map(\.id)))
     }
 
+    private func capability(for providerID: UUID, model: String) -> ModelListFetcher.ModelCapability? {
+        fetchedCapabilities[providerID.uuidString + ":" + model.lowercased()]
+    }
+
+    private func fetchCapabilities() {
+        let providers = gateway.connections.filter { providerIDs.contains($0.id) && issue(for: $0.id) == nil
+            && !FreeModelPool.isOpenRouter($0.baseURL) }
+        guard !providers.isEmpty else { capabilityMessage = "没有需要读取的手动供应商"; return }
+        capabilityTask?.cancel()
+        fetchingCapabilities = true
+        capabilityMessage = nil
+        capabilityTask = Task { @MainActor in
+            var found: [String: ModelListFetcher.ModelCapability] = [:]
+            for provider in providers {
+                let outcome = await ModelListFetcher.fetch(baseURL: provider.baseURL, apiKey: provider.apiKey, wireAPI: provider.wireAPI)
+                guard !Task.isCancelled else { return }
+                guard gateway.connections.contains(provider) else { continue }
+                if case .success(let payload) = outcome {
+                    for (model, capability) in payload.capabilities {
+                        found[provider.id.uuidString + ":" + model] = capability
+                    }
+                }
+            }
+            fetchedCapabilities = found
+            fetchingCapabilities = false
+            capabilityMessage = found.isEmpty ? "供应商未返回逐模型模态，请手动声明" : "已读取 \(found.count) 个模型的能力"
+        }
+    }
+
+    private func syncExistingCapabilities() {
+        let known = fetchedCapabilities
+        gateway.change { pool in
+            for index in pool.members.indices where !pool.members[index].discovered {
+                let member = pool.members[index]
+                guard let capability = known[member.providerID.uuidString + ":" + member.model.lowercased()] else { continue }
+                pool.members[index] = GatewayProviderImport.applying(
+                    input: capability.inputModalities, output: capability.outputModalities,
+                    tools: capability.supportsTools, json: capability.supportsJSON, to: member)
+            }
+        }
+    }
+
     private func submit() {
         let members = selectedEntries.map { entry in
-            FreeModelPool.Member(providerID: entry.providerID, model: entry.model, name: entry.model,
+            let member = FreeModelPool.Member(providerID: entry.providerID, model: entry.model, name: entry.model,
                 contextLength: Int(entry.context) ?? 0, supportsTools: tools, supportsImages: images,
-                supportsJSON: json, difficulties: tiers, mediaCapabilities: media, supportsChat: supportsChat)
+                supportsJSON: json, difficulties: tiers, mediaCapabilities: media.isEmpty ? nil : media,
+                supportsChat: supportsChat)
+            guard let capability = capability(for: entry.providerID, model: entry.model) else { return member }
+            var resolved = GatewayProviderImport.applying(
+                input: capability.inputModalities, output: capability.outputModalities,
+                tools: capability.supportsTools, json: capability.supportsJSON, to: member)
+            resolved.supportsTools = resolved.supportsTools || tools
+            resolved.supportsImages = resolved.supportsImages || images
+            resolved.supportsJSON = resolved.supportsJSON || json
+            resolved.mediaCapabilities = (resolved.mediaCapabilities ?? []).union(media)
+            return resolved
         }
         submitted = true; importError = nil
         gateway.importModels(members, confirmedFree: confirmedFree) { succeeded in

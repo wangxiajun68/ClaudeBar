@@ -3,6 +3,28 @@ import Foundation
 /// Validates a batch against current saved connections before its one private
 /// write. Only model metadata and provider IDs enter the pool.
 enum GatewayProviderImport {
+    static func applying(input: Set<String>?, output: Set<String>?, tools: Bool?, json: Bool?,
+                         to member: FreeModelPool.Member) -> FreeModelPool.Member {
+        var member = member
+        var media = member.mediaCapabilities ?? []
+        if let input {
+            member.supportsImages = input.contains("image")
+            for (name, flag) in [("audio", GatewayMediaCapability.audioInput),
+                                 ("video", .videoInput), ("file", .fileInput)] {
+                if input.contains(name) { media.insert(flag) } else { media.remove(flag) }
+            }
+        }
+        if let output {
+            for (name, flag) in [("audio", GatewayMediaCapability.audioOutput), ("image", .imageOutput)] {
+                if output.contains(name) { media.insert(flag) } else { media.remove(flag) }
+            }
+        }
+        if let tools { member.supportsTools = tools }
+        if let json { member.supportsJSON = json }
+        member.mediaCapabilities = media
+        return member
+    }
+
     struct Failure: LocalizedError {
         var message: String
         var errorDescription: String? { message }

@@ -119,6 +119,14 @@ enum ModelListFetcher {
 
     struct ModelListPayload {
         var models: [String]
+        var capabilities: [String: ModelCapability] = [:]
+    }
+
+    struct ModelCapability {
+        var inputModalities: Set<String>?
+        var outputModalities: Set<String>?
+        var supportsTools: Bool?
+        var supportsJSON: Bool?
     }
 
     enum Outcome {
@@ -170,8 +178,9 @@ enum ModelListFetcher {
         for (index, candidate) in candidateURLs(urlText, wireAPI: wireAPI).enumerated() {
             guard !Task.isCancelled else { return .failure("已取消") }
             switch await requestModels(url: candidate.url, apiKey: key, authStyle: candidate.authStyle) {
-            case .success(let models) where !models.isEmpty:
-                return .success(ModelListPayload(models: models.sorted()))
+            case .success(var payload) where !payload.models.isEmpty:
+                payload.models.sort()
+                return .success(payload)
             case .success:
                 lastError = "接口返回空模型列表（\(candidate.url.path)）"
             case .failure(let message):
@@ -265,7 +274,7 @@ enum ModelListFetcher {
     private static let reader = BoundedResponseReader(cap: responseCap)
 
     private enum RequestOutcome {
-        case success([String])
+        case success(ModelListPayload)
         case failure(String)
     }
 
@@ -285,7 +294,7 @@ enum ModelListFetcher {
                     applyAuth(apiKey, style: .apiKeyHeader, to: &retry)
                     let (retryData, retryResponse) = try await reader.load(retry, in: session)
                     if (200..<300).contains(retryResponse.statusCode),
-                       let models = parseModelIDs(retryData), !models.isEmpty {
+                       let models = parseModels(retryData), !models.models.isEmpty {
                         return .success(models)
                     }
                 }
@@ -295,8 +304,8 @@ enum ModelListFetcher {
                 let message = describeBody(data, status: status, path: url.path)
                 return .failure(apiKey.isEmpty ? message : message.replacingOccurrences(of: apiKey, with: "[Key]"))
             }
-            guard let models = parseModelIDs(data), !models.isEmpty else {
-                return .success([])
+            guard let models = parseModels(data), !models.models.isEmpty else {
+                return .success(ModelListPayload(models: []))
             }
             return .success(models)
         } catch {
@@ -321,6 +330,29 @@ enum ModelListFetcher {
     }
 
     // MARK: - Parsing
+
+    private static func parseModels(_ data: Data) -> ModelListPayload? {
+        guard let ids = parseModelIDs(data) else { return nil }
+        let root = try? JSONSerialization.jsonObject(with: data)
+        let rows = ((root as? [String: Any])?["data"] as? [[String: Any]])
+            ?? ((root as? [String: Any])?["models"] as? [[String: Any]])
+            ?? (root as? [[String: Any]]) ?? []
+        var capabilities: [String: ModelCapability] = [:]
+        for row in rows {
+            guard let id = (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String) else { continue }
+            let architecture = row["architecture"] as? [String: Any] ?? [:]
+            let input = (architecture["input_modalities"] ?? row["input_modalities"]) as? [String]
+            let output = (architecture["output_modalities"] ?? row["output_modalities"]) as? [String]
+            guard input != nil || output != nil else { continue }
+            let parameters = row["supported_parameters"] as? [String]
+            capabilities[id.lowercased()] = ModelCapability(
+                inputModalities: input.map { Set($0.map { $0.lowercased() }) },
+                outputModalities: output.map { Set($0.map { $0.lowercased() }) },
+                supportsTools: parameters.map { $0.contains("tools") },
+                supportsJSON: parameters.map { $0.contains("response_format") || $0.contains("structured_outputs") })
+        }
+        return ModelListPayload(models: ids, capabilities: capabilities)
+    }
 
     private static func parseModelIDs(_ data: Data) -> [String]? {
         guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
