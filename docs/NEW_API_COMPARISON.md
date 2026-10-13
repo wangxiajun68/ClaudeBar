@@ -10,6 +10,8 @@ New API 是服务端聚合平台；ClaudeBar 是带本机令牌的桌面单进�
 
 2026-10-13 补充复查：保留语音响应长度以便客户端检测截断；拒绝无法转换的 Responses 内容、工具结果媒体和供应商私有音频历史 ID；64 并发占用条聚合为至多 16 格，保持窄窗口布局。
 
+2026-10-13 模型能力复查：手动供应商可重新读取 `/models` 的逐模型模态并显式同步旧成员；没有结构化模态字段时界面显示“待核实”，路由仍要求已声明能力。`/v1/models` 的 Auto 条目公布已启用成员汇总的输入、输出模态及独立 API 能力。AiBox 的[平台文档](https://aiboxapi.com/docs/api-reference/texts/openai/responses)说明其 Responses 接口接受图片，但平台接口能力不能证明每一个模型都接受音频、视频和 PDF。
+
 ## 调度与稳定性
 
 | 能力 | ClaudeBar 现状 |
@@ -39,6 +41,7 @@ New API 是服务端聚合平台；ClaudeBar 是带本机令牌的桌面单进�
 | `/v1/audio/speech` | 新增二进制语音合成；16 KiB 分块转发、写入背压、64 MiB 响应总上限；不在二进制响应尾部追加 SSE 错误 |
 | `/v1/embeddings` | 新增字符串及字符串数组输入，float / base64 输出；需要独立嵌入能力；固定池内首个兼容模型，仅同名模型可备用，不因冷却或权重混用向量空间 |
 | `/v1/rerank` | 新增字符串 query 与字符串 documents，校验结果索引和分数；需要独立重排序能力 |
+| `/v1/models` | Auto 条目现在公开池中已启用且有凭据成员的模态与独立 API 能力；是可路由能力的汇总，不代表每个成员都具备全部能力 |
 | Gemini 原生协议 | 尚未实现 generateContent / streamGenerateContent 入口；支持兼容 Chat 的 Gemini 上游不等于支持 Gemini 原生协议 |
 | 转录、翻译、图像编辑 | 尚未实现 multipart `/audio/transcriptions`、`/audio/translations`、`/images/edits`；可经支持音频输入的 Chat 模型理解音频，但不是 Whisper API 兼容承诺 |
 | 视频生成与异步任务 | 尚未实现任务创建、状态、结果、取消和任务所属供应商持久化；视频输入理解不等于视频生成 |
@@ -47,7 +50,7 @@ New API 是服务端聚合平台；ClaudeBar 是带本机令牌的桌面单进�
 
 媒体校验不读取本地路径、不下载远端媒体、不解码整份 base64 再重新编码。单个内联附件最多 16 MiB 编码数据；请求整体仍受 HTTP 64 MiB、队列总字节保护限制。文本上下文估算不把 base64 当文本 token；媒体预留只是本地路由估算，真实文件页数、音视频时长及模型 tokenizer 仍由上游约束。
 
-普通 SSE 单事件 1 MiB、总计 16 MiB；明确请求 Chat 图片或语音输出时允许单事件 16 MiB、总计 64 MiB。大媒体不是解除所有内存限制的理由。所有新能力在旧配置中默认关闭；OpenRouter 从新鲜目录的 input/output modalities 获取，手动供应商必须显式声明。
+普通 SSE 单事件 1 MiB、总计 16 MiB；明确请求 Chat 图片或语音输出时允许单事件 16 MiB、总计 64 MiB。大媒体不是解除所有内存限制的理由。OpenRouter 从新鲜目录的 input/output modalities 获取；其他供应商读取 `/models` 明确声明的字段或由用户逐模型声明。旧配置不会自动打开未知能力。
 
 OpenRouter 仍需所有已公布价格维度为零，目录新鲜；PDF 强制 `file-parser` 的 `native` 引擎，禁止默认回退到付费 OCR。独立图像 / 语音 / 嵌入 / 重排序 API 的价格与端点不同，因此目前只接受用户确认免费的手动供应商，不用 Chat 免费目录冒充这些 API 的免费证明。
 

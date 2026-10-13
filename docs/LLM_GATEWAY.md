@@ -103,7 +103,7 @@ OpenRouter 使用 `require_parameters` 避免静默丢弃工具或 JSON 参数�
 
 独立接口支持 `POST /v1/images/generations`（单张 JSON）、`POST /v1/audio/speech`（二进制分块返回）、`POST /v1/embeddings`（字符串/字符串数组）、`POST /v1/rerank`（字符串 query/documents）。客户端使用 `model: auto`，手动供应商须在模型能力中启用对应 API；纯图像、语音、嵌入等模型还应关闭“支持 Chat Completions”，避免被普通聊天选中。这些接口共用调度和期限；OpenRouter 的 Chat 免费目录不能证明独立 API 免费，因此不接受它作为这些端点的候选。嵌入固定池内首个兼容模型，仅允许同名模型的跨供应商备用；改动嵌入模型配置前需自行迁移已有向量索引。
 
-音频为 base64 内容与格式；图片/视频/PDF 接受 HTTPS URL 或匹配 MIME 的 base64 data URI，网关不读取本机文件或下载 URL。单个内联媒体最多 16 MiB 编码数据。PDF 在 OpenRouter 固定原生处理，禁止默认付费 OCR。多模态能力来自新鲜目录或用户显式声明，旧配置默认关闭新能力；手动“测试模型”仍只是 Chat 文本测试，不能认证多模态或独立 API。
+音频为 base64 内容与格式；图片/视频/PDF 接受 HTTPS URL 或匹配 MIME 的 base64 data URI，网关不读取本机文件或下载 URL。单个内联媒体最多 16 MiB 编码数据。PDF 在 OpenRouter 固定原生处理，禁止默认付费 OCR。加入 Auto 池时可读取供应商 `/models` 明确声明的逐模型输入／输出模态，并显式同步已入池成员；只返回模型 ID 的供应商显示“其他模态待核实”，需按模型手动声明。网关不会仅因供应商支持多模态接口就假定其每个模型支持所有模态。手动“测试模型”仍只是 Chat 文本测试，不能认证多模态或独立 API。
 
 本次并未支持 Gemini 原生入口、Realtime/WebSocket、multipart 转录/翻译/图像编辑、视频生成及异步任务 API。完整矩阵和对应官方协议依据见对比文档。
 

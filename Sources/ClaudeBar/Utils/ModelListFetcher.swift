@@ -332,8 +332,8 @@ enum ModelListFetcher {
     // MARK: - Parsing
 
     private static func parseModels(_ data: Data) -> ModelListPayload? {
-        guard let ids = parseModelIDs(data) else { return nil }
-        let root = try? JSONSerialization.jsonObject(with: data)
+        guard let root = try? JSONSerialization.jsonObject(with: data),
+              let ids = parseModelIDs(root) else { return nil }
         let rows = ((root as? [String: Any])?["data"] as? [[String: Any]])
             ?? ((root as? [String: Any])?["models"] as? [[String: Any]])
             ?? (root as? [[String: Any]]) ?? []
@@ -354,9 +354,7 @@ enum ModelListFetcher {
         return ModelListPayload(models: ids, capabilities: capabilities)
     }
 
-    private static func parseModelIDs(_ data: Data) -> [String]? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
-
+    private static func parseModelIDs(_ root: Any) -> [String]? {
         if let dict = root as? [String: Any] {
             if let rows = dict["data"] as? [[String: Any]] {
                 let ids = extractIDs(from: rows)
