@@ -38,6 +38,10 @@ actor SessionMigrationService {
     var previews = 0
     var prepares = 0
     var records: [MigrationRecord] = []
+    var emptyPreview = false
+    func setEmptyPreview(_ empty: Bool) { emptyPreview = empty }
+    var failPrepare = false
+    func setFailPrepare(_ fail: Bool) { failPrepare = fail }
     var holdPrepare = false
     var pending: CheckedContinuation<Void, Never>?
     func setHold(_ hold: Bool) { holdPrepare = hold }
@@ -47,7 +51,7 @@ actor SessionMigrationService {
                  includeImages: Bool) async throws -> MigrationPreview {
         previews += 1
         try await Task.sleep(for: .milliseconds(15))
-        return .init(source: source, messages: [.init(role: .user, text: source.title)],
+        return .init(source: source, messages: emptyPreview ? [] : [.init(role: .user, text: source.title)],
             fingerprint: source.id, omissions: [], completedToolCount: includeCompletedTools ? 1 : 0)
     }
     func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
@@ -55,6 +59,7 @@ actor SessionMigrationService {
                  bridgeProviderID: UUID?, bridgeModel: String) async throws -> MigrationRecord {
         prepares += 1
         if holdPrepare { await withCheckedContinuation { pending = $0 } }
+        if failPrepare { throw MigrationFailure.unavailable("Fixture prepare") }
         let record = MigrationRecord(id: UUID(), logicalConversationID: UUID(), createdAt: Date(),
             source: source, sourceFingerprint: fingerprint, target: target,
             targetSessionID: UUID().uuidString, nativePath: "/synthetic/history",
@@ -91,9 +96,16 @@ actor SessionMigrationService {
         draft.select(second)
         try await wait { draft.preview != nil }
         precondition(draft.preview?.source == second && draft.target == .claude)
-        precondition(draft.canPrepare)
+        precondition(draft.canPrepare && draft.preparationIssue == nil)
+        await service.setEmptyPreview(true)
+        draft.load()
+        try await wait { draft.preview != nil }
+        precondition(!draft.canPrepare && draft.preparationIssue != nil)
+        await service.setEmptyPreview(false)
+        draft.load()
+        try await wait { draft.preview != nil }
         draft.target = .codexOfficial; draft.officialModel = " \n "
-        precondition(!draft.canPrepare)
+        precondition(!draft.canPrepare && draft.preparationIssue != nil)
         draft.officialModel = "fixture-model"
         precondition(draft.canPrepare)
         draft.target = .claudeCodexModel
@@ -135,6 +147,16 @@ actor SessionMigrationService {
         precondition(!draft.canPrepare && !draft.loading)
         let gatedCount = await service.previews; precondition(gatedCount == count)
         BuildChannel.allowsSystemIntegration = true
+        draft.target = .claude
+        draft.load()
+        try await wait { draft.preview != nil }
+        precondition(!draft.canPrepare && draft.preparationIssue != nil)
+        draft.includeCompletedTools = true; draft.includeImages = true
+        let cli = MigrationSource(client: .cursorCLI, sessionID: UUID().uuidString,
+                                  cwd: "/synthetic/project", title: "CLI")
+        draft.select(cli)
+        precondition(!draft.includeCompletedTools && !draft.includeImages)
+        draft.select(first)
         draft.load(); draft.cancel()
         try await Task.sleep(for: .milliseconds(35))
         precondition(draft.preview == nil && !draft.loading)
@@ -170,7 +192,21 @@ actor SessionMigrationService {
         try await wait { !draft.preparing && draft.preview != nil }
         precondition(draft.source == second && draft.preparedRecord == nil)
         precondition(migrations.records.count == 3 && migrations.opened == [committed])
-        print("PASS: migration workspace validation, cancellation, stale results, committed-record retention and open retry")
+        // Errors from a cancelled source must not pollute the newly selected draft.
+        draft.select(first)
+        try await wait { draft.preview != nil }
+        await service.setFailPrepare(true)
+        draft.prepare(migrations: migrations, codexStore: codex)
+        for _ in 0..<100 {
+            if await service.waiting() { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let staleWaiting = await service.waiting(); precondition(staleWaiting)
+        draft.cancel(); draft.select(second)
+        await service.release()
+        try await wait { !draft.preparing && draft.preview != nil }
+        precondition(draft.error == nil && draft.source == second)
+        print("PASS: migration workspace validation, cancellation, stale results/errors, committed-record retention and open retry")
     }
 }
 '''

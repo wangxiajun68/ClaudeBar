@@ -180,7 +180,14 @@ struct MachineKpiStrip: View {
 
     private var fanShort: String {
         guard !fanMonitor.fans.isEmpty else { return "—" }
-        return "\(fanMonitor.fans.map(\.rpm).reduce(0, +))"
+        // Normalize the combined speed to the fans' combined rated maximum.
+        let totals = fanMonitor.fans.reduce(into: (rpm: 0.0, maximum: 0.0)) { result, fan in
+            result.rpm += Double(max(0, fan.rpm))
+            result.maximum += Double(max(0, fan.maxRPM))
+        }
+        guard totals.maximum > 0 else { return "—" }
+        let percent = min(100, max(0, totals.rpm / totals.maximum * 100))
+        return String(format: "%.0f%%", percent)
     }
 
     private var fansAtMax: Bool { fanMonitor.allAtMax }

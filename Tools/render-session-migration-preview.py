@@ -2,7 +2,7 @@
 """Render the production migration workspace with synthetic data only.
 
 Does not start the app, read client histories, or perform a migration. Native
-fields and scroll containers use still-image equivalents for ImageRenderer.
+controls and scrolling render through NSHostingView with fixture-only stores.
 """
 from pathlib import Path
 import subprocess
@@ -97,17 +97,10 @@ enum BuildChannel { static let allowsSystemIntegration = true }
     }
     let providers: [Provider] = []
 }
-func fixtureField(_ prompt: String, text: Binding<String>) -> some View {
-    Text(text.wrappedValue.isEmpty ? prompt : text.wrappedValue)
-        .foregroundColor(text.wrappedValue.isEmpty ? Theme.textSecondary : Theme.textPrimary)
-}
 '''
 shared = (root / 'Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift').read_text()
 source += shared[shared.index('struct SessionMigrationButton:'):]
 search = (root / 'Sources/ClaudeBar/Views/Shared/InstrumentSearchField.swift').read_text()
-import re
-search = re.sub(r'TextField\(prompt, text: \$text\)', 'fixtureField(prompt, text: $text)', search)
-search = re.sub(r'\n\s*\.focused\(\$focused\)', '', search)
 source += search + '\n'
 workspace = (root / 'Sources/ClaudeBar/Views/Pages/SessionMigrationView.swift').read_text()
 # State and bodies are production; the actor is a fixture with no external IO.
@@ -130,13 +123,7 @@ actor SessionMigrationService {
 }
 '''
 views = workspace[workspace.index('extension MigrationClient'):]
-# ImageRenderer has no AppKit input bridge or scroll viewport. Flatten only
-# native containers, retaining the exact production content and spacing.
-views = views.replace('.buttonStyle(.link)', '.buttonStyle(.plain)')
-views = views.replace('ScrollView {', 'VStack(alignment: .leading, spacing: 0) {')
-views = views.replace('LazyVStack(', 'VStack(').replace('LazyVGrid(', 'LazyVGrid(')
-views = views.replace('TextField("官方账号可用的模型名称", text: $draft.officialModel)',
-                      'fixtureField("官方账号可用的模型名称", text: $draft.officialModel)')
+# Native hosting retains all inputs, checkbox controls and scroll viewports.
 source += views
 source += r'''
 @main struct Probe {
@@ -158,7 +145,7 @@ source += r'''
             .init(role: .user, text: "同时适配明暗外观。"),
             .init(role: .assistant, text: "界面继续使用现有 Theme 和原生组件。")
         ], fingerprint: "synthetic", omissions: ["思考过程与账号信息不迁移。"])
-        for width in [900, 1440] {
+        for width in [760, 900, 1440] {
             for dark in [false, true] {
                 for empty in [false, true] {
                     // Empty state needs only one size; captures remain labelled.
@@ -199,13 +186,25 @@ source += r'''
                     .environmentObject(migrations).environmentObject(CodexProviderStore())
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .background(Theme.bgPrimary)
-                    let renderer = ImageRenderer(content: sheet)
-                    renderer.scale = 2
-                    guard let image = renderer.cgImage,
-                          let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-                    else { fatalError("Render failed") }
+                    let host = NSHostingView(rootView: sheet)
+                    host.frame = NSRect(x: 0, y: 0, width: width, height: 1040)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.borderless],
+                                          backing: .buffered, defer: false)
+                    window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    window.contentView = host
+                    window.orderFrontRegardless()
+                    host.layoutSubtreeIfNeeded()
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                    guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+                        fatalError("Render failed")
+                    }
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                        fatalError("PNG encode failed")
+                    }
                     let name = "migration-\(width)-\(dark ? "dark" : "light")\(empty ? "-empty" : "").png"
                     try png.write(to: out.appendingPathComponent(name))
+                    window.orderOut(nil)
                 }
             }
         }

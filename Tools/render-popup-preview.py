@@ -12,7 +12,7 @@ reached without touching `Sources/` and without live hardware:
 
   * `MachineKpiStrip` — reads `ProcessSampler.shared.host` (SMC/`vm_statistics`),
     `FanMonitor.shared` (SMC fan keys) and `AudioAccessoryMonitor.shared`. Its
-    four values (`CPU 48% · GPU 44% · 内存 15.2G · 风扇 2977`) are rendered by a
+    four values (`CPU 48% · GPU 44% · 内存 15.2G · 风扇 48%`) are rendered by a
     fixture strip drawn to the same geometry (`EqualRowGrid`, 62pt cells) so the
     popup's own rhythm is intact, but the production view is not the thing on
     screen and the figures are synthetic.
@@ -586,13 +586,13 @@ struct PopupFixture: View {
 
 /// The four-cell KPI strip at `MachineKpiStrip`'s own geometry — see the module
 /// doc for why the production view is not on screen. Synthetic figures, the
-/// promo film's own (`§4 · 第 8 场`): `CPU 48% · GPU 44% · 内存 15.2G · 风扇 2977`.
+/// promo film's own (`§4 · 第 8 场`): `CPU 48% · GPU 44% · 内存 15.2G · 风扇 48%`.
 struct FixtureKpiStrip: View {
     private let cells: [(icon: String, label: String, value: String, tint: Color)] = [
         ("cpu", "CPU", "48%", Theme.claude),
         ("gpu", "GPU", "44%", Theme.chartBlue),
         ("memory", "内存", "15.2G", Theme.chartAmber),
-        ("fan", "风扇", "2977", Theme.claude),
+        ("fan", "风扇", "48%", Theme.claude),
     ]
 
     var body: some View {

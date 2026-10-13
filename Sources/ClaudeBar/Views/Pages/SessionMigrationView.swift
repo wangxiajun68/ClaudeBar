@@ -21,13 +21,31 @@ final class SessionMigrationDraft: ObservableObject {
     private var work: Task<Void, Never>?
     private var generation = 0
 
+    /// A single reason for a blocked submission, shared by the button and status.
+    var preparationIssue: String? {
+        guard let source else { return "请选择要迁移的来源会话。" }
+        if source.isSubagent { return "子代理会话不能迁移，请选择父会话。" }
+        if source.isBusy { return "来源会话正在运行，请等待回合结束并处理待确认操作。" }
+        if source.client == .claude && target == .claude {
+            return "来源已是 Claude Code，可直接继续原会话，或选择其他目标配置。"
+        }
+        if target.client == .cursorCLI && includeImages {
+            return "Cursor CLI 不支持携带图片，请取消图片选项或更换目标。"
+        }
+        if target == .codexOfficial && officialModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "请输入官方账号可用的模型名称。"
+        }
+        if target == .claudeCodexModel {
+            if bridgeProviderID == nil { return "请选择自定义模型的供应商。" }
+            if bridgeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "请选择要使用的模型。" }
+        }
+        if let preview, preview.messages.isEmpty { return "来源没有可迁移的对话消息，请选择其他会话。" }
+        return nil
+    }
+
     var canPrepare: Bool {
         BuildChannel.allowsSystemIntegration && preview != nil && !loading && !preparing
-            && source?.isBusy == false && source?.isSubagent == false
-            && !(target.client == .cursorCLI && includeImages)
-            && !(target == .codexOfficial && officialModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && !(target == .claudeCodexModel && (bridgeProviderID == nil || bridgeModel.isEmpty))
-            && preparedRecord == nil
+            && preparationIssue == nil && preparedRecord == nil
     }
 
     func resetPrepared() {
@@ -43,6 +61,10 @@ final class SessionMigrationDraft: ObservableObject {
         if changedIdentity {
             preparedRecord = nil; opened = false
             target = source.client == .claude ? .codexCurrent : .claude
+            if source.client == .cursorCLI {
+                includeCompletedTools = false
+                includeImages = false
+            }
         }
         load()
     }
@@ -92,7 +114,10 @@ final class SessionMigrationDraft: ObservableObject {
                 try Task.checkCancellation()
                 try await migrations.open(record, codexStore: codexStore)
                 opened = true
-            } catch is CancellationError {} catch { self.error = error.localizedDescription }
+            } catch is CancellationError {} catch {
+                guard revision == generation else { return }
+                self.error = error.localizedDescription
+            }
         }
     }
 
@@ -186,12 +211,12 @@ struct SessionMigrationView: View {
                     HairlineDivider()
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 24) {
-                            sourcePicker.frame(width: 240)
+                            sourcePicker(compact: false).frame(width: 256)
                             Divider()
                             editor.frame(minWidth: 420, maxWidth: .infinity)
                         }
                         VStack(alignment: .leading, spacing: 20) {
-                            sourcePicker
+                            sourcePicker(compact: true)
                             HairlineDivider()
                             editor
                         }
@@ -203,6 +228,8 @@ struct SessionMigrationView: View {
                 .panelCard()
                 historySection
             }
+            .frame(maxWidth: 1120)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, Theme.Space.s24)
             .padding(.bottom, Theme.Space.s24)
         }
@@ -221,6 +248,7 @@ struct SessionMigrationView: View {
         .onChange(of: sources) {
             if let source = draft.source { draft.select(currentSource(source)) }
         }
+        .onChange(of: draft.source?.id) { showsMessages = false }
         .onChange(of: draft.includeCompletedTools) { draft.load() }
         .onChange(of: draft.includeImages) { draft.load() }
         .onChange(of: draft.bridgeProviderID) { draft.bridgeModel = "" }
@@ -250,33 +278,16 @@ struct SessionMigrationView: View {
 
     private var route: some View {
         HStack(spacing: 16) {
-            endpoint(client: draft.source?.client, caption: "来源",
-                     detail: draft.source.map { $0.title.isEmpty ? $0.client.label : $0.title } ?? "选择一个会话")
-            routeConnector
-            VStack(spacing: 6) {
-                Image(systemName: draft.preparedRecord == nil ? "text.bubble" : "checkmark.circle.fill")
-                    .font(.system(size: 22)).foregroundColor(Theme.Ink.claude)
-                Text(draft.preview.map { "\($0.messages.count) 条消息" } ?? "会话历史")
-                    .font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary)
-                Text(draft.preparedRecord == nil ? "复制到新会话" : "已创建新会话")
-                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-            }
-            .frame(minWidth: 104)
-            routeConnector
-            endpoint(client: draft.target.client, caption: "目标", detail: draft.target.migrationDetail)
+            endpoint(client: draft.source?.client, caption: "来源会话",
+                     detail: draft.source.map { $0.title.isEmpty ? $0.client.label : $0.title } ?? "尚未选择")
+            Image(systemName: "arrow.right")
+                .font(Theme.Font.chromeEmph).foregroundColor(Theme.textSecondary)
+                .accessibilityHidden(true)
+            endpoint(client: draft.target.client, caption: "创建新会话",
+                     detail: draft.target.migrationDetail)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-    }
-
-    private var routeConnector: some View {
-        HStack(spacing: 0) {
-            Rectangle().fill(Theme.hairline).frame(height: 1)
-            Image(systemName: "chevron.right").font(Theme.Font.microSemibold)
-                .foregroundColor(Theme.textTertiary())
-        }
-        .frame(minWidth: 12, maxWidth: 90)
-        .accessibilityHidden(true)
     }
 
     private func endpoint(client: MigrationClient?, caption: String, detail: String) -> some View {
@@ -292,7 +303,7 @@ struct SessionMigrationView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var sourcePicker: some View {
+    private func sourcePicker(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("选择来源").font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary)
@@ -312,7 +323,7 @@ struct SessionMigrationView: View {
                         }
                     }
                 }
-                .frame(height: 250)
+                .frame(height: compact ? 200 : 320)
             }
         }
         .disabled(draft.preparing)
@@ -327,15 +338,16 @@ struct SessionMigrationView: View {
                     Text(source.title.isEmpty ? source.client.label : source.title)
                         .font(Theme.Font.chrome).foregroundColor(Theme.textPrimary).lineLimit(2)
                         .multilineTextAlignment(.leading)
+                        .frame(height: 34, alignment: .topLeading)
                     Text(URL(fileURLWithPath: source.cwd).lastPathComponent)
                         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(1)
                     Text(source.isSubagent ? "子代理 · 请选父会话" : source.isBusy ? "等待回合结束" : source.client.label)
                         .font(Theme.Font.micro).foregroundColor(source.isBusy ? Theme.Ink.warning : Theme.textSecondary)
                 }
                 Spacer(minLength: 0)
-                if selected {
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.Ink.claude)
-                }
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? Theme.Ink.claude : Theme.textTertiary())
+                    .frame(width: 16)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -344,13 +356,13 @@ struct SessionMigrationView: View {
         }
         .buttonStyle(MigrationChoiceStyle())
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(source.cwd)
+        .help((source.title.isEmpty ? source.client.label : source.title) + "\n" + source.cwd)
     }
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("选择目标").font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190))], spacing: 8) {
                 ForEach(MigrationTarget.allCases) { target in
                     targetButton(target)
                 }
@@ -358,26 +370,34 @@ struct SessionMigrationView: View {
             .disabled(draft.preparing || draft.preparedRecord != nil || draft.source == nil)
             targetConfiguration
             HairlineDivider()
-            HStack {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("携带内容").font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary)
-                Spacer()
-                Text("对话文本始终保留").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                Text("用户与助手的对话文本始终携带。以下内容可选：")
+                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                contentOption("工具调用与结果", detail: "携带已完成工具的输入和结果，不会重新执行工具。",
+                              selection: $draft.includeCompletedTools)
+                contentOption("用户图片", detail: "图片会发送给目标模型；文档和音频不会迁移。",
+                              selection: $draft.includeImages)
+                if draft.source?.client == .cursorCLI {
+                    notice("Cursor CLI 来源仅支持对话文本，暂不支持携带工具和图片。")
+                }
             }
-            HStack(spacing: 20) {
-                Toggle("已完成工具", isOn: $draft.includeCompletedTools)
-                    .help("携带已完成工具的输入和结果，原工具不会重新执行。")
-                Toggle("用户图片", isOn: $draft.includeImages)
-                    .help("图片会发送给目标模型；文档、音频和 attachedFiles 不迁移。")
-            }
-            .toggleStyle(.instrument)
-            .font(Theme.Font.bodySmall)
             .disabled(draft.preparing || draft.preparedRecord != nil || draft.source == nil
                       || draft.source?.client == .cursorCLI)
-            if draft.includeImages && draft.target.client == .cursorCLI {
-                notice("Cursor CLI 不能写入图片。请选择其他目标，或关闭用户图片。", warning: true)
-            }
             if let preview = draft.preview { previewContent(preview) }
         }
+    }
+
+    private func contentOption(_ title: String, detail: String, selection: Binding<Bool>) -> some View {
+        Toggle(isOn: selection) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(Theme.Font.bodySmall).foregroundColor(Theme.textPrimary)
+                Text(detail).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(.checkbox)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func targetButton(_ target: MigrationTarget) -> some View {
@@ -390,7 +410,9 @@ struct SessionMigrationView: View {
                 GlyphWell(name: "", size: 24, mark: target.client.migrationMark)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(target.client.label).font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary)
-                    Text(target.migrationDetail).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                    Text(sameClaude ? "来源正在使用此配置" : target.migrationDetail)
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -398,14 +420,14 @@ struct SessionMigrationView: View {
                     .foregroundColor(selected ? Theme.Ink.claude : Theme.textTertiary())
             }
             .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.claude.opacity(0.10) : Theme.fieldWell))
+            .frame(maxWidth: .infinity, minHeight: 72, maxHeight: 72, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.claude.opacity(0.10) : Theme.cardSurface))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Theme.claude.opacity(0.55) : Theme.hairline, lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(MigrationChoiceStyle())
         .disabled(sameClaude)
-        .opacity(sameClaude ? 0.45 : 1)
+        .opacity(sameClaude ? 0.65 : 1)
         .accessibilityLabel(target.label)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .help(sameClaude ? "同一客户端可直接继续原会话" : target.label)
@@ -413,31 +435,43 @@ struct SessionMigrationView: View {
 
     @ViewBuilder private var targetConfiguration: some View {
         if draft.target == .codexOfficial {
-            TextField("官方账号可用的模型名称", text: $draft.officialModel)
-                .textFieldStyle(InstrumentFieldStyle())
-                .accessibilityLabel("官方模型名称")
-                .disabled(draft.preparing || draft.preparedRecord != nil)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("官方模型名称").font(Theme.Font.bodySmall).foregroundColor(Theme.textPrimary)
+                TextField("官方账号可用的模型名称", text: $draft.officialModel)
+                    .textFieldStyle(InstrumentFieldStyle())
+                    .accessibilityLabel("官方模型名称")
+                notice("使用 Codex 官方登录账号；请先在 Codex 中完成登录。")
+            }
+            .disabled(draft.preparing || draft.preparedRecord != nil)
         } else if draft.target == .claudeCodexModel {
-            HStack {
+            VStack(alignment: .leading, spacing: 10) {
                 Picker("供应商", selection: $draft.bridgeProviderID) {
-                    Text("请选择").tag(nil as UUID?)
+                    Text("选择供应商").tag(nil as UUID?)
                     ForEach(codexStore.providers.filter { !$0.apiKey.isEmpty }) {
                         Text($0.name).tag(Optional($0.id))
                     }
                 }
+                .pickerStyle(.menu)
                 if let provider = codexStore.providers.first(where: { $0.id == draft.bridgeProviderID }) {
                     Picker("模型", selection: $draft.bridgeModel) {
-                        Text("请选择").tag("")
+                        Text("选择模型").tag("")
                         ForEach(provider.models) { Text($0.name).tag($0.name) }
                     }
+                    .pickerStyle(.menu)
+                    if provider.models.isEmpty { notice("此供应商暂无模型，请先在 Codex 配置中添加。", warning: true) }
+                } else if codexStore.providers.filter({ !$0.apiKey.isEmpty }).isEmpty {
+                    notice("暂无可用供应商，请先在 Codex 配置中添加供应商和 API Key。", warning: true)
                 }
+                notice("在 Claude Code 中使用 Codex 自定义模型，通过 ClaudeBar 代理连接；继续会话时需保持 ClaudeBar 运行。")
             }
             .disabled(draft.preparing || draft.preparedRecord != nil)
-            notice("此会话通过 ClaudeBar 代理连接，继续时需保持 ClaudeBar 运行。")
         } else if draft.target == .cursorDesktop {
-            notice("沿用此项目已有聊天的模型设置。创建后打开新聊天，历史名称以「ClaudeBar · 迁移」开头。")
+            notice("在 Cursor 桌面创建新聊天，沿用此项目已有聊天的模型。新聊天名称以「ClaudeBar · 迁移」开头。")
+        } else if draft.target == .cursorCLI {
+            notice("在终端打开 Cursor CLI，使用 Auto 模型；此目标不支持携带图片。")
         } else {
-            notice(draft.target == .cursorCLI ? "将在终端打开 Cursor CLI。" : "使用目标客户端的账号、配置与权限。")
+            notice(draft.target == .claude ? "在终端打开 Claude Code，使用当前账号、模型配置与权限。"
+                   : "打开新的 Codex 会话，使用当前选择的供应商、模型与权限。")
         }
     }
 
@@ -452,19 +486,13 @@ struct SessionMigrationView: View {
             }
             .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
             let users = preview.messages.filter { $0.role == .user }.count
-            GeometryReader { proxy in
-                HStack(spacing: 2) {
-                    Rectangle().fill(Theme.claude).frame(width: proxy.size.width * CGFloat(users) / CGFloat(max(1, preview.messages.count)))
-                    Rectangle().fill(Theme.cursor)
-                }
-            }
-            .frame(height: 5).clipShape(Capsule()).accessibilityHidden(true)
             HStack {
-                Text("用户 \(users) · 助手 \(preview.messages.count - users)")
+                Text("用户 \(users) 条 · 助手 \(preview.messages.count - users) 条")
                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                 Spacer()
-                Button(showsMessages ? "收起历史" : "预览历史") { showsMessages.toggle() }
+                Button(showsMessages ? "收起消息历史" : "查看将携带的历史") { showsMessages.toggle() }
                     .buttonStyle(.link).font(Theme.Font.caption)
+                    .accessibilityValue(showsMessages ? "已展开" : "已收起")
             }
             if showsMessages {
                 ScrollView {
@@ -507,16 +535,17 @@ struct SessionMigrationView: View {
     private var commitStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let error = draft.error { notice(error, warning: true) }
-            if draft.preparedRecord != nil {
+            if draft.preparing {
+                ProgressView(draft.preparedRecord == nil ? "正在创建并打开新会话…" : "正在打开新会话…")
+                    .controlSize(.small).font(Theme.Font.caption)
+            } else if draft.preparedRecord != nil {
                 Label(draft.opened ? "已创建并打开 · 可以在目标客户端继续" : "新会话已创建 · 可以重新打开",
                       systemImage: "checkmark.circle.fill")
                     .font(Theme.Font.bodySmall).foregroundColor(Theme.Ink.success)
             } else if !BuildChannel.allowsSystemIntegration {
                 notice("正式版可读取历史并执行迁移。开发版仅展示工作流程。")
-            } else if draft.source?.isSubagent == true {
-                notice("请从父会话迁移，子代理会话不能作为来源。", warning: true)
-            } else if draft.source?.isBusy == true {
-                notice("等待当前回合结束，并处理待确认操作后再迁移。", warning: true)
+            } else if let issue = draft.preparationIssue {
+                notice(issue, warning: draft.source != nil)
             } else if draft.loading {
                 ProgressView("正在读取会话历史…").controlSize(.small).font(Theme.Font.caption)
             } else {
@@ -657,7 +686,7 @@ private struct MigrationHistoryRow: View {
                         Text(record.source.client.label)
                         Image(systemName: "arrow.right").accessibilityHidden(true)
                         GlyphWell(name: "", size: 18, mark: record.target.client.migrationMark)
-                        Text(record.target.client.label)
+                        Text(record.target.label)
                         Text("· \(record.messageCount) 条消息")
                     }
                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(1)
