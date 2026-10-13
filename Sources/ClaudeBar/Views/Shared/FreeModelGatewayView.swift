@@ -670,6 +670,28 @@ struct FreeModelGatewayView: View {
                                     gateway.change { $0.providerRequestsPerMinute[provider.id.uuidString] = nil }
                                 })
                         }
+                        GatewaySettingRow(title: "估算 TPM", caption: "按输入估算量与预留输出量扣额；留空表示不限制，非供应商实际用量。") {
+                            HStack(spacing: 8) {
+                                Toggle("启用估算 TPM", isOn: Binding(
+                                    get: { gateway.pool.providerTokensPerMinute[provider.id.uuidString] != nil },
+                                    set: { enabled in gateway.change {
+                                        $0.providerTokensPerMinute[provider.id.uuidString] = enabled ? 100_000 : nil
+                                    } })).labelsHidden()
+                                    .help("启用供应商估算 token 额度")
+                                if gateway.pool.providerTokensPerMinute[provider.id.uuidString] != nil {
+                                    TextField("tokens/分钟", value: Binding(
+                                        get: { gateway.pool.providerTokensPerMinute[provider.id.uuidString] ?? 100_000 },
+                                        set: { limit in gateway.change {
+                                            $0.providerTokensPerMinute[provider.id.uuidString] = min(10_000_000, max(1, limit))
+                                        } }), format: .number)
+                                        .textFieldStyle(.roundedBorder).frame(width: 105)
+                                        .accessibilityLabel("估算 TPM")
+                                } else {
+                                    Text("不限").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                                        .frame(width: 105, alignment: .trailing)
+                                }
+                            }
+                        }
                         if gateway.pool.strategy == .weighted {
                             GatewaySettingRow(title: "分发权重") {
                                 GatewayNumberControl(title: "分发权重", value: Binding(

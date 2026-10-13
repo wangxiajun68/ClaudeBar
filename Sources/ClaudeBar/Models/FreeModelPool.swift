@@ -57,6 +57,7 @@ struct FreeModelPool: Codable, Equatable, Sendable {
     var queueTimeoutSeconds = 30
     var requestsPerMinute = 20
     var providerRequestsPerMinute: [String: Int] = [:]
+    var providerTokensPerMinute: [String: Int] = [:]
     var providerWeights: [String: Int] = [:]
     var firstOutputTimeoutSeconds = 20
     var streamIdleTimeoutSeconds = 30
@@ -116,8 +117,9 @@ struct FreeModelPool: Codable, Equatable, Sendable {
               providerConcurrent.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...64).contains($0.value) }),
               (0...1024).contains(maxQueued), (1...1024).contains(providerQueueCapacity), (1...120).contains(queueTimeoutSeconds),
               (1...6000).contains(requestsPerMinute),
-              providerRequestsPerMinute.count <= 200, providerWeights.count <= 200,
+              providerRequestsPerMinute.count <= 200, providerTokensPerMinute.count <= 200, providerWeights.count <= 200,
               providerRequestsPerMinute.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...6000).contains($0.value) }),
+              providerTokensPerMinute.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...10_000_000).contains($0.value) }),
               providerWeights.allSatisfy({ UUID(uuidString: $0.key)?.uuidString == $0.key && (1...100).contains($0.value) }),
               (1...120).contains(firstOutputTimeoutSeconds), (1...300).contains(streamIdleTimeoutSeconds), (1...300).contains(retryBudgetSeconds),
               (1...1800).contains(requestTimeoutSeconds), firstOutputTimeoutSeconds <= requestTimeoutSeconds,
@@ -391,7 +393,7 @@ extension FreeModelPool {
         case version, enabled, interceptAll, discoveryEnabled, automaticallyJoin, refreshHours, strategy
         case maxAttempts, maxConcurrent, requestsPerMinute, openRouterProviderID, members, catalog, discoveredAt
         case defaultProviderConcurrent, providerConcurrent, maxQueued, providerQueueCapacity, queueTimeoutSeconds
-        case providerRequestsPerMinute, providerWeights, firstOutputTimeoutSeconds, streamIdleTimeoutSeconds, retryBudgetSeconds, requestTimeoutSeconds
+        case providerRequestsPerMinute, providerTokensPerMinute, providerWeights, firstOutputTimeoutSeconds, streamIdleTimeoutSeconds, retryBudgetSeconds, requestTimeoutSeconds
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -415,6 +417,7 @@ extension FreeModelPool {
         providerQueueCapacity = try c.decodeIfPresent(Int.self, forKey: .providerQueueCapacity) ?? 8
         queueTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .queueTimeoutSeconds) ?? 30
         providerRequestsPerMinute = try c.decodeIfPresent([String: Int].self, forKey: .providerRequestsPerMinute) ?? [:]
+        providerTokensPerMinute = try c.decodeIfPresent([String: Int].self, forKey: .providerTokensPerMinute) ?? [:]
         providerWeights = try c.decodeIfPresent([String: Int].self, forKey: .providerWeights) ?? [:]
         firstOutputTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .firstOutputTimeoutSeconds) ?? 20
         streamIdleTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .streamIdleTimeoutSeconds) ?? 30

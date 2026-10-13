@@ -667,16 +667,17 @@ func cancelled<T>(_ task: Task<T, Error>) async {
 
         var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(pool)) as! [String:Any]
         for key in ["defaultProviderConcurrent","providerConcurrent","maxQueued","providerQueueCapacity","queueTimeoutSeconds",
-                    "providerRequestsPerMinute","providerWeights","firstOutputTimeoutSeconds","streamIdleTimeoutSeconds","retryBudgetSeconds","requestTimeoutSeconds"] { legacy.removeValue(forKey:key) }
+                    "providerRequestsPerMinute","providerTokensPerMinute","providerWeights","firstOutputTimeoutSeconds","streamIdleTimeoutSeconds","retryBudgetSeconds","requestTimeoutSeconds"] { legacy.removeValue(forKey:key) }
         let loaded = try JSONDecoder().decode(FreeModelPool.self,from:JSONSerialization.data(withJSONObject:legacy))
         check(loaded.maxConcurrent == pool.maxConcurrent && loaded.defaultProviderConcurrent == 2 && loaded.maxQueued == 32 && loaded.queueTimeoutSeconds == 30)
         check(loaded.members == pool.members && loaded.providerConcurrent.isEmpty && loaded.providerQueueCapacity == 8)
-        check(loaded.providerWeights.isEmpty && loaded.providerRequestsPerMinute.isEmpty && loaded.firstOutputTimeoutSeconds == 20 && loaded.requestTimeoutSeconds == 180)
+        check(loaded.providerWeights.isEmpty && loaded.providerRequestsPerMinute.isEmpty && loaded.providerTokensPerMinute.isEmpty && loaded.firstOutputTimeoutSeconds == 20 && loaded.requestTimeoutSeconds == 180)
         for mutate: (inout FreeModelPool) -> Void in [
             { $0.defaultProviderConcurrent = 0 }, { $0.providerConcurrent[a.uuidString] = 65 },
             { $0.providerConcurrent["not-a-provider"] = 1 }, { $0.maxQueued = 1025 },
             { $0.maxQueued = -1 }, { $0.providerQueueCapacity = 0 }, { $0.providerQueueCapacity = 1025 }, { $0.queueTimeoutSeconds = 0 }, { $0.queueTimeoutSeconds = 121 },
             { $0.providerWeights[a.uuidString] = 0 }, { $0.providerRequestsPerMinute[a.uuidString] = 6001 },
+            { $0.providerTokensPerMinute[a.uuidString] = 0 }, { $0.providerTokensPerMinute[a.uuidString] = 10_000_001 },
             { $0.firstOutputTimeoutSeconds = 0 }, { $0.requestTimeoutSeconds = 10 }, { $0.retryBudgetSeconds = 301 }] {
             var invalid = pool; mutate(&invalid); check(invalid.validationError != nil)
         }
@@ -702,7 +703,17 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         check(one.candidates[0].endpoint.id != two.candidates[0].endpoint.id,"provider RPM must route around exhausted account")
         await expect(.rateLimited) { _ = try await rates.begin(medium,now:rateNow) }
         let renewed = try await rates.begin(medium,now:rateNow.addingTimeInterval(61)); await rates.finish(renewed)
+        weighted.providerRequestsPerMinute = [:]
+        let tokenCost = max(1, medium.context - 1024)
+        weighted.providerTokensPerMinute = [a.uuidString:tokenCost,b.uuidString:tokenCost]
+        let tokenRates = await configured(weighted)
+        let tokenOne = try await tokenRates.begin(medium,now:rateNow); await tokenRates.finish(tokenOne)
+        let tokenTwo = try await tokenRates.begin(medium,now:rateNow); await tokenRates.finish(tokenTwo)
+        check(tokenOne.candidates[0].endpoint.id != tokenTwo.candidates[0].endpoint.id,"TPM must route around exhausted provider")
+        await expect(.rateLimited) { _ = try await tokenRates.begin(medium,now:rateNow) }
+        let tokenRenewed = try await tokenRates.begin(medium,now:rateNow.addingTimeInterval(61)); await tokenRates.finish(tokenRenewed)
         weighted.providerRequestsPerMinute = [:]; weighted.defaultProviderConcurrent = 8
+        weighted.providerTokensPerMinute = [:]
         weighted.members = [member(a,"a",[.medium])]
         let recovery = await configured(weighted)
         let failed = try await recovery.begin(medium,now:rateNow)
@@ -718,7 +729,7 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         await recovery.report(halfOpen.candidates[0],plan:halfOpen,status:200,latency:0.1,now:recoveredAt)
         let healed = try await behindProbe.value
         await recovery.finish(halfOpen); await recovery.finish(healed)
-        print("PASS: weighted distribution, provider RPM recovery, single half-open probe, timeout defaults and limits")
+        print("PASS: weighted distribution, provider RPM/TPM recovery, single half-open probe, timeout defaults and limits")
         var vectors = pool; vectors.strategy = .balanced; vectors.requestsPerMinute = 6000
         vectors.members = [member(a,"vector-a",[.medium]),member(b,"vector-b",[.medium])]
         for i in vectors.members.indices { vectors.members[i].mediaCapabilities = [.embeddings] }

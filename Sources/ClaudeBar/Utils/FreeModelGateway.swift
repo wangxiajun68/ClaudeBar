@@ -18,6 +18,7 @@ actor FreeModelGateway {
         var id: UUID
         var revision: UInt
         var requestBytes = 0
+        var estimatedTokens = 0
         var testingMemberID: String? = nil
         var candidates: [Candidate]
         var routing: GatewayTaskRouting
@@ -120,8 +121,25 @@ actor FreeModelGateway {
         }
         mutating func append(_ now: Date) { values.append(now) }
     }
+    private struct TokenWindow {
+        private var values: [(Date, Int)] = []
+        private var head = 0
+        private(set) var total = 0
+        mutating func prune(now: Date) {
+            while head < values.count, now.timeIntervalSince(values[head].0) >= 60 {
+                total -= values[head].1; head += 1
+            }
+            if head > 1024 || head == values.count {
+                values.removeFirst(head); head = 0
+            }
+        }
+        mutating func append(_ now: Date, tokens: Int) {
+            values.append((now, tokens)); total += tokens
+        }
+    }
     private var admitted = RateWindow()
     private var providerAdmissions: [UUID: RateWindow] = [:]
+    private var providerTokens: [UUID: TokenWindow] = [:]
     private var providerService: [UUID: Double] = [:]
     private var catalogByID: [String: FreeModelPool.CatalogModel] = [:]
     private var providerOccupancy: [UUID: Int] = [:]
@@ -176,6 +194,7 @@ actor FreeModelGateway {
         self.endpoints = next
         catalogByID = Dictionary(pool.catalog.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         providerAdmissions = providerAdmissions.filter { next[$0.key] != nil }
+        providerTokens = providerTokens.filter { next[$0.key] != nil }
         providerService = providerService.filter { next[$0.key] != nil }
         revision &+= 1
         failWaiters(pool.enabled ? GatewayFailure.interrupted : GatewayFailure.disabled)
@@ -219,6 +238,7 @@ actor FreeModelGateway {
     private func prepare(_ requirements: GatewayRequirements, requestBytes: Int, now: Date, testingMemberID: String? = nil) throws -> Plan {
         guard pool.enabled || testingMemberID != nil else { throw GatewayFailure.disabled }
         var routing = requirements.routing
+        let estimatedTokens = max(1, requirements.context - 1024)
         let levels = routing.source == .explicit ? [routing.difficulty]
             : Array(GatewayTaskDifficulty.allCases.drop { $0 != routing.difficulty })
         // Pin before capability/context/health filtering: a longer input or a
@@ -262,7 +282,7 @@ actor FreeModelGateway {
         let ready = free.filter { _, candidate in
             (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
                 && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
-                && providerRateAvailable(candidate.endpoint.id, now: now)
+                && providerRateAvailable(candidate.endpoint.id, tokens: estimatedTokens, now: now)
         }.sorted { lhs, rhs in
             let left = health[lhs.1.member.id] ?? Health(), right = health[rhs.1.member.id] ?? Health()
             switch pool.strategy {
@@ -284,7 +304,7 @@ actor FreeModelGateway {
             if free.contains(where: { _, c in
                 (health[c.member.id]?.cooldownUntil ?? .distantPast) <= now
                     && (providerCooldown[c.endpoint.id] ?? .distantPast) <= now
-                    && !providerRateAvailable(c.endpoint.id, now: now)
+                    && !providerRateAvailable(c.endpoint.id, tokens: estimatedTokens, now: now)
             }) { throw GatewayFailure.rateLimited }
             throw GatewayFailure.coolingDown
         }
@@ -295,7 +315,7 @@ actor FreeModelGateway {
         case .latency: selection = "同档位 · 观测响应延迟"
         case .weighted: selection = "同档位 · 供应商权重"
         }
-        return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, testingMemberID: testingMemberID,
+        return Plan(id: UUID(), revision: revision, requestBytes: requestBytes, estimatedTokens: estimatedTokens, testingMemberID: testingMemberID,
                     candidates: ready.map(\.1), routing: routing, selection: testingMemberID == nil ? selection : "手动测试 · 指定模型",
                     firstOutputTimeoutSeconds: pool.firstOutputTimeoutSeconds, streamIdleTimeoutSeconds: pool.streamIdleTimeoutSeconds,
                     retryBudgetSeconds: pool.retryBudgetSeconds,
@@ -309,7 +329,7 @@ actor FreeModelGateway {
               (attempts[plan.id] ?? 0) < pool.maxAttempts else { return false }
         return (health[candidate.member.id]?.cooldownUntil ?? .distantPast) <= now
             && (providerCooldown[candidate.endpoint.id] ?? .distantPast) <= now
-            && (reservations[plan.id]?.providerID == candidate.endpoint.id || providerRateAvailable(candidate.endpoint.id, now: now))
+            && (reservations[plan.id]?.providerID == candidate.endpoint.id || providerRateAvailable(candidate.endpoint.id, tokens: plan.estimatedTokens, now: now))
     }
 
     func isCurrent(_ plan: Plan) -> Bool { active.contains(plan.id) && plan.revision == revision }
@@ -386,15 +406,25 @@ actor FreeModelGateway {
         if providerCooldown[candidate.endpoint.id] != nil, providerOccupancy[candidate.endpoint.id, default: 0] > 0 { return false }
         return (health[candidate.member.id]?.consecutiveFailures ?? 0) == 0 || memberOccupancy[candidate.member.id, default: 0] == 0
     }
-    private func providerRateAvailable(_ id: UUID, now: Date) -> Bool {
-        guard let limit = pool.providerRequestsPerMinute[id.uuidString] else { return true }
-        providerAdmissions[id]?.prune(now: now)
-        return (providerAdmissions[id]?.count ?? 0) < limit
+    private func providerRateAvailable(_ id: UUID, tokens: Int, now: Date) -> Bool {
+        if let limit = pool.providerRequestsPerMinute[id.uuidString] {
+            providerAdmissions[id]?.prune(now: now)
+            guard (providerAdmissions[id]?.count ?? 0) < limit else { return false }
+        }
+        if let limit = pool.providerTokensPerMinute[id.uuidString] {
+            providerTokens[id]?.prune(now: now)
+            guard tokens <= limit - (providerTokens[id]?.total ?? 0) else { return false }
+        }
+        return true
     }
-    private func debitProvider(_ id: UUID, now: Date) {
+    private func debitProvider(_ id: UUID, tokens: Int, now: Date) {
         if pool.providerRequestsPerMinute[id.uuidString] != nil {
             providerAdmissions[id, default: RateWindow()].prune(now: now)
             providerAdmissions[id, default: RateWindow()].append(now)
+        }
+        if pool.providerTokensPerMinute[id.uuidString] != nil {
+            providerTokens[id, default: TokenWindow()].prune(now: now)
+            providerTokens[id, default: TokenWindow()].append(now, tokens: tokens)
         }
         providerService[id, default: 0] += 1 / Double(pool.providerWeights[id.uuidString] ?? 1)
     }
@@ -420,7 +450,7 @@ actor FreeModelGateway {
         let selected = result.candidates.remove(at: index)
         result.candidates.insert(selected, at: 0)
         reserve(.init(providerID: selected.endpoint.id, memberID: selected.member.id), for: result.id)
-        debitProvider(selected.endpoint.id, now: now)
+        debitProvider(selected.endpoint.id, tokens: result.estimatedTokens, now: now)
         admitted.append(now); active.insert(result.id); requestCount += 1
         return result
     }
@@ -436,7 +466,7 @@ actor FreeModelGateway {
             guard hasCapacity(candidate.endpoint.id), recoveryAvailable(candidate) else { return false }
         }
         if (attempts[plan.id] ?? 0) > 0 { try checkRate(now: now); admitted.append(now) }
-        if reservations[plan.id] == nil { debitProvider(candidate.endpoint.id, now: now) }
+        if reservations[plan.id] == nil { debitProvider(candidate.endpoint.id, tokens: plan.estimatedTokens, now: now) }
         reserve(.init(providerID: candidate.endpoint.id, memberID: candidate.member.id), for: plan.id)
         attempts[plan.id, default: 0] += 1
         var value = health[candidate.member.id] ?? Health()
