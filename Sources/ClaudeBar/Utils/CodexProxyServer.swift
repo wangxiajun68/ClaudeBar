@@ -1650,10 +1650,15 @@ final class CodexProxyServer: @unchecked Sendable {
             ?? Data(#"{"object":"list","data":[],"models":[]}"#.utf8)
         let ids = thirdParty ? await FreeModelGateway.shared.advertisedModels() : []
         if !ids.isEmpty {
+            let capabilities = await FreeModelGateway.shared.advertisedCapabilities()
             var catalog = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
             var rows = catalog["data"] as? [[String: Any]] ?? []
-            for id in ids where !rows.contains(where: { $0["id"] as? String == id }) {
-                rows.append(["id": id, "object": "model", "created": 0, "owned_by": "claudebar"])
+            for id in ids {
+                let row: [String: Any] = ["id": id, "object": "model", "created": 0, "owned_by": "claudebar",
+                    "architecture": ["input_modalities": capabilities.input, "output_modalities": capabilities.output],
+                    "claudebar_capabilities": capabilities.features]
+                if let index = rows.firstIndex(where: { $0["id"] as? String == id }) { rows[index] = row }
+                else { rows.append(row) }
             }
             catalog["object"] = "list"; catalog["data"] = rows
             body = (try? JSONSerialization.data(withJSONObject: catalog)) ?? body

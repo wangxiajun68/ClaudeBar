@@ -54,16 +54,24 @@ struct GatewayCapabilities: View {
     var images: Bool
     var json: Bool
     var text = false
-    var media: Set<GatewayMediaCapability> = []
+    var media: Set<GatewayMediaCapability>? = nil
     var body: some View {
         HStack(spacing: 8) {
             capability("wrench.and.screwdriver", "工具", enabled: tools)
             capability("photo", "图片", enabled: images)
             capability("curlybraces", "JSON", enabled: json)
-            if !media.isEmpty {
+            if let media, !media.isEmpty {
                 AppGlyph(name: "square.stack.3d.up", size: 12)
                     .help(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
                     .accessibilityLabel(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
+            } else if media == nil {
+                HStack(spacing: 4) {
+                    AppGlyph(name: "questionmark.circle", size: 12)
+                    if text { Text("其他模态待核实").font(Theme.Font.caption) }
+                }
+                .foregroundStyle(Theme.textSecondary)
+                .help("供应商模型列表未声明音频、视频、PDF 等能力；可在模型能力中确认")
+                .accessibilityLabel("其他模态待核实")
             }
         }
     }

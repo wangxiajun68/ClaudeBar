@@ -675,6 +675,25 @@ actor FreeModelGateway {
         return ["auto", "claudebar/auto"]
     }
 
+    func advertisedCapabilities() -> (input: [String], output: [String], features: [String]) {
+        guard pool.enabled else { return ([], [], []) }
+        let members = pool.members.filter { $0.enabled && !(endpoints[$0.providerID]?.apiKey.isEmpty ?? true) }
+        var input = Set<String>(), output = Set<String>(), features = Set<String>()
+        for member in members {
+            if member.supportsChat { input.insert("text"); output.insert("text") }
+            if member.supportsImages { input.insert("image") }
+            let media = member.mediaCapabilities ?? []
+            if media.contains(.audioInput) { input.insert("audio") }
+            if media.contains(.videoInput) { input.insert("video") }
+            if media.contains(.fileInput) { input.insert("file") }
+            if media.contains(.audioOutput) { output.insert("audio") }
+            if media.contains(.imageOutput) { output.insert("image") }
+            for capability in [GatewayMediaCapability.imageGeneration, .speechSynthesis, .embeddings, .rerank]
+                where media.contains(capability) { features.insert(capability.rawValue) }
+        }
+        return (input.sorted(), output.sorted(), features.sorted())
+    }
+
     static func retryable(status: Int) -> Bool { [401, 402, 403, 408, 404, 410, 429, 500, 502, 503, 504].contains(status) }
 
     /// Replace client routing hints, including model fallbacks and paid plugins.

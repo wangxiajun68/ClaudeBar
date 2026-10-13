@@ -366,6 +366,12 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         let manualA = FreeModelPool.Member(providerID:importID,model:"manual-a",name:"A",contextLength:64000,
             supportsTools:true,supportsImages:false,supportsJSON:false,difficulties:[.medium])
         var manualB = manualA; manualB.model = "manual-b"; manualB.name = "B"
+        let declared = GatewayProviderImport.applying(input:["text","image","audio"], output:["text","audio"],
+            tools:true,json:false,to:manualB)
+        precondition(declared.supportsImages && declared.supportsTools && !declared.supportsJSON)
+        precondition(declared.mediaCapabilities == [.audioInput,.audioOutput])
+        let revised = GatewayProviderImport.applying(input:["text"],output:nil,tools:nil,json:nil,to:declared)
+        precondition(!revised.supportsImages && revised.mediaCapabilities == [.audioOutput])
         var importPool = FreeModelPool()
         importPool.members = [manualA]; importPool.members[0].enabled = false
         var duplicateA = manualA; duplicateA.difficulties = [.high]
@@ -461,6 +467,12 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         func configured(_ value: FreeModelPool) async -> FreeModelGateway {
             let g = FreeModelGateway(); await g.configure(value,endpoints:endpoints); return g
         }
+        var advertised = pool
+        advertised.members[0].mediaCapabilities = [.audioInput,.fileInput,.imageGeneration]
+        let directory = await configured(advertised)
+        let advertisedMedia = await directory.advertisedCapabilities()
+        precondition(advertisedMedia.input == ["audio","file","image","text"])
+        precondition(advertisedMedia.output == ["text"] && advertisedMedia.features == ["imageGeneration"])
         // Actor scheduling must not let an expired waiter race its timeout
         // task and consume a newly available permit.
         let deadlines = await configured(pool)

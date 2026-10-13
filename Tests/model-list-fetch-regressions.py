@@ -95,7 +95,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     MODELS = json.dumps({'data': [
-        {'id': 'local-beta'}, {'id': 'local-alpha'},
+        {'id': 'local-beta', 'architecture': {'input_modalities': ['text', 'image', 'audio'], 'output_modalities': ['text', 'audio']},
+         'supported_parameters': ['tools', 'response_format']}, {'id': 'local-alpha'},
         {'id': 'local-alpha'},  # duplicate is folded, not listed twice
         {'model': 'local-from-model'},
         {'name': 'local-from-name'},
@@ -183,6 +184,13 @@ struct Regression {{
         precondition(ok, "a 200 models response failed: \\(detail)")
         precondition(detail == "local-alpha,local-beta,local-from-model,local-from-name",
                      "ids must be deduped and sorted, got \\(detail)")
+        if case .success(let payload) = await ModelListFetcher.fetch(baseURL: base, apiKey: "k") {{
+            let capability = payload.capabilities["local-beta"]!
+            precondition(capability.inputModalities == ["text", "image", "audio"])
+            precondition(capability.outputModalities == ["text", "audio"])
+            precondition(capability.supportsTools == true && capability.supportsJSON == true)
+            precondition(payload.capabilities["local-alpha"] == nil)
+        }} else {{ preconditionFailure("metadata fetch failed") }}
 
         // 2. An empty list is a failure with the path named — the dialog must
         //    not open a picker with nothing in it.
