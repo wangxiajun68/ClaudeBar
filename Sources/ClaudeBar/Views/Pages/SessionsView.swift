@@ -1,41 +1,13 @@
 import SwiftUI
 
-/// Hover-revealed action chips: fade + slide in and accept hits only while
-/// the parent tile is hovered.
-/// Trailing action chips on a session tile.
-///
-/// They stay transparent until hover — the affordance emerges from the tile
-/// instead of competing with the status line — but "invisible to a mouse"
-/// must not mean "unreachable": a keyboard or VoiceOver user can't hover, so
-/// the chips also reveal while they hold focus.
-///
-/// Two signals, because neither alone is enough:
-/// - `@Environment(\.accessibilityVoiceOverEnabled)` — the label exposes the
-///   chips to VoiceOver even while they are transparent; without it the
-///   controls simply do not exist in the accessibility tree.
-/// - `@FocusState` — the chips become fully visible once keyboard focus
-///   lands on one of them, so tabbing through announces them on screen too.
+/// Always-visible trailing actions on a session tile.
 private struct SessionActionChips<Content: View>: View {
-    let isHovered: Bool
     @ViewBuilder let content: () -> Content
-
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
-    @FocusState private var focused: Bool
-
-    /// Visible when hovered, focused, or assistive tech is listening. VoiceOver
-    /// reveals *and* keeps them hittable — a control it can announce but not
-    /// operate would be worse than one it never sees.
-    private var revealed: Bool { isHovered || focused || voiceOver }
 
     var body: some View {
         HStack(spacing: 4) {
             content()
-                .focused($focused)
         }
-        .opacity(revealed ? 1 : 0)
-        .offset(x: revealed ? 0 : 10)
-        .allowsHitTesting(revealed)
-        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: revealed)
     }
 }
 
@@ -550,8 +522,8 @@ private struct SessionTileFull: View {
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
-                SessionMigrationButton(source: MigrationSource(session), labeled: true, actionTitle: "迁移")
-                SessionActionChips(isHovered: isHovered) {
+                SessionActionChips {
+                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "play.fill", tint: Theme.accent, help: "在终端恢复") {
                         resume()
                     }
@@ -742,8 +714,8 @@ private struct CursorTileFull: View {
                     .buttonStyle(.plain)
                     .help(isExpanded ? "收起子 agent" : "展开子 agent")
                 }
-                SessionMigrationButton(source: MigrationSource(session), labeled: true, actionTitle: "迁移")
-                SessionActionChips(isHovered: isHovered) {
+                SessionActionChips {
+                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "cursorarrow",
                                tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -1009,7 +981,7 @@ private struct ExternalSessionTile: View {
                     .font(Theme.Font.caption)
                     .foregroundColor(running > 0 ? Theme.externalHi : Theme.textTertiary())
             }
-            SessionActionChips(isHovered: isHovered) {
+            SessionActionChips {
                 SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0))
                 ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
                     TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
@@ -1138,8 +1110,8 @@ private struct ExternalSessionGridCard: View {
             HStack(spacing: 4) {
                 SessionMetadataLine(symbol: "folder", text: session.cwd.isEmpty ? "项目未记录" : session.cwd)
                 Spacer(minLength: 0)
-                SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0), labeled: true, actionTitle: "迁移")
-                SessionActionChips(isHovered: isHovered) {
+                SessionActionChips {
+                    SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0))
                     ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
                         TerminalLauncher.resumeCodexSession(cwd: session.cwd,
                                                             sessionId: session.sessionId,

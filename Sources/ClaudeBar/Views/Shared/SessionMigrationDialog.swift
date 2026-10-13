@@ -80,7 +80,8 @@ struct SessionMigrationButton: View {
                     migrations.requestMigration(source)
                 }
             } else {
-                ActionIcon(symbol: "arrow.triangle.branch", tint: Theme.textSecondary) {
+                ActionChip(systemImage: "arrow.triangle.branch", tint: Theme.textSecondary,
+                           help: "在迁移会话页面选择目标并预览历史") {
                     migrations.requestMigration(source)
                 }
             }
