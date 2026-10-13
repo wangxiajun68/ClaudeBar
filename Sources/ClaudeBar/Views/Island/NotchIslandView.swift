@@ -158,13 +158,13 @@ struct NotchIslandView: View {
         let shape = IslandShape(topFlare: state.topFlare, bottomRadius: state.bottomRadius,
                                 detached: !state.geometry.hasHardwareNotch)
         return ZStack(alignment: .top) {
-            shape.fill(Color.black)
+            shape.fill(state.geometry.hasHardwareNotch ? Color.black : Color(hex: 0x202328).opacity(0.98))
 
             switch state.mode {
             case .collapsed:
                 if !state.geometry.hasHardwareNotch {
                     capsule
-                        .contentShape(Capsule())
+                        .contentShape(shape)
                         .onTapGesture(perform: actions.expandFromAlert)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("查看会话与用量")
@@ -173,15 +173,21 @@ struct NotchIslandView: View {
                 } else if state.showsWings {
                     wings.transition(.opacity)
                 }
+            case .peek:
+                detachedPeek
+                    .transition(.opacity)
             case .alert:
                 if let alert = state.alert {
-                    IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions)
+                    IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions, detached: !state.geometry.hasHardwareNotch)
                         .id(alert.id)
                         .transition(.islandContent)
                 }
             case .expanded:
-                expandedContent
-                    .transition(.islandContent)
+                if state.geometry.hasHardwareNotch {
+                    expandedContent.transition(.islandContent)
+                } else {
+                    detachedContent.transition(.opacity)
+                }
             }
         }
         .frame(width: size.width, height: size.height)
@@ -204,29 +210,125 @@ struct NotchIslandView: View {
             shape.stroke(IslandStyle.rim, lineWidth: 1)
                 .opacity(state.mode == .collapsed && state.geometry.hasHardwareNotch ? 0 : 1)
         }
+        .shadow(color: .black.opacity(state.geometry.hasHardwareNotch ? 0 : 0.18), radius: 10, x: 0, y: 4)
         .opacity(state.isCollapsedInvisible ? 0 : 1)
     }
 
     // MARK: Collapsed
 
     private var capsule: some View {
-        HStack(spacing: 10) {
+        let busy = model.sessions.filter(\.isBusy).count
+        let waiting = model.sessions.filter(\.isWaiting).count
+        return HStack(spacing: 8) {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(IslandStyle.textSecondary)
             if state.showsWings {
-                leftWing
-                Rectangle().fill(IslandStyle.rim).frame(width: 1, height: 12)
-                RollingNumberText(UsageStats.formatTokens(model.usage.today), rolls: false)
-                    .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
+                Text(busy > 0 ? "\(busy) 个运行中" : "ClaudeBar")
                     .foregroundStyle(IslandStyle.textPrimary)
-                    .lineLimit(1).minimumScaleFactor(0.75)
-            } else {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
+                Spacer(minLength: 4)
+                Circle().fill(waiting > 0 ? IslandStyle.amber : (busy > 0 ? IslandStyle.mint : IslandStyle.textSecondary))
+                    .frame(width: 5, height: 5)
+                Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "进行中" : "空闲"))
                     .foregroundStyle(IslandStyle.textSecondary)
             }
         }
+        .font(.system(size: 11, weight: .medium).monospacedDigit())
+        .lineLimit(1)
         .padding(.horizontal, 12)
         .frame(width: state.collapsedSize.width, height: state.collapsedSize.height)
-        .help("悬停或点击查看会话与用量")
+        .help("悬停查看摘要，点击打开会话")
+    }
+
+    private var detachedPeek: some View {
+        Button(action: actions.expandFromAlert) {
+            HStack(spacing: 10) {
+                if let session = model.sessions.first {
+                    IslandAgentBadge(agent: session.agent, size: 28)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.project.isEmpty ? session.agent.label : session.project)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(IslandStyle.textPrimary)
+                        Text(DetachedSessionRow.detail(session))
+                            .font(.system(size: 11))
+                            .foregroundStyle(IslandStyle.textSecondary)
+                    }
+                } else {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(IslandStyle.textSecondary)
+                    Text("暂无会话 · 点击查看用量")
+                        .font(.system(size: 12))
+                        .foregroundStyle(IslandStyle.textPrimary)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(IslandStyle.textSecondary)
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .frame(width: 280, height: 64)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("打开会话面板")
+    }
+
+    private var detachedContent: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("会话").font(.system(size: 13, weight: .semibold))
+                Text("\(model.sessions.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(IslandStyle.textSecondary)
+                Spacer()
+                IslandIconButton(symbol: "arrow.up.forward", help: "打开工作台", action: actions.openMainWindow)
+                IslandIconButton(symbol: "xmark", help: "收起面板", action: actions.dismissAlert)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 48)
+            if model.sessions.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "rectangle.stack").font(.system(size: 22, weight: .light))
+                    Text("暂无会话").font(.system(size: 13, weight: .medium))
+                    Text("开始使用 Claude、Codex 或 Cursor 后显示")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(IslandStyle.textSecondary)
+                .frame(maxWidth: .infinity).frame(height: 168)
+            } else {
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.sessions) { session in
+                            DetachedSessionRow(session: session) { actions.openSession(session) }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+                .scrollIndicators(.visible)
+                .scrollDisabled(model.sessions.count <= 3)
+                .frame(height: 168)
+            }
+            HStack {
+                Text(model.sessions.count > 3 ? "滚动查看更多会话" : "点击会话，回到工作现场")
+                Spacer()
+                if vpnEnabled {
+                    Circle().fill(model.vpnRunning ? IslandStyle.mint : IslandStyle.textSecondary)
+                        .frame(width: 5, height: 5)
+                    Text(model.vpnRunning ? "代理已连接" : "代理未连接")
+                }
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(IslandStyle.textSecondary)
+            .padding(.horizontal, 16)
+            .frame(height: 32)
+            DetachedUsageSummary(usage: model.usage)
+                .frame(height: 52)
+                .background(Color.white.opacity(0.035))
+                .overlay(alignment: .top) { Rectangle().fill(IslandStyle.rim).frame(height: 0.5) }
+        }
+        .foregroundStyle(IslandStyle.textPrimary)
+        .frame(width: 360, height: 300)
     }
 
     private var wings: some View {
@@ -369,6 +471,86 @@ struct NotchIslandView: View {
     }
 }
 
+/// The detached surface uses static marks and fixed status columns. No per-row
+/// timelines, numeric transitions or busy orbits on this always-available HUD.
+private struct DetachedSessionRow: View {
+    let session: IslandSession
+    let action: () -> Void
+    @State private var hovered = false
+
+    static func detail(_ session: IslandSession) -> String {
+        if session.isWaiting { return IslandSessionRow.waitingLine(for: session) }
+        if session.isBusy { return session.activity.isEmpty ? "正在思考…" : session.activity }
+        return session.completionID == nil ? "等待输入" : "本轮已完成"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                IslandAgentBadge(agent: session.agent, size: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.project.isEmpty ? session.agent.label : session.project)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(IslandStyle.textPrimary)
+                    Text(session.agent.label + " · " + Self.detail(session))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(IslandStyle.textSecondary)
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(session.isWaiting ? "待确认" : (session.isBusy ? "运行中" : "待命"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(session.isWaiting ? IslandStyle.amber : IslandStyle.textSecondary)
+                    .frame(width: 40, alignment: .trailing)
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(IslandStyle.textSecondary)
+                    .opacity(hovered ? 1 : 0.4)
+                    .frame(width: 12)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 56)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovered ? 0.06 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { if hovered != $0 { hovered = $0 } }
+        .help(session.cwd + "\n" + Self.detail(session))
+    }
+}
+
+private struct DetachedUsageSummary: View {
+    let usage: IslandUsage
+    @Environment(\.tokenStyleGeneration) private var tokenStyle
+    @State private var costDisplay = AppPreferences.shared.costDisplay
+    @ObservedObject private var fx = ExchangeRate.shared
+
+    var body: some View {
+        let estimate = usage.todayCost
+        let shown = ModelPricing.present(estimate.cost, display: costDisplay, rate: fx.effectiveRate)
+        let money = [shown.primary, shown.secondary].compactMap { $0 }
+            .map { ModelPricing.format($0.amount, currency: $0.currency) }.joined(separator: " + ")
+        return HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("今日 Token").font(.system(size: 10)).foregroundStyle(IslandStyle.textSecondary)
+                Text(UsageStats.formatTokens(usage.today)).id(tokenStyle)
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+            }
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(estimate.unpricedModels > 0 ? "今日估算 · 含未计价" : "今日估算")
+                    .font(.system(size: 10)).foregroundStyle(IslandStyle.textSecondary)
+                Text(money.isEmpty ? "—" : money)
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+            }
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 16)
+        .help(estimate.detailParts(presented: shown).joined(separator: " · "))
+        .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
+    }
+}
+
 // MARK: - Session grid
 
 /// A native vertical scroll view supports both mouse wheels and trackpads.
@@ -431,11 +613,13 @@ private struct IslandAlertContent: View {
     let notch: CGSize
     let width: CGFloat
     let actions: IslandActions
+    var detached = false
 
     var body: some View {
         let tint = IslandStyle.color(alert.agent)
         let side = max(0, (width - 2 * IslandStyle.topFlare - notch.width) / 2 - 14)
         VStack(spacing: 0) {
+            if !detached {
             HStack(spacing: 0) {
                 IslandAgentBadge(agent: alert.agent, size: 20)
                     .overlay(alignment: .bottomTrailing) {
@@ -453,16 +637,18 @@ private struct IslandAlertContent: View {
             }
             .padding(.horizontal, 14)
             .frame(height: notch.height)
+            }
 
             HStack(spacing: 12) {
+                if detached { IslandAgentBadge(agent: alert.agent, size: 28) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(headline)
+                    Text(detached ? headline + " · " + verdict : headline)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(IslandStyle.textPrimary)
                         .lineLimit(1)
                     Text(detail)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(IslandStyle.textTertiary)
+                        .foregroundStyle(detached ? IslandStyle.textSecondary : IslandStyle.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -505,13 +691,13 @@ private struct IslandAlertContent: View {
                 .accessibilityLabel("收起通知")
             }
             .padding(.horizontal, IslandStyle.sidePadding + 8)
-            .frame(height: IslandStyle.alertBodyHeight)
+            .frame(height: detached ? 72 : IslandStyle.alertBodyHeight)
         }
-        .padding(.horizontal, IslandStyle.topFlare)
-        .frame(width: width, height: notch.height + IslandStyle.alertBodyHeight)
+        .padding(.horizontal, detached ? 0 : IslandStyle.topFlare)
+        .frame(width: width, height: detached ? 72 : notch.height + IslandStyle.alertBodyHeight)
         .contentShape(Rectangle())
         .onTapGesture(perform: actions.expandFromAlert)
-        .overlay { IslandGlint(color: tint) }
+        .overlay { if !detached { IslandGlint(color: tint) } }
     }
 
     /// The session this alert can jump back into; nil for a quota rollover.

@@ -66,7 +66,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         let model = controller.model!
         expect(controller.surfaces.count == 2 && IslandLiveModel.instances == 1, "two panels share one model")
         let external = controller.surfaces[b.id]!
-        expect(external.state.collapsedSize == CGSize(width: 154, height: 28), "compact external capsule has no hardware gap")
+        expect(external.state.collapsedSize == CGSize(width: 232, height: 32), "compact external capsule has no hardware gap")
         expect(external.panel.frame.maxY == b.geometry.anchorY, "capsule canvas starts below the menu bar")
         let entry = b.geometry.topRect(external.state.collapsedSize)
         expect(!external.contains(CGPoint(x: entry.minX + 1, y: entry.maxY - 1)), "rounded transparent corners pass through")
@@ -84,18 +84,35 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
         controller.pointerMoved()
         pause(0.17)
-        expect(controller.activeID == b.id && external.state.mode == .expanded, "external hover opens its own panel")
-        expect(controller.surfaces[a.id]?.state.mode == .collapsed && UIWakePolicy.expanded, "other screen remains collapsed")
+        expect(external.state.mode == .collapsed, "passing pointer does not open external HUD")
+        pause(0.18)
+        expect(controller.activeID == b.id && external.state.mode == .peek, "external hover previews without opening details")
+        expect(controller.surfaces[a.id]?.state.mode == .collapsed && !UIWakePolicy.expanded, "preview does not claim full UI refresh ownership")
         let aEntry = a.geometry.topRect(controller.surfaces[a.id]!.state.collapsedSize)
         Pointer.buttons = 1
         Pointer.location = CGPoint(x: aEntry.midX, y: aEntry.midY)
         controller.pointerMoved(); controller.tick(); pause(0.3)
-        expect(controller.armedID == nil && external.state.mode == .expanded, "held click or drag cannot migrate/collapse details")
+        expect(controller.armedID == nil && external.state.mode == .peek, "held click or drag cannot migrate/collapse details")
         Pointer.buttons = 0
         controller.pointerMoved(); pause(0.32)
         expect(controller.activeID == a.id && controller.state?.mode == .expanded, "deliberate cross-screen hover hands over details")
         expect(external.state.mode == .collapsed && controller.model === model, "handoff keeps one expanded state and shared model")
         controller.collapse(animated: false)
+        Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
+        let externalHost = external.panel.contentView!.subviews[0] as! NSHostingView<NotchIslandView>
+        externalHost.rootView.actions.expandFromAlert()
+        expect(external.state.mode == .expanded && controller.clickOpened, "click opens persistent external details")
+        expect(external.state.expandedSize == CGSize(width: 360, height: 300), "external details use a compact fixed layout")
+        expect(controller.tickTimer == nil && external.panel.acceptsKeyboard, "click details accept Escape without a polling timer")
+        Pointer.location = CGPoint(x: aEntry.midX, y: aEntry.midY)
+        controller.pointerMoved(); controller.tick(); pause(0.35)
+        expect(external.state.mode == .expanded && controller.armTimer == nil, "pointer exit and other-screen hover preserve clicked details")
+        let outsideClick = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        controller.handlePointerEvent(outsideClick)
+        expect(external.state.mode == .collapsed && !controller.clickOpened && !external.panel.acceptsKeyboard,
+               "outside click releases keyboard and closes details")
+        controller.cancelArming()
         Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
         var session = fixtureSessions()[0]
         session.pid = 1

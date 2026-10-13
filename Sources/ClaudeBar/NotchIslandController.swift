@@ -7,7 +7,7 @@ import Combine
 /// View-facing state of the notch island; the controller is its only writer.
 @MainActor
 final class NotchIslandState: ObservableObject {
-    enum Mode { case collapsed, alert, expanded }
+    enum Mode { case collapsed, peek, alert, expanded }
 
     @Published var mode: Mode = .collapsed
     @Published var geometry: NotchGeometry
@@ -30,14 +30,15 @@ final class NotchIslandState: ObservableObject {
 
     var collapsedSize: CGSize {
         if !geometry.hasHardwareNotch {
-            return CGSize(width: showsWings ? 154 : 42, height: notch.height)
+            return CGSize(width: showsWings ? 232 : 42, height: 32)
         }
         let wings = showsWings ? 2 * IslandStyle.wingWidth : 0
         return CGSize(width: notch.width + 2 * IslandStyle.topFlare + wings, height: notch.height)
     }
 
     var alertSize: CGSize {
-        CGSize(width: max(IslandStyle.minAlertWidth, notch.width + 2 * IslandStyle.topFlare + 200),
+        if !geometry.hasHardwareNotch { return CGSize(width: 360, height: 72) }
+        return CGSize(width: max(IslandStyle.minAlertWidth, notch.width + 2 * IslandStyle.topFlare + 200),
                height: notch.height + IslandStyle.alertBodyHeight)
     }
 
@@ -46,6 +47,7 @@ final class NotchIslandState: ObservableObject {
     var sessionsLaneHeight: CGFloat { IslandStyle.expandedLaneHeight }
 
     var expandedSize: CGSize {
+        if !geometry.hasHardwareNotch { return CGSize(width: 360, height: 300) }
         let width = max(IslandStyle.minExpandedWidth, notch.width + 2 * IslandStyle.topFlare + 320)
         let height = notch.height + IslandStyle.contentTopGap + sessionsLaneHeight
             + IslandStyle.sectionGap + IslandStyle.usageCardHeight + IslandStyle.bottomPadding
@@ -55,6 +57,7 @@ final class NotchIslandState: ObservableObject {
     var islandSize: CGSize {
         switch mode {
         case .collapsed: return collapsedSize
+        case .peek: return CGSize(width: 280, height: 64)
         case .alert: return alertSize
         case .expanded: return expandedSize
         }
@@ -62,8 +65,10 @@ final class NotchIslandState: ObservableObject {
 
     var topFlare: CGFloat { geometry.hasHardwareNotch ? IslandStyle.topFlare : 0 }
     var bottomRadius: CGFloat {
+        if !geometry.hasHardwareNotch { return mode == .collapsed ? 12 : 16 }
         switch mode {
         case .collapsed: return geometry.hasHardwareNotch ? IslandStyle.collapsedBottomRadius : notch.height / 2
+        case .peek: return 16
         case .alert: return IslandStyle.alertBottomRadius
         case .expanded: return IslandStyle.expandedBottomRadius
         }
@@ -136,6 +141,7 @@ final class NotchIslandController {
     private var localMonitor: Any?
     private var armTimer: Timer?
     private var tickTimer: Timer?
+    private var clickOpened = false
     private var leaveDeadline: Date?
     private var alertDeadline: Date?
     private var screenObserver: NSObjectProtocol?
@@ -252,7 +258,7 @@ final class NotchIslandController {
                 MainActor.assumeIsolated {
                     guard let self, self.surfaces[id]?.state === state else { return }
                     self.activate(id)
-                    self.expand()
+                    self.expandFromClick()
                 }
             },
             dismissAlert: { [weak self] in
@@ -423,14 +429,33 @@ final class NotchIslandController {
 
     private func installMouseMonitors() {
         removeMouseMonitors()
-        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseUp]
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
-            MainActor.assumeIsolated { self?.pointerMoved() }
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseUp, .leftMouseDown, .rightMouseDown]
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            MainActor.assumeIsolated { self?.handlePointerEvent(event) }
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
-            MainActor.assumeIsolated { self?.pointerMoved() }
-            return event
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask.union(.keyDown)) { [weak self] event in
+            MainActor.assumeIsolated {
+                if event.type == .keyDown {
+                    if event.keyCode == 53, self?.clickOpened == true {
+                        self?.collapse(animated: true)
+                        return nil
+                    }
+                    return event
+                }
+                self?.handlePointerEvent(event)
+                return event
+            }
         }
+    }
+
+    private func handlePointerEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            if clickOpened, let id = activeID, let surface = surfaces[id],
+               !surface.contains(NSEvent.mouseLocation) {
+                collapse(animated: true)
+            }
+        }
+        pointerMoved()
     }
 
     private func removeMouseMonitors() {
@@ -453,7 +478,7 @@ final class NotchIslandController {
         }
         syncMouseCapture()
         // Dragging a window or scrubbing a chart never opens another island.
-        guard NSEvent.pressedMouseButtons == 0,
+        guard !clickOpened, NSEvent.pressedMouseButtons == 0,
               let display = displays.first(where: { display in
                   guard pointerID == nil || pointerID == display.id,
                         let surface = surfaces[display.id] else { return false }
@@ -464,7 +489,7 @@ final class NotchIslandController {
         cancelArming()
         let id = surface.id
         armedID = id
-        let delay = state?.mode == .expanded ? Self.leaveDelay : Self.armDelay
+        let delay = !surface.state.geometry.hasHardwareNotch ? 0.3 : (state?.mode == .expanded ? Self.leaveDelay : Self.armDelay)
         armTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -473,7 +498,11 @@ final class NotchIslandController {
                       surface.state.mode == .collapsed,
                       self.collapsedHotZone(surface).contains(NSEvent.mouseLocation) else { return }
                 self.activate(id)
-                self.expand()
+                if surface.state.geometry.hasHardwareNotch {
+                    self.expand()
+                } else {
+                    self.peek()
+                }
             }
         }
         if let armTimer { RunLoop.main.add(armTimer, forMode: .common) }
@@ -503,10 +532,33 @@ final class NotchIslandController {
         }
     }
 
+    private func peek() {
+        guard let state, state.mode == .collapsed else { return }
+        withAnimation(transition(IslandStyle.expandSpring)) { state.mode = .peek }
+        syncMouseCapture()
+        startTicking()
+    }
+
+    private func expandFromClick() {
+        cancelArming()
+        clickOpened = state?.geometry.hasHardwareNotch == false
+        expand()
+        if clickOpened {
+            stopTicking()
+            panel?.acceptsKeyboard = true
+            panel?.makeKey()
+        }
+    }
+
+    private func transition(_ hardware: Animation) -> Animation? {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return nil }
+        return state?.geometry.hasHardwareNotch == false ? .easeOut(duration: 0.22) : hardware
+    }
+
     private func expand() {
         guard let state, state.mode != .expanded else { return }
         alertDeadline = nil
-        withAnimation(IslandStyle.expandSpring) {
+        withAnimation(transition(IslandStyle.expandSpring)) {
             state.mode = .expanded
             state.alert = nil
         }
@@ -549,7 +601,7 @@ final class NotchIslandController {
         }
         guard let state else { return }
         alertDeadline = Date().addingTimeInterval(Self.alertDuration)
-        withAnimation(IslandStyle.alertSpring) {
+        withAnimation(transition(IslandStyle.alertSpring)) {
             state.alert = alert
             state.mode = .alert
         }
@@ -610,7 +662,8 @@ final class NotchIslandController {
             } else if now >= deadline {
                 collapse(animated: true)
             }
-        case .expanded:
+        case .peek, .expanded:
+            if clickOpened { stopTicking(); return }
             if inside || NSEvent.pressedMouseButtons != 0 {
                 leaveDeadline = nil
             } else if let deadline = leaveDeadline {
@@ -629,6 +682,9 @@ final class NotchIslandController {
     }
 
     private func collapse(animated: Bool) {
+        clickOpened = false
+        if panel?.isKeyWindow == true { panel?.resignKey() }
+        panel?.acceptsKeyboard = false
         stopTicking()
         guard let state, state.mode != .collapsed else { return }
         let wasExpanded = state.mode == .expanded
@@ -648,7 +704,7 @@ final class NotchIslandController {
             state.alert = nil
         }
         if animated {
-            withAnimation(IslandStyle.collapseSpring, apply)
+            withAnimation(transition(IslandStyle.collapseSpring), apply)
         } else {
             apply()
         }
@@ -678,7 +734,8 @@ private final class NotchIslandPanel: NSPanel {
         appearance = NSAppearance(named: .darkAqua)
     }
 
-    override var canBecomeKey: Bool { false }
+    var acceptsKeyboard = false
+    override var canBecomeKey: Bool { acceptsKeyboard }
     override var canBecomeMain: Bool { false }
 
     func applyCollectionBehavior(inFullScreen: Bool) {

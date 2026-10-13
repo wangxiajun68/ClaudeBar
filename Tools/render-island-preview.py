@@ -336,6 +336,7 @@ struct IslandProbe: View {
         let finished = IslandAlert.finished(sessions[0])
         let scenes: [(String, NotchIslandState.Mode, IslandAlert?)] = [
             ("collapsed", .collapsed, nil),
+            ("peek", .peek, nil),
             ("alert", .alert, finished),
             ("expanded", .expanded, nil),
         ]
@@ -352,6 +353,7 @@ struct IslandProbe: View {
           for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for (name, mode, alert) in scenes {
+                if !detached && mode == .peek { continue }
                 let state = NotchIslandState(geometry: geometry, showsWings: true)
                 state.mode = mode
                 state.alert = alert
