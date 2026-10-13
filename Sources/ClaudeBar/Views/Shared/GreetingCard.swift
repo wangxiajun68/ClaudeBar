@@ -22,6 +22,7 @@ struct GreetingCard: View {
     @State private var weatherRendering = AppPreferences.shared.greetingWeatherRendering
     @ObservedObject private var fx = ExchangeRate.shared
     @ObservedObject private var cursor = CursorUsageStore.shared
+    @ObservedObject private var claudeQuota = ClaudeQuotaStore.shared
     @Environment(\.surfaceIsVisible) private var surfaceVisible
     var onNavigate: (AppPage) -> Void = { _ in }
 
@@ -58,6 +59,9 @@ struct GreetingCard: View {
             cursorPlan: cursor.plan,
             cursorLoading: cursor.loading,
             cursorNote: cursor.note,
+            ccWindows: claudeQuota.windows,
+            ccQuotaLoading: claudeQuota.loading,
+            ccQuotaNote: claudeQuota.note,
             reading: weather.reading,
             city: city,
             weatherLoading: weather.loading,
@@ -73,6 +77,7 @@ struct GreetingCard: View {
             removedTypefaces: removedTypefaces,
             weatherRendering: weatherRendering,
             refreshWeather: { weather.refresh() },
+            refreshCCQuota: { Task { await claudeQuota.refresh() } },
             refreshQuota: { codexStore.refreshQuota(manual: true) },
             refreshCursor: { cursor.refresh(manual: true) },
             showModels: { onNavigate(.providers) },
@@ -140,6 +145,9 @@ struct GreetingStatusSheet: View {
     var cursorPlan: CursorUsageFetcher.PlanUsage?
     var cursorLoading: Bool
     var cursorNote: String?
+    var ccWindows: [CodexQuotaWindow] = []
+    var ccQuotaLoading = false
+    var ccQuotaNote: String? = nil
     var reading: WeatherReading?
     var city: String
     var weatherLoading: Bool
@@ -158,6 +166,7 @@ struct GreetingStatusSheet: View {
     /// 预览工具用它一次渲染两种取值（见 Tools/render-greeting-preview.py）。
     var manualWeatherFetch = false
     var refreshWeather: () -> Void
+    var refreshCCQuota: () -> Void = {}
     var refreshQuota: () -> Void
     var refreshCursor: () -> Void
     var showModels: () -> Void
@@ -388,6 +397,9 @@ struct GreetingStatusSheet: View {
         var cursorPlan: CursorUsageFetcher.PlanUsage?
         var cursorLoading: Bool
         var cursorNote: String?
+        var ccWindows: [CodexQuotaWindow]
+        var ccQuotaLoading: Bool
+        var ccQuotaNote: String?
         /// Reset countdowns are counted from the sky clock's minute.
         var skyDate: Date
         var arrived: Bool
@@ -486,7 +498,8 @@ struct GreetingStatusSheet: View {
                                    codexProvider: codexProvider, tokens: tokens,
                                    yesterdayTokens: yesterdayTokens, calls: calls, spend: spend, windows: windows,
                                    quotaLoading: quotaLoading, quotaNote: quotaNote, cursorPlan: cursorPlan,
-                                   cursorLoading: cursorLoading, cursorNote: cursorNote, skyDate: skyDate,
+                                   cursorLoading: cursorLoading, cursorNote: cursorNote, ccWindows: ccWindows, ccQuotaLoading: ccQuotaLoading,
+                                   ccQuotaNote: ccQuotaNote, skyDate: skyDate,
                                    arrived: arrived, visible: visible, reduceMotion: reduceMotion, width: m.width)) {
                 sill(metrics: m)
             }
@@ -1122,6 +1135,13 @@ struct GreetingStatusSheet: View {
             }
             .accessibilityLabel("Codex，\(codexModel)，\(codexProvider)，打开模型管理")
             Rectangle().fill(.white.opacity(0.16)).frame(width: 0.5, height: 18)
+            SillChip(action: refreshCCQuota, help: "点击查询 CC 官方额度", detail: ccQuotaDetail) {
+                allowance(brand: .claude, metrics: ccWindows.map {
+                    SillGauge.Metric(label: $0.label, usedPercent: $0.usedPercent, identity: $0.id)
+                }, loading: ccQuotaLoading, narrow: m.narrow)
+            }
+            .disabled(ccQuotaLoading)
+            .accessibilityLabel("查询 CC 官方额度，" + (ccQuotaDetail ?? "暂无额度"))
             SillChip(action: refreshCursor, help: cursorHelp, detail: cursorDetail) {
                 allowance(brand: .cursor, metrics: cursorMetrics, loading: cursorLoading, narrow: m.narrow)
             }
@@ -1195,6 +1215,11 @@ struct GreetingStatusSheet: View {
     }
 
     // MARK: Codex allowance — the popup's two rate-limit windows ("5 小时" / "7 天")
+
+    private var ccQuotaDetail: String? {
+        guard !ccWindows.isEmpty else { return ccQuotaLoading ? "读取中" : ccQuotaNote }
+        return ccWindows.map { "\($0.label)\($0.remainingPhrase)，\($0.resetClock)" }.joined(separator: " · ")
+    }
 
     private var codexMetrics: [SillGauge.Metric] {
         windows.map { SillGauge.Metric(label: $0.label, usedPercent: $0.usedPercent, identity: $0.id) }

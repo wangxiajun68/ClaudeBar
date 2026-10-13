@@ -359,6 +359,8 @@ source += r'''
                             autoPercentUsed: 52, totalSpendCents: 920, limitCents: 2000, includedSpendCents: 920,
                             bonusSpendCents: nil, billingCycleEnd: Date().addingTimeInterval(9 * 86400)),
                         cursorLoading: false, cursorNote: empty ? "未读取到 Cursor 额度" : nil,
+                        ccWindows: empty ? [] : windows, ccQuotaLoading: false,
+                        ccQuotaNote: empty ? "点击查询 CC 官方额度" : nil,
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
                         weatherNote: nil, typeface: typeface, language: typeface.supportsChinese ? .chinese : .english, weatherRendering: fixtureWeatherRendering, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})

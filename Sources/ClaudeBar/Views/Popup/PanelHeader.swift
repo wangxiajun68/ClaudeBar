@@ -25,6 +25,7 @@ struct PanelHeader: View {
     /// Cursor's allowance reading. Observed here so a quota refresh repaints
     /// this header only — not the session grid, KPI strip or action bar.
     @ObservedObject private var cursorStore = CursorUsageStore.shared
+    @ObservedObject private var claudeQuota = ClaudeQuotaStore.shared
     var panel: PanelState
 
     var body: some View {
@@ -37,7 +38,10 @@ struct PanelHeader: View {
                     vendor: ccVendor,
                     subtitle: ccVendor,
                     mark: { AnyView(CodexModelMark(codex: false, value: "CC")) },
-                    tint: Theme.claude, ink: Theme.Ink.claude
+                    quotaWindows: claudeQuota.windows,
+                    tint: Theme.claude, ink: Theme.Ink.claude,
+                    quotaLoading: claudeQuota.loading,
+                    refreshQuota: { Task { await claudeQuota.refresh() } }
                 ) { _ in
                     ModelSwitchList(kind: .claude, panel: panel)
                 }

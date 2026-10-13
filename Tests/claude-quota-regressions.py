@@ -18,6 +18,18 @@ fetch = (root / 'Sources/ClaudeBar/Utils/ClaudeQuotaFetcher.swift').read_text()
 read = declaration(fetch, '    private static func readCredential()')
 assert 'guard BuildChannel.allowsSystemIntegration' in read
 assert 'context.interactionNotAllowed = true' in read
+assert 'kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail' in read
+assert 'SecKeychainSetUserInteractionAllowed(false) == errSecSuccess' in read
+assert 'defer { _ = SecKeychainSetUserInteractionAllowed(interactionAllowed.boolValue) }' in read
+assert read.index('guard BuildChannel.allowsSystemIntegration') < read.index('SecKeychainGetUserInteractionAllowed')
+card = (root / 'Sources/ClaudeBar/Views/Shared/ClaudeQuotaCard.swift').read_text()
+assert '.task' not in card and 'Task { await quota.refresh() }' in card
+header = (root / 'Sources/ClaudeBar/Views/Popup/PanelHeader.swift').read_text()
+assert 'quotaWindows: claudeQuota.windows' in header
+greeting = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
+assert 'ccWindows: claudeQuota.windows' in greeting
+assert 'SillChip(action: refreshCCQuota' in greeting
+assert 'ClaudeQuotaCard()' not in (root / 'Sources/ClaudeBar/Views/Pages/UsageView.swift').read_text()
 assert 'SecItemAdd' not in fetch and 'SecItemUpdate' not in fetch
 fetch = fetch.replace(read, '''    private static func readCredential() -> Credential? {
         Probe.reads += 1

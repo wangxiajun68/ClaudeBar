@@ -53,6 +53,5 @@ struct ClaudeQuotaCard: View {
         }
         .padding(16)
         .panelCard(tint: Theme.claude)
-        .task { await quota.refresh(manual: false) }
     }
 }

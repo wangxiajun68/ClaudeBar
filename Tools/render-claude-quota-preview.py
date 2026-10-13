@@ -49,11 +49,6 @@ enum ClaudeQuotaFetcher {
 for path in ['Sources/ClaudeBar/Models/ClaudeQuotaStore.swift',
              'Sources/ClaudeBar/Views/Shared/ClaudeQuotaCard.swift']:
     fragment = (root / path).read_text()
-    if path.endswith('ClaudeQuotaCard.swift'):
-        # ImageRenderer mounts .task too; render only the production layout.
-        anchor = '.task { await quota.refresh(manual: false) }'
-        assert anchor in fragment
-        fragment = fragment.replace(anchor, '')
     source += fragment + '\n'
 source += r'''
 @main struct Preview {

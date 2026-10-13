@@ -365,6 +365,13 @@ final class ProviderStore: ObservableObject {
     func resolvedDelay(_ name: String?) -> Int? { 42 }
 }
 
+@MainActor final class ClaudeQuotaStore: ObservableObject {
+    static let shared = ClaudeQuotaStore()
+    @Published var windows: [CodexQuotaWindow] = []
+    @Published var loading = false
+    func refresh() async {}
+}
+
 @MainActor final class CursorUsageStore: ObservableObject {
     static let shared = CursorUsageStore()
     @Published var plan: CursorUsageFetcher.PlanUsage?

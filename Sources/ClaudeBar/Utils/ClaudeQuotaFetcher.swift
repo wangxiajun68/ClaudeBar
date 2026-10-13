@@ -33,9 +33,19 @@ enum ClaudeQuotaFetcher {
         return Credential(token: token, expiresAt: expiry)
     }
 
+    private static let credentialReadLock = NSLock()
+
     private static func readCredential() -> Credential? {
         guard BuildChannel.allowsSystemIntegration else { return nil }
-        // Refuse any Keychain authentication UI, including in release builds.
+        // Legacy login-Keychain ACL dialogs do not use LAContext. Temporarily
+        // disable interaction for this process, restoring its prior policy on
+        // every exit. Do not proceed if the noninteractive policy cannot be set.
+        credentialReadLock.lock()
+        defer { credentialReadLock.unlock() }
+        var interactionAllowed = DarwinBoolean(false)
+        guard SecKeychainGetUserInteractionAllowed(&interactionAllowed) == errSecSuccess,
+              SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { return nil }
+        defer { _ = SecKeychainSetUserInteractionAllowed(interactionAllowed.boolValue) }
         let context = LAContext()
         context.interactionNotAllowed = true
         let query: [String: Any] = [
@@ -44,6 +54,7 @@ enum ClaudeQuotaFetcher {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var item: CFTypeRef?
         if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,

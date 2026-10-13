@@ -114,7 +114,6 @@ struct UsageView: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 titleBar
-                ClaudeQuotaCard()
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
