@@ -53,8 +53,11 @@ enum UsageIndex {
 struct IslandStyle { static let morphSpring=0 }
 func withAnimation(_ value:Int,_ apply:()->Void){apply()}
 @MainActor final class State { var showsWings=false }
+@MainActor final class Surface { var state=State(); var hitPath: Int? }
 @MainActor final class ControllerFixture {
-    let prefs=Preferences();var model:RefreshModel?=RefreshModel();var state:State?=State()
+    let prefs=Preferences();var model:RefreshModel?=RefreshModel()
+    var surfaces=[0:Surface()]
+    func syncMouseCapture() {}
     WINGS
 }
 func require(_ ok:@autoclosure()->Bool,_ message:String){if !ok(){if PROBE{print("BASELINE VIOLATION:",message)}else{fatalError(message)}}}

@@ -629,6 +629,18 @@ registered regression suites (`make test`) and manual runs of the dev build;
 installation, actual system authorization and proxy rebinding remain outside
 those checks.
 
+## Multi-display island
+
+The existing hardware-black island has an entry on each enabled display.
+Notched screens preserve the two wings; other screens use a 154×28pt rounded
+capsule eight points below the menu bar, or a 42×28pt minimal entry when
+readouts are hidden. Its contour uses the existing 9%-white rim and 92%-white
+readouts. Detached alerts and details have rounded top corners and no notch
+spacer. Every screen shares one model, one open-state timer and one mouse
+monitor pair. One panel expands or alerts at a time; visible alerts keep their
+screen and carry their remaining lifetime across disconnects. See
+[the multi-display brief](docs/design/surfaces/notch-island.md).
+
 ## Desktop wooden fish
 
 A native transparent desktop toy, with no visible controls or context menu.

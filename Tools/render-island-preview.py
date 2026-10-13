@@ -107,7 +107,7 @@ source += (root / 'Sources/ClaudeBar/Utils/ModelPriceTable.swift').read_text().r
     'private typealias R = ModelPricing.Rate', 'typealias R = ModelPricing.Rate') + '\n'
 
 # --- Geometry + island value types -------------------------------------------
-source += declaration('Sources/ClaudeBar/Utils/NotchGeometry.swift', 'struct NotchGeometry: Equatable {')
+source += file_from('Sources/ClaudeBar/Utils/NotchGeometry.swift')
 source += declaration('Sources/ClaudeBar/NotchIslandController.swift', 'final class NotchIslandState: ObservableObject {')
 source += file_from('Sources/ClaudeBar/Models/IslandLiveModel.swift',
                     start='enum IslandAlert: Equatable, Identifiable {',
@@ -184,6 +184,12 @@ final class AppPreferences: ObservableObject, @unchecked Sendable {
     /// `@Published` because the island's two money rows subscribe to it
     /// (`$costDisplay`), exactly as they do in the app.
     @Published var costDisplay: CostDisplay = .split
+    @Published var notchIslandEnabled = true
+    @Published var notchIslandShowsWings = true
+    @Published var notchIslandInFullScreen = false
+    @Published var notchIslandAlertsEnabled = true
+    @Published var notchIslandDisplayPolicy: IslandDisplayPolicy = .all
+    @Published var notchIslandSelectedDisplay = ""
 }
 
 /// `ExchangeRate` reduced to the one member the island's money rows read
@@ -203,6 +209,17 @@ extension EnvironmentValues {
 /// The store-facing model, frozen. `IslandLiveModel` in the app is fed by
 /// `ProviderStore`; here every published value is set once from synthetic data.
 final class IslandLiveModel: ObservableObject {
+    static var instances = 0
+    init(providerStore: ProviderStore? = nil, codexStore: CodexProviderStore? = nil) { Self.instances += 1 }
+    let quotaReset = PassthroughSubject<CodexQuotaWindow, Never>()
+    let finished = PassthroughSubject<IslandSession, Never>()
+    let needsInput = PassthroughSubject<IslandSession, Never>()
+    var periodicRefresh = false
+    func setPeriodicRefresh(_ value: Bool) { periodicRefresh = value }
+    var openedSessions = 0
+    func open(_ session: IslandSession) { openedSessions += 1 }
+    func reloadUsage() {}
+    func requestFreshIndex() {}
     @Published var sessions: [IslandSession] = []
     @Published var sessionCosts: [String: ModelPricing.Estimate] = [:]
     @Published var usage = IslandUsage()
@@ -211,6 +228,14 @@ final class IslandLiveModel: ObservableObject {
     @Published var vpnRunning = false
     var busySessions: [IslandSession] { sessions.filter(\\.isBusy) }
 }
+
+final class ProviderStore {
+    struct Session { let pid: Int }
+    struct CursorSession { let composerId: String }
+    var sessions: [Session] = []
+    var cursorSessions: [CursorSession] = []
+}
+final class CodexProviderStore {}
 
 extension NotchGeometry {
     init(size: CGSize, hasHardwareNotch: Bool, screenFrame: CGRect) {
@@ -306,8 +331,6 @@ struct IslandProbe: View {
         ProductBrandMark.resourceRoot = brandMarkRoot
         let out = URL(fileURLWithPath: CommandLine.arguments[1])
         let notch = CGSize(width: 200, height: 46)
-        let geometry = NotchGeometry(size: notch, hasHardwareNotch: true,
-                                     screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982))
         let sessions = fixtureSessions()
         let usage = fixtureUsage()
         let finished = IslandAlert.finished(sessions[0])
@@ -322,7 +345,11 @@ struct IslandProbe: View {
         // error. The busy orbit is an `NSViewRepresentable` and needs a live
         // window for the same reason. This is the one deviation from the other
         // preview tools, and it exists so the picture matches the surface.
-        for dark in [false, true] {
+        for detached in [false, true] {
+          let geometry = NotchGeometry(size: detached ? CGSize(width: 0, height: 28) : notch,
+                                       hasHardwareNotch: !detached,
+                                       screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982))
+          for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for (name, mode, alert) in scenes {
                 let state = NotchIslandState(geometry: geometry, showsWings: true)
@@ -361,9 +388,10 @@ struct IslandProbe: View {
                 guard let png = rep.representation(using: .png, properties: [:]) else {
                     fatalError("PNG encode failed: \(name)")
                 }
-                try png.write(to: out.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+                try png.write(to: out.appendingPathComponent("\(detached ? "external-" : "")\(name)-\(dark ? "dark" : "light").png"))
                 window.orderOut(nil)
             }
+        }
         }
         print("Rendered island preview to \(out.path)")
     }

@@ -10,6 +10,7 @@ import SwiftUI
 struct IslandShape: Shape {
     var topFlare: CGFloat
     var bottomRadius: CGFloat
+    var detached = false
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(topFlare, bottomRadius) }
@@ -17,6 +18,9 @@ struct IslandShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        if detached {
+            return RoundedRectangle(cornerRadius: bottomRadius, style: .continuous).path(in: rect)
+        }
         let flare = min(topFlare, rect.width / 4, rect.height / 2)
         let radius = min(bottomRadius, (rect.width - 2 * flare) / 2, rect.height - flare)
         let left = rect.minX + flare

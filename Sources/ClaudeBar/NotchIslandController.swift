@@ -29,6 +29,9 @@ final class NotchIslandState: ObservableObject {
     }
 
     var collapsedSize: CGSize {
+        if !geometry.hasHardwareNotch {
+            return CGSize(width: showsWings ? 154 : 42, height: notch.height)
+        }
         let wings = showsWings ? 2 * IslandStyle.wingWidth : 0
         return CGSize(width: notch.width + 2 * IslandStyle.topFlare + wings, height: notch.height)
     }
@@ -56,20 +59,30 @@ final class NotchIslandState: ObservableObject {
         case .expanded: return expandedSize
         }
     }
+
+    var topFlare: CGFloat { geometry.hasHardwareNotch ? IslandStyle.topFlare : 0 }
+    var bottomRadius: CGFloat {
+        switch mode {
+        case .collapsed: return geometry.hasHardwareNotch ? IslandStyle.collapsedBottomRadius : notch.height / 2
+        case .alert: return IslandStyle.alertBottomRadius
+        case .expanded: return IslandStyle.expandedBottomRadius
+        }
+    }
 }
 
 // MARK: - Controller
 
-/// Owns the notch island: a fixed, transparent panel pinned to the top center
-/// of the notched screen, and the state machine that grows the island out of
-/// the notch and folds it back.
+/// Owns a fixed, transparent panel on each enabled screen. Hardware notches
+/// grow two wings; unnotched screens carry a detached capsule. One shared
+/// model and one active-panel state machine serve every entry.
 ///
 ///     collapsed ──hover 120 ms──▶ expanded ──pointer away 250 ms──▶ collapsed
 ///         │                          ▲
 ///         └──session finished──▶ alert ──click──┘
 ///                                  └──6 s (paused while hovered) / 继续──▶ collapsed
 ///
-/// Collapsed, the panel ignores the mouse and a global + local `mouseMoved`
+/// Collapsed hardware entries ignore the mouse; capsules accept clicks only
+/// inside their contour. A shared global + local mouse event
 /// monitor watches the hot zone (mouse-only monitors need no Accessibility
 /// permission). Open, the same monitors arm the mouse only while the pointer
 /// is inside the island shape — the panel is a fixed transparent canvas, and
@@ -82,17 +95,47 @@ final class NotchIslandController {
     private let codexStore: CodexProviderStore
     private let prefs = AppPreferences.shared
 
-    private var panel: NotchIslandPanel?
-    private var state: NotchIslandState?
+    @MainActor private final class Surface {
+        let id: String
+        let panel: NotchIslandPanel
+        let state: NotchIslandState
+        var mouseCapture: Bool?
+        var hitSize: CGSize = .zero
+        var hitRadius: CGFloat = -1
+        var hitPath: CGPath?
+
+        init(id: String, panel: NotchIslandPanel, state: NotchIslandState) {
+            self.id = id; self.panel = panel; self.state = state
+        }
+
+        func contains(_ pointer: CGPoint) -> Bool {
+            let size = state.islandSize
+            let rect = state.geometry.topRect(size)
+            guard rect.contains(pointer) else { return false }
+            if hitPath == nil || hitSize != size || hitRadius != state.bottomRadius {
+                hitSize = size; hitRadius = state.bottomRadius
+                hitPath = IslandShape(topFlare: state.topFlare, bottomRadius: state.bottomRadius,
+                                      detached: !state.geometry.hasHardwareNotch)
+                    .path(in: CGRect(origin: .zero, size: size)).cgPath
+            }
+            return hitPath?.contains(CGPoint(x: pointer.x - rect.minX, y: rect.maxY - pointer.y)) == true
+        }
+    }
+
+    private var surfaces: [String: Surface] = [:]
+    private var displays: [IslandDisplayOption] = []
+    private var activeID: String?
+    private var lastPointerID: String?
+    private var armedID: String?
+    private var panel: NotchIslandPanel? { activeID.flatMap { surfaces[$0]?.panel } }
+    private var state: NotchIslandState? { activeID.flatMap { surfaces[$0]?.state } }
+    private let screensProvider: @MainActor () -> [IslandDisplayOption]
     private var model: IslandLiveModel?
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var armTimer: Timer?
     private var tickTimer: Timer?
-    /// Last value written to `panel.ignoresMouseEvents` (see
-    /// `syncMouseCapture`). Cleared whenever the panel is replaced.
-    private var mouseCapture: Bool?
     private var leaveDeadline: Date?
     private var alertDeadline: Date?
     private var screenObserver: NSObjectProtocol?
@@ -105,9 +148,11 @@ final class NotchIslandController {
     /// Minimum time left on the alert after the pointer leaves it.
     private static let alertGrace: TimeInterval = 2
 
-    init(providerStore: ProviderStore, codexStore: CodexProviderStore) {
+    init(providerStore: ProviderStore, codexStore: CodexProviderStore,
+         screensProvider: @escaping @MainActor () -> [IslandDisplayOption] = { IslandDisplayOption.current }) {
         self.providerStore = providerStore
         self.codexStore = codexStore
+        self.screensProvider = screensProvider
     }
 
     func start() {
@@ -137,7 +182,9 @@ final class NotchIslandController {
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] inFullScreen in
-                MainActor.assumeIsolated { self?.panel?.applyCollectionBehavior(inFullScreen: inFullScreen) }
+                MainActor.assumeIsolated {
+                    self?.surfaces.values.forEach { $0.panel.applyCollectionBehavior(inFullScreen: inFullScreen) }
+                }
             }
             .store(in: &prefsCancellables)
 
@@ -149,6 +196,14 @@ final class NotchIslandController {
                     guard let self, !enabled, self.state?.mode == .alert else { return }
                     self.collapse(animated: true)
                 }
+            }
+            .store(in: &prefsCancellables)
+        Publishers.CombineLatest(prefs.$notchIslandDisplayPolicy.removeDuplicates(),
+                                 prefs.$notchIslandSelectedDisplay.removeDuplicates())
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.screensChanged() }
             }
             .store(in: &prefsCancellables)
     }
@@ -164,42 +219,52 @@ final class NotchIslandController {
     // MARK: Install / uninstall
 
     private func install() {
-        guard panel == nil, let screen = NotchGeometry.preferredScreen() else { return }
-        let geometry = NotchGeometry(screen: screen)
-        let state = NotchIslandState(geometry: geometry, showsWings: prefs.notchIslandShowsWings)
-        // The model is created once in `start()` and outlives the panel, so the
-        // alert edges keep firing whether or not the strip is on screen. Here
-        // the panel only adopts the existing model.
-        let model = ensureModel()
-        model.setPeriodicRefresh(prefs.notchIslandShowsWings)
-        self.state = state
+        guard AppPresentation.allowsInterface, screenObserver == nil else { return }
+        ensureModel()
+        installMouseMonitors()
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        }
+        reconcileSurfaces()
+    }
 
+    private func createSurface(_ display: IslandDisplayOption) -> Surface {
+        let state = NotchIslandState(geometry: display.geometry, showsWings: prefs.notchIslandShowsWings)
+        let id = display.id
         let actions = IslandActions(
             openSession: { [weak self] session in
                 MainActor.assumeIsolated {
-                    self?.model?.open(session)
-                    self?.collapse(animated: true)
+                    guard let self, self.activeID == id, self.surfaces[id]?.state === state else { return }
+                    self.model?.open(session)
+                    self.collapse(animated: true)
                 }
             },
             openMainWindow: { [weak self] in
                 MainActor.assumeIsolated {
+                    guard let self, self.activeID == id, self.surfaces[id]?.state === state else { return }
                     NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                    self?.collapse(animated: true)
+                    self.collapse(animated: true)
                 }
             },
             expandFromAlert: { [weak self] in
-                MainActor.assumeIsolated { self?.expand() }
+                MainActor.assumeIsolated {
+                    guard let self, self.surfaces[id]?.state === state else { return }
+                    self.activate(id)
+                    self.expand()
+                }
             },
             dismissAlert: { [weak self] in
-                MainActor.assumeIsolated { self?.collapse(animated: true) }
+                MainActor.assumeIsolated {
+                    guard let self, self.activeID == id, self.surfaces[id]?.state === state else { return }
+                    self.collapse(animated: true)
+                }
             })
-
         let panel = NotchIslandPanel()
         panel.applyCollectionBehavior(inFullScreen: prefs.notchIslandInFullScreen)
-        let hosting = NSHostingView(rootView: NotchIslandView(state: state, model: model, actions: actions))
-        // No Auto Layout and no size feedback into the window: the panel is a
-        // fixed canvas (same macOS 26 constraint-crash avoidance as the
-        // menu-bar popup).
+        let hosting = NSHostingView(rootView: NotchIslandView(state: state, model: ensureModel(), actions: actions))
+        // Fixed canvases never negotiate their size during an animation.
         hosting.sizingOptions = []
         hosting.autoresizingMask = [.width, .height]
         hosting.frame = NSRect(origin: .zero, size: IslandStyle.panelSize)
@@ -207,37 +272,76 @@ final class NotchIslandController {
         container.autoresizesSubviews = true
         container.addSubview(hosting)
         panel.contentView = container
-        self.panel = panel
-        mouseCapture = nil
-
-        position(panel, geometry: geometry)
+        position(panel, geometry: display.geometry)
         panel.orderFrontRegardless()
+        return Surface(id: id, panel: panel, state: state)
+    }
 
-        installMouseMonitors()
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screensChanged() }
+    private func reconcileSurfaces() {
+        let pendingAlert = state?.mode == .alert ? state?.alert : nil
+        let pendingDeadline = alertDeadline
+        cancelArming()
+        displays = IslandDisplaySelection.eligible(screensProvider(), policy: prefs.notchIslandDisplayPolicy,
+                                                  selected: prefs.notchIslandSelectedDisplay)
+        let ids = Set(displays.map(\.id))
+        for id in Array(surfaces.keys) where !ids.contains(id) {
+            if activeID == id { collapse(animated: false); activeID = nil }
+            if let surface = surfaces.removeValue(forKey: id) {
+                surface.panel.orderOut(nil)
+                surface.panel.contentView = nil
+                surface.panel.close()
+            }
         }
+        for display in displays {
+            if let surface = surfaces[display.id] {
+                if surface.state.geometry != display.geometry {
+                    if activeID == display.id { collapse(animated: false) }
+                    surface.state.geometry = display.geometry
+                    surface.hitPath = nil
+                }
+                position(surface.panel, geometry: display.geometry)
+            } else {
+                surfaces[display.id] = createSurface(display)
+            }
+        }
+        if activeID == nil {
+            activeID = IslandDisplaySelection.target(displays, pointer: NSEvent.mouseLocation, last: lastPointerID)
+        }
+        model?.setPeriodicRefresh(!surfaces.isEmpty && prefs.notchIslandShowsWings)
+        // Disconnects carry the remaining alert, without replaying its event or
+        // extending its lifetime. Opening a different entry stays deliberate.
+        if state?.mode == .collapsed, let pendingAlert, let pendingDeadline,
+           pendingDeadline > Date() {
+            state?.alert = pendingAlert
+            state?.mode = .alert
+            alertDeadline = pendingDeadline
+            startTicking()
+        }
+        syncMouseCapture()
     }
 
     private func uninstall() {
         collapse(animated: false)
         removeMouseMonitors()
-        armTimer?.invalidate()
-        armTimer = nil
+        cancelArming()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
-        panel?.orderOut(nil)
-        panel?.contentView = nil
-        panel = nil
-        state = nil
-        // The model is deliberately **not** torn down with the panel: its
-        // `needsInput` edge is what posts the fallback banner when the strip is
-        // off, so destroying it here would make a disabled island silently stop
-        // reporting parks again. Only the periodic usage refresh, which exists
-        // for the wings, is stopped.
+        for surface in surfaces.values {
+            surface.panel.orderOut(nil)
+            surface.panel.contentView = nil
+            surface.panel.close()
+        }
+        surfaces.removeAll()
+        displays.removeAll()
+        activeID = nil; lastPointerID = nil
+        // Alert edges outlive all panels; only periodic wing refresh stops.
         model?.setPeriodicRefresh(false)
+    }
+
+    private func activate(_ id: String) {
+        guard surfaces[id] != nil, activeID != id else { return }
+        collapse(animated: true)
+        activeID = id
     }
 
     /// Create the model on first use and wire its alert edges exactly once.
@@ -284,56 +388,42 @@ final class NotchIslandController {
 
     private func applyWings(_ shows: Bool) {
         model?.setPeriodicRefresh(shows && prefs.notchIslandEnabled)
-        withAnimation(IslandStyle.morphSpring) { state?.showsWings = shows }
+        withAnimation(IslandStyle.morphSpring) {
+            surfaces.values.forEach { $0.state.showsWings = shows; $0.hitPath = nil }
+        }
+        syncMouseCapture()
     }
 
     private func screensChanged() {
-        guard let panel, let state else { return }
-        guard let screen = NotchGeometry.preferredScreen() else { return }
-        let geometry = NotchGeometry(screen: screen)
-        if geometry != state.geometry {
-            collapse(animated: false)
-            state.geometry = geometry
-        }
-        position(panel, geometry: geometry)
+        guard prefs.notchIslandEnabled, screenObserver != nil else { return }
+        reconcileSurfaces()
     }
 
     private func position(_ panel: NSPanel, geometry: NotchGeometry) {
-        let size = IslandStyle.panelSize
-        let frame = NSRect(x: geometry.screenFrame.midX - size.width / 2,
-                           y: geometry.screenFrame.maxY - size.height,
-                           width: size.width, height: size.height)
-        panel.setFrame(frame, display: true)
+        panel.setFrame(geometry.topRect(IslandStyle.panelSize), display: true)
     }
 
     // MARK: Hit zones (global AppKit coordinates)
 
-    /// A rect hanging from the top edge of the screen, centered on the notch.
-    private func topRect(_ size: CGSize) -> CGRect {
-        guard let state else { return .zero }
-        let screen = state.geometry.screenFrame
-        return CGRect(x: screen.midX - size.width / 2, y: screen.maxY - size.height,
-                      width: size.width, height: size.height)
-    }
-
-    /// Collapsed hot zone. Extends 2pt above the screen edge because the
-    /// pointer pinned against the top reports `y == maxY`.
-    private var collapsedHotZone: CGRect {
-        guard let state else { return .zero }
-        let size = state.collapsedSize
-        return topRect(CGSize(width: size.width + 8, height: size.height + 2)).offsetBy(dx: 0, dy: 2)
+    private func collapsedHotZone(_ surface: Surface) -> CGRect {
+        let state = surface.state
+        if state.geometry.hasHardwareNotch {
+            return state.geometry.topRect(CGSize(width: state.collapsedSize.width + 8,
+                                                 height: state.collapsedSize.height + 2)).offsetBy(dx: 0, dy: 2)
+        }
+        return state.geometry.topRect(state.collapsedSize).insetBy(dx: -3, dy: -3)
     }
 
     private var openZone: CGRect {
         guard let state else { return .zero }
-        return topRect(state.islandSize).insetBy(dx: -8, dy: -8)
+        return state.geometry.topRect(state.islandSize).insetBy(dx: -8, dy: -8)
     }
 
     // MARK: Mouse
 
     private func installMouseMonitors() {
         removeMouseMonitors()
-        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseUp]
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
             MainActor.assumeIsolated { self?.pointerMoved() }
         }
@@ -350,29 +440,43 @@ final class NotchIslandController {
         localMonitor = nil
     }
 
-    /// Only the collapsed island arms on hover; the alert expands on click so
-    /// its 继续 button stays reachable.
+    private func cancelArming() {
+        armTimer?.invalidate()
+        armTimer = nil; armedID = nil
+    }
+
     private func pointerMoved() {
-        guard let state else { return }
-        if state.mode != .collapsed {
-            syncMouseCapture()
-            return
+        let pointer = NSEvent.mouseLocation
+        let pointerID = displays.first(where: { $0.geometry.screenFrame.contains(pointer) })?.id
+        if let id = pointerID {
+            lastPointerID = id
         }
-        if collapsedHotZone.contains(NSEvent.mouseLocation) {
-            guard armTimer == nil else { return }
-            armTimer = Timer.scheduledTimer(withTimeInterval: Self.armDelay, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.armTimer = nil
-                    if self.state?.mode == .collapsed, self.collapsedHotZone.contains(NSEvent.mouseLocation) {
-                        self.expand()
-                    }
-                }
+        syncMouseCapture()
+        // Dragging a window or scrubbing a chart never opens another island.
+        guard NSEvent.pressedMouseButtons == 0,
+              let display = displays.first(where: { display in
+                  guard pointerID == nil || pointerID == display.id,
+                        let surface = surfaces[display.id] else { return false }
+                  return surface.state.mode == .collapsed && collapsedHotZone(surface).contains(pointer)
+              }) else { cancelArming(); return }
+        guard let surface = surfaces[display.id] else { cancelArming(); return }
+        guard armedID != surface.id else { return }
+        cancelArming()
+        let id = surface.id
+        armedID = id
+        let delay = state?.mode == .expanded ? Self.leaveDelay : Self.armDelay
+        armTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.armTimer = nil; self.armedID = nil
+                guard NSEvent.pressedMouseButtons == 0, let surface = self.surfaces[id],
+                      surface.state.mode == .collapsed,
+                      self.collapsedHotZone(surface).contains(NSEvent.mouseLocation) else { return }
+                self.activate(id)
+                self.expand()
             }
-        } else {
-            armTimer?.invalidate()
-            armTimer = nil
         }
+        if let armTimer { RunLoop.main.add(armTimer, forMode: .common) }
     }
 
     // MARK: Transitions
@@ -386,22 +490,17 @@ final class NotchIslandController {
     /// the window's mouse-handling re-evaluation, which shows up in a sample
     /// as `_NSWindowSetIgnoresMouseEvents` under the pointer-move stack.
     private func syncMouseCapture() {
-        guard let panel, let state else { return }
-        let ignore: Bool
-        switch state.mode {
-        case .collapsed:
-            ignore = true
-        case .alert, .expanded:
-            ignore = !islandHitZone.contains(NSEvent.mouseLocation)
+        let pointer = NSEvent.mouseLocation
+        for surface in surfaces.values {
+            // Keep the target of an in-progress click or drag until release.
+            if surface.state.mode != .collapsed && NSEvent.pressedMouseButtons != 0 { continue }
+            let ignore = surface.state.isCollapsedInvisible ||
+                (surface.state.mode == .collapsed && surface.state.geometry.hasHardwareNotch) ||
+                !surface.contains(pointer)
+            guard ignore != surface.mouseCapture else { continue }
+            surface.mouseCapture = ignore
+            surface.panel.ignoresMouseEvents = ignore
         }
-        guard ignore != mouseCapture else { return }
-        mouseCapture = ignore
-        panel.ignoresMouseEvents = ignore
-    }
-
-    private var islandHitZone: CGRect {
-        guard let state else { return .zero }
-        return topRect(state.islandSize)
     }
 
     private func expand() {
@@ -442,7 +541,13 @@ final class NotchIslandController {
             notifyParkedFallback(for: session)
             return
         }
-        guard canShowStripAlert, let state else { return }
+        guard canShowStripAlert else { return }
+        // A visible alert owns its screen until dismissal or deliberate opening.
+        if state?.mode != .alert,
+           let id = IslandDisplaySelection.target(displays, pointer: NSEvent.mouseLocation, last: lastPointerID) {
+            activate(id)
+        }
+        guard let state else { return }
         alertDeadline = Date().addingTimeInterval(Self.alertDuration)
         withAnimation(IslandStyle.alertSpring) {
             state.alert = alert
@@ -454,14 +559,10 @@ final class NotchIslandController {
 
     /// Whether the notch strip could take an alert *right now*.
     ///
-    /// Three ways it cannot: the island feature is off (no strip exists), alerts
-    /// are off, or the strip is sitting open (`.expanded` already lists the
-    /// sessions and refuses to be interrupted). The requirement is the *feature*
-    /// flag rather than `panel != nil`, so a strip that is on but mid-install
-    /// still counts as "the strip will carry this" instead of double-firing a
-    /// banner beside it.
+    /// Disabled alerts, no connected entries, or already-expanded details use
+    /// the existing parked-session notification fallback instead.
     private var canShowStripAlert: Bool {
-        prefs.notchIslandEnabled && prefs.notchIslandAlertsEnabled && state?.mode != .expanded
+        prefs.notchIslandEnabled && prefs.notchIslandAlertsEnabled && !surfaces.isEmpty && state?.mode != .expanded
     }
 
     /// The banner that stands in for a strip that could not show a park. Claude
@@ -491,6 +592,7 @@ final class NotchIslandController {
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        if let tickTimer { RunLoop.main.add(tickTimer, forMode: .common) }
     }
 
     private func tick() {
@@ -509,7 +611,7 @@ final class NotchIslandController {
                 collapse(animated: true)
             }
         case .expanded:
-            if inside {
+            if inside || NSEvent.pressedMouseButtons != 0 {
                 leaveDeadline = nil
             } else if let deadline = leaveDeadline {
                 if now >= deadline { collapse(animated: true) }
@@ -537,8 +639,10 @@ final class NotchIslandController {
         // `mouseCapture == false`, and returned without ever giving the mouse
         // back. The island then opened under the pointer and stayed
         // click-through until the pointer left its rect and came back.
-        mouseCapture = true
-        panel?.ignoresMouseEvents = true
+        if let id = activeID, let surface = surfaces[id] {
+            surface.mouseCapture = true
+            surface.panel.ignoresMouseEvents = true
+        }
         let apply = {
             state.mode = .collapsed
             state.alert = nil
@@ -549,6 +653,7 @@ final class NotchIslandController {
             apply()
         }
         if wasExpanded { UIWakePolicy.setIslandExpanded(false) }
+        syncMouseCapture()
     }
 }
 

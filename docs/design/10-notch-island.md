@@ -1,7 +1,7 @@
 # 10 · 刘海灵动岛（Notch Island）
 
 > 把 MacBook 的硬件刘海变成 ClaudeBar 的「余光界面」：平时在刘海两侧告诉你**谁在跑、今天用了多少**；
-> 会话一结束就从刘海里长出一条提醒，一键回到那个会话；鼠标碰到刘海则展开成会话列表 + 用量卡。
+> 会话一结束就展开一条提醒，一键回到那个会话；内置屏融入硬件刘海，外接屏用菜单栏下方的紧凑胶囊。
 
 ---
 
@@ -27,6 +27,8 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 ---
 
 ## 2. 三个状态
+
+以下尺寸表描述硬件刘海形态。无刘海屏幕采用四角圆润的独立胶囊：收起 154×28pt，隐藏状态与用量后保留 42×28pt 的入口；提醒 380×82pt，展开 520×320pt。外接屏的锚点在菜单栏可用区域顶边下方 8pt，内容无需为硬件刘海留空。两种形态使用同一会话、用量与提醒模型。
 
 ```
 ┌──────────────────────── 屏幕顶边 ────────────────────────┐
@@ -112,8 +114,8 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 | 文件 | 职责 |
 |---|---|
-| `NotchIslandController.swift` | `NotchIslandState`（模式与尺寸）；面板生命周期、热区、10 Hz 离开 / 提醒计时、偏好监听 |
-| `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时给出菜单栏高度的伪刘海 |
+| `NotchIslandController.swift` | `NotchIslandState`（模式与尺寸）；每屏面板与命中缓存、单处展开、提醒归属、一个 10 Hz 离开 / 提醒计时器、偏好监听 |
+| `Utils/NotchGeometry.swift` | 刘海尺寸或外接屏胶囊锚点；稳定显示器标识、镜像去重、显示范围与提醒选屏 |
 | `Models/IslandLiveModel.swift` | 会话扁平化与去重、完成事件、额度重置边沿、路由 / VPN、会话花费与后台用量计算 |
 | `Views/Island/NotchIslandView.swift` | `IslandStyle`、根视图、两翼、提醒条、展开顶栏、会话格（`IslandSessionStrip`）、滚动条与过渡 |
 | `Views/Island/IslandComponents.swift` | Agent 标志与轨道、会话行、上下文占用、用量卡与花费 hero、`Canvas` 直方图、来源分段条 |
@@ -162,8 +164,12 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 ### 4.6 屏幕
 
-- 优先有刘海的屏幕（内建屏）；没有则用菜单栏所在屏幕画伪刘海（200pt 宽、菜单栏高，最低 24pt）。
-- 监听 `NSApplication.didChangeScreenParametersNotification`，重新定位；几何变化时先无动画收起。
+- 默认所有屏幕有入口；内置屏保留刘海两翼，无刘海屏幕使用独立胶囊。可以选择仅内置屏或指定显示器；指定显示器不在时暂用内置屏／首个可用屏，重新连接后恢复原选择。
+- 各屏共用一个 `IslandLiveModel`。每次只有一个面板展开或提醒，其他入口保持收起；普通悬停 120ms 展开，从另一个展开面板切过来需停留 250ms。窗口或图表拖动、鼠标按钮按住时不触发切屏，也不收起正在操作的详情。
+- 新提醒选鼠标所在的已启用屏幕；若鼠标位于未启用屏幕，选最近经过的已启用屏幕，再回退内置／首个可用屏。可见提醒固定在原屏幕，后续提醒在同处替换，不随鼠标移动。主动悬停另一个入口属于明确打开操作，会收起原提醒再展开详情。
+- 拔掉承载提醒的屏幕时，将提醒和剩余截止时间交给可用屏幕，保留原事件身份，不重新计时。展开面板在屏幕几何变化时收起。无可用入口时，待确认事件继续走已有系统通知兜底。
+- 显示器身份使用 Core Graphics UUID，偏好随 bundle 隔离；镜像屏幕按相同全局坐标去重。负坐标、左右／上下排列采用全局屏幕几何判断；顶边热区不会跨到另一块屏幕。
+- 监听 `NSApplication.didChangeScreenParametersNotification`，取消旧悬停任务、关闭失效面板并重新定位。只有一对鼠标事件监听；命中路径随形态缓存，透明圆角点击穿透；收起态没有离开检查计时器，打开时共用一个 10 Hz 计时器。全屏显示开关应用于所有面板。
 
 ### 4.7 偏好（设置 → 灵动岛）
 
@@ -173,6 +179,8 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | `notchIslandShowsWings` | 开 | 收起时显示两翼（同时启用每 10 分钟的跨日刷新） |
 | `notchIslandAlertsEnabled` | 开 | 会话完成提醒 |
 | `notchIslandInFullScreen` | 关 | 全屏应用中是否显示 |
+| `notchIslandDisplayPolicy` | `all` | 所有屏幕／仅内置屏／指定屏幕 |
+| `notchIslandSelectedDisplay` | 空 | 指定显示器 UUID；未连接时保留该值 |
 
 ---
 
@@ -202,6 +210,8 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 - 两翼会盖住紧贴刘海的菜单栏图标，因此可关。
 - 屏幕录制 / 截图会拍到打开的灵动岛（未设置 `sharingType = .none`）。
 - 展开态不使用右下角的轮播卡片（额度 / 本机 / 余额），那些数字由菜单栏 popup 与主窗口承载；曾经的 `IslandGlanceReel` 与它的几何常量已删除（见 [审查证据](../reviews/ui-audit-backlog.md) §4），展开态就是 header + 会话格 + 用量卡。
-- 后续可做：多屏各显示一个。
+- 多屏交互通过独立合成屏幕与原生面板夹具验证；真实显示器拔插、合盖、全屏 Space 和混合缩放仍需实机检查。
+
+多屏回归：`make test TEST="island-display island-coalescing island-session-alert"`。生产视图预览：`python3 Tools/render-island-preview.py`，同时生成硬件刘海／外接胶囊、收起／提醒／展开和明暗背景。回归使用合成屏幕、内存偏好和输入替身，不移动真实鼠标、不访问真实会话、不请求权限；所有夹具面板退出前关闭。
 
 **返回** [设计文档](README.md)

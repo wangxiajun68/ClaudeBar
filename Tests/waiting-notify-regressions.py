@@ -85,7 +85,7 @@ func run() {
 
     // The production predicate, with its two inputs bound to locals so the
     // *rule* is untouched and only the source of the flags is the test's.
-    func stripCarries(island: Bool, alerts: Bool, expanded: Bool) -> Bool {
+    func stripCarries(island: Bool, alerts: Bool, expanded: Bool, surfaces: [Int] = [1]) -> Bool {
         let islandOn = island
         let alertsOn = alerts
         return PREDICATE_BODY
@@ -100,6 +100,7 @@ func run() {
     check(!stripCarries(island: false, alerts: true, expanded: false), "island off → banner fallback")
     check(!stripCarries(island: true, alerts: false, expanded: false), "alerts off → banner fallback")
     check(!stripCarries(island: false, alerts: false, expanded: true), "all off → banner fallback")
+    check(!stripCarries(island: true, alerts: true, expanded: false, surfaces: []), "no connected display → banner fallback")
 
     // 3. The banner's content and delivery, produced by the shipped
     //    notifyNeedsInput → post → submit stack against the stubbed center.

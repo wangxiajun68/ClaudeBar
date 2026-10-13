@@ -184,7 +184,7 @@ final class AppPreferences: ObservableObject {
 
     // MARK: 刘海灵动岛
 
-    /// Show the notch island at the top center of the notched screen.
+    /// Show an island entry on the selected displays.
     @Published var notchIslandEnabled: Bool {
         didSet { UserDefaults.standard.set(notchIslandEnabled, forKey: "notchIslandEnabled") }
     }
@@ -199,6 +199,12 @@ final class AppPreferences: ObservableObject {
     /// Keep the island over full-screen apps.
     @Published var notchIslandInFullScreen: Bool {
         didSet { UserDefaults.standard.set(notchIslandInFullScreen, forKey: "notchIslandInFullScreen") }
+    }
+    @Published var notchIslandDisplayPolicy: IslandDisplayPolicy {
+        didSet { UserDefaults.standard.set(notchIslandDisplayPolicy.rawValue, forKey: "notchIslandDisplayPolicy") }
+    }
+    @Published var notchIslandSelectedDisplay: String {
+        didSet { UserDefaults.standard.set(notchIslandSelectedDisplay, forKey: "notchIslandSelectedDisplay") }
     }
 
     // MARK: 概览问候卡
@@ -336,6 +342,9 @@ final class AppPreferences: ObservableObject {
         notchIslandShowsWings = UserDefaults.standard.object(forKey: "notchIslandShowsWings") as? Bool ?? true
         notchIslandAlertsEnabled = UserDefaults.standard.object(forKey: "notchIslandAlertsEnabled") as? Bool ?? true
         notchIslandInFullScreen = UserDefaults.standard.object(forKey: "notchIslandInFullScreen") as? Bool ?? false
+        notchIslandDisplayPolicy = UserDefaults.standard.string(forKey: "notchIslandDisplayPolicy")
+            .flatMap(IslandDisplayPolicy.init(rawValue:)) ?? .all
+        notchIslandSelectedDisplay = UserDefaults.standard.string(forKey: "notchIslandSelectedDisplay") ?? ""
         didSetReady = true
     }
 

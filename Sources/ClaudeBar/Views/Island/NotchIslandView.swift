@@ -155,13 +155,22 @@ struct NotchIslandView: View {
 
     private var island: some View {
         let size = state.islandSize
-        let shape = IslandShape(topFlare: IslandStyle.topFlare, bottomRadius: bottomRadius)
+        let shape = IslandShape(topFlare: state.topFlare, bottomRadius: state.bottomRadius,
+                                detached: !state.geometry.hasHardwareNotch)
         return ZStack(alignment: .top) {
             shape.fill(Color.black)
 
             switch state.mode {
             case .collapsed:
-                if state.showsWings {
+                if !state.geometry.hasHardwareNotch {
+                    capsule
+                        .contentShape(Capsule())
+                        .onTapGesture(perform: actions.expandFromAlert)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("查看会话与用量")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { actions.expandFromAlert() }
+                } else if state.showsWings {
                     wings.transition(.opacity)
                 }
             case .alert:
@@ -193,20 +202,32 @@ struct NotchIslandView: View {
         // only appears once the island has grown out of it.
         .overlay {
             shape.stroke(IslandStyle.rim, lineWidth: 1)
-                .opacity(state.mode == .collapsed ? 0 : 1)
+                .opacity(state.mode == .collapsed && state.geometry.hasHardwareNotch ? 0 : 1)
         }
         .opacity(state.isCollapsedInvisible ? 0 : 1)
     }
 
-    private var bottomRadius: CGFloat {
-        switch state.mode {
-        case .collapsed: return IslandStyle.collapsedBottomRadius
-        case .alert: return IslandStyle.alertBottomRadius
-        case .expanded: return IslandStyle.expandedBottomRadius
-        }
-    }
-
     // MARK: Collapsed
+
+    private var capsule: some View {
+        HStack(spacing: 10) {
+            if state.showsWings {
+                leftWing
+                Rectangle().fill(IslandStyle.rim).frame(width: 1, height: 12)
+                RollingNumberText(UsageStats.formatTokens(model.usage.today), rolls: false)
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(IslandStyle.textPrimary)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+            } else {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(IslandStyle.textSecondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(width: state.collapsedSize.width, height: state.collapsedSize.height)
+        .help("悬停或点击查看会话与用量")
+    }
 
     private var wings: some View {
         HStack(spacing: 0) {

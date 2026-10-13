@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var fontBrowserExpanded = false
     @State private var fontSearch = ""
     @State private var installedTerminals: Set<ResumeTerminal> = []
+    @State private var islandScreens = IslandDisplayOption.current
     @FocusState private var codexPortFocused: Bool
     @FocusState private var weatherCityFocused: Bool
     @FocusState private var amapKeyFocused: Bool
@@ -471,14 +472,42 @@ struct SettingsView: View {
                 SettingsToggleRow(title: "启用灵动岛", isOn: $prefs.notchIslandEnabled)
             }
             if prefs.notchIslandEnabled {
+                SettingsGroup(title: "屏幕", symbol: "display") {
+                    SettingsRow(title: "显示位置", caption: "内置屏融入刘海，外接屏使用胶囊；详情和提醒每次只显示在一处。") {
+                        Picker("显示位置", selection: $prefs.notchIslandDisplayPolicy) {
+                            ForEach(IslandDisplayPolicy.allCases) { policy in
+                                Text(policy.label).tag(policy)
+                            }
+                        }.labelsHidden().frame(width: 150)
+                    }
+                    if prefs.notchIslandDisplayPolicy == .selected {
+                        SettingsDivider()
+                        SettingsRow(title: "指定显示器", caption: "断开时暂用可用屏幕，重新连接后自动恢复。") {
+                            Picker("指定显示器", selection: $prefs.notchIslandSelectedDisplay) {
+                                Text("自动选择").tag("")
+                                ForEach(islandScreens) { screen in
+                                    Text(screen.name).tag(screen.id)
+                                }
+                                if !prefs.notchIslandSelectedDisplay.isEmpty,
+                                   !islandScreens.contains(where: { $0.id == prefs.notchIslandSelectedDisplay }) {
+                                    Text("显示器未连接").tag(prefs.notchIslandSelectedDisplay)
+                                }
+                            }.labelsHidden().frame(width: 180)
+                        }
+                    }
+                }
                 SettingsGroup(title: "显示与提醒", symbol: "bell") {
-                    SettingsToggleRow(title: "收起时显示两翼", caption: "在刘海两侧显示运行会话和今日用量。", isOn: $prefs.notchIslandShowsWings)
+                    SettingsToggleRow(title: "收起时显示状态与用量", caption: "内置屏显示在刘海两侧，外接屏显示为紧凑胶囊。", isOn: $prefs.notchIslandShowsWings)
                     SettingsDivider()
-                    SettingsToggleRow(title: "会话完成时提醒", caption: "从刘海展开提示，6 秒后自动收起。", isOn: $prefs.notchIslandAlertsEnabled)
+                    SettingsToggleRow(title: "会话完成时提醒", caption: "在鼠标所在屏幕提醒一次，6 秒后自动收起；悬停可延长。", isOn: $prefs.notchIslandAlertsEnabled)
                     SettingsDivider()
                     SettingsToggleRow(title: "全屏时显示", isOn: $prefs.notchIslandInFullScreen)
                 }
             }
+        }
+        .onAppear { islandScreens = IslandDisplayOption.current }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            islandScreens = IslandDisplayOption.current
         }
     }
 
