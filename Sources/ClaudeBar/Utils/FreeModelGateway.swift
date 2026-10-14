@@ -110,19 +110,22 @@ actor FreeModelGateway {
     private var health: [String: Health] = [:]
     private var providerCooldown: [UUID: Date] = [:]
     private struct RateWindow {
-        private var values: [Date] = []
+        private var values: [(Date, UUID?)] = []
         private var head = 0
         var count: Int { values.count - head }
         mutating func prune(now: Date) {
-            while head < values.count, now.timeIntervalSince(values[head]) >= 60 { head += 1 }
+            while head < values.count, now.timeIntervalSince(values[head].0) >= 60 { head += 1 }
             if head > 1024 || head == values.count {
                 values.removeFirst(head); head = 0
             }
         }
-        mutating func append(_ now: Date) { values.append(now) }
+        mutating func append(_ now: Date, requestID: UUID? = nil) { values.append((now, requestID)) }
+        mutating func remove(requestID: UUID) {
+            if let index = values[head...].firstIndex(where: { $0.1 == requestID }) { values.remove(at: index) }
+        }
     }
     private struct TokenWindow {
-        private var values: [(Date, Int)] = []
+        private var values: [(Date, Int, UUID?)] = []
         private var head = 0
         private(set) var total = 0
         mutating func prune(now: Date) {
@@ -133,14 +136,20 @@ actor FreeModelGateway {
                 values.removeFirst(head); head = 0
             }
         }
-        mutating func append(_ now: Date, tokens: Int) {
-            values.append((now, tokens)); total += tokens
+        mutating func append(_ now: Date, tokens: Int, requestID: UUID? = nil) {
+            values.append((now, tokens, requestID)); total += tokens
+        }
+        mutating func remove(requestID: UUID) {
+            if let index = values[head...].firstIndex(where: { $0.2 == requestID }) {
+                total -= values[index].1; values.remove(at: index)
+            }
         }
     }
     private var admitted = RateWindow()
     private var providerAdmissions: [UUID: RateWindow] = [:]
     private var providerTokens: [UUID: TokenWindow] = [:]
     private var providerService: [UUID: Double] = [:]
+    private var initialCharges: [UUID: (providerID: UUID, service: Double)] = [:]
     private var catalogByID: [String: FreeModelPool.CatalogModel] = [:]
     private var providerOccupancy: [UUID: Int] = [:]
     private var memberOccupancy: [String: Int] = [:]
@@ -391,6 +400,12 @@ actor FreeModelGateway {
     }
     private func reserve(_ value: Reservation?, for id: UUID) {
         if let old = reservations[id] {
+            if value == nil, let charge = initialCharges.removeValue(forKey: id) {
+                admitted.remove(requestID: id)
+                providerAdmissions[charge.providerID]?.remove(requestID: id)
+                providerTokens[charge.providerID]?.remove(requestID: id)
+                providerService[charge.providerID, default: 0] = max(0, providerService[charge.providerID, default: 0] - charge.service)
+            }
             providerOccupancy[old.providerID, default: 0] -= 1
             memberOccupancy[old.memberID, default: 0] -= 1
             if providerOccupancy[old.providerID] == 0 { providerOccupancy[old.providerID] = nil }
@@ -417,14 +432,14 @@ actor FreeModelGateway {
         }
         return true
     }
-    private func debitProvider(_ id: UUID, tokens: Int, now: Date) {
+    private func debitProvider(_ id: UUID, tokens: Int, now: Date, requestID: UUID? = nil) {
         if pool.providerRequestsPerMinute[id.uuidString] != nil {
             providerAdmissions[id, default: RateWindow()].prune(now: now)
-            providerAdmissions[id, default: RateWindow()].append(now)
+            providerAdmissions[id, default: RateWindow()].append(now, requestID: requestID)
         }
         if pool.providerTokensPerMinute[id.uuidString] != nil {
             providerTokens[id, default: TokenWindow()].prune(now: now)
-            providerTokens[id, default: TokenWindow()].append(now, tokens: tokens)
+            providerTokens[id, default: TokenWindow()].append(now, tokens: tokens, requestID: requestID)
         }
         providerService[id, default: 0] += 1 / Double(pool.providerWeights[id.uuidString] ?? 1)
     }
@@ -450,8 +465,10 @@ actor FreeModelGateway {
         let selected = result.candidates.remove(at: index)
         result.candidates.insert(selected, at: 0)
         reserve(.init(providerID: selected.endpoint.id, memberID: selected.member.id), for: result.id)
-        debitProvider(selected.endpoint.id, tokens: result.estimatedTokens, now: now)
-        admitted.append(now); active.insert(result.id); requestCount += 1
+        debitProvider(selected.endpoint.id, tokens: result.estimatedTokens, now: now, requestID: result.id)
+        admitted.append(now, requestID: result.id)
+        initialCharges[result.id] = (selected.endpoint.id, 1 / Double(pool.providerWeights[selected.endpoint.id.uuidString] ?? 1))
+        active.insert(result.id); requestCount += 1
         return result
     }
     private func startAttempt(_ candidate: Candidate, plan: Plan, now: Date) throws -> Bool {
@@ -465,8 +482,10 @@ actor FreeModelGateway {
         } else {
             guard hasCapacity(candidate.endpoint.id), recoveryAvailable(candidate) else { return false }
         }
-        if (attempts[plan.id] ?? 0) > 0 { try checkRate(now: now); admitted.append(now) }
-        if reservations[plan.id] == nil { debitProvider(candidate.endpoint.id, tokens: plan.estimatedTokens, now: now) }
+        let held = reservations[plan.id] != nil
+        if (attempts[plan.id] ?? 0) > 0 || !held { try checkRate(now: now); admitted.append(now) }
+        if !held { debitProvider(candidate.endpoint.id, tokens: plan.estimatedTokens, now: now) }
+        initialCharges[plan.id] = nil
         reserve(.init(providerID: candidate.endpoint.id, memberID: candidate.member.id), for: plan.id)
         attempts[plan.id, default: 0] += 1
         var value = health[candidate.member.id] ?? Health()
@@ -619,7 +638,7 @@ actor FreeModelGateway {
     }
 
     func finish(_ plan: Plan) {
-        active.remove(plan.id); attempts[plan.id] = nil; reserve(nil, for: plan.id)
+        active.remove(plan.id); reserve(nil, for: plan.id); attempts[plan.id] = nil
         let owned = waiters.filter {
             if case .attempt(_, let owner, _) = $0.work { return owner.id == plan.id }
             return false
