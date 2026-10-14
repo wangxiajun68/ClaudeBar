@@ -95,7 +95,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     MODELS = json.dumps({'data': [
-        {'id': 'local-beta', 'architecture': {'input_modalities': ['text', 'image', 'audio'], 'output_modalities': ['text', 'audio']},
+        {'id': ' local-beta ', 'architecture': {'input_modalities': ['text', 'image', 'audio'], 'output_modalities': ['text', 'audio']},
          'supported_parameters': ['tools', 'response_format']}, {'id': 'local-alpha'},
         {'id': 'local-alpha'},  # duplicate is folded, not listed twice
         {'model': 'local-from-model'},

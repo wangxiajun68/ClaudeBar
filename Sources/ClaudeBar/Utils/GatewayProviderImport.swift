@@ -8,6 +8,7 @@ enum GatewayProviderImport {
         var member = member
         var media = member.mediaCapabilities ?? []
         if let input {
+            member.knownCapabilities.formUnion([.images, .inputMedia])
             member.supportsImages = input.contains("image")
             for (name, flag) in [("audio", GatewayMediaCapability.audioInput),
                                  ("video", .videoInput), ("file", .fileInput)] {
@@ -15,13 +16,14 @@ enum GatewayProviderImport {
             }
         }
         if let output {
+            member.knownCapabilities.insert(.outputMedia)
             for (name, flag) in [("audio", GatewayMediaCapability.audioOutput), ("image", .imageOutput)] {
                 if output.contains(name) { media.insert(flag) } else { media.remove(flag) }
             }
         }
-        if let tools { member.supportsTools = tools }
-        if let json { member.supportsJSON = json }
-        member.mediaCapabilities = media
+        if let tools { member.supportsTools = tools; member.knownCapabilities.insert(.tools) }
+        if let json { member.supportsJSON = json; member.knownCapabilities.insert(.json) }
+        if input != nil || output != nil { member.mediaCapabilities = media }
         return member
     }
 

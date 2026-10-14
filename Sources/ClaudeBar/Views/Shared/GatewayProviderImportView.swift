@@ -34,6 +34,7 @@ struct GatewayProviderImportView: View {
     @State private var importError: String?
     @State private var showSettings = false
     @State private var fetchedCapabilities: [String: ModelListFetcher.ModelCapability] = [:]
+    @State private var capabilitySources: [UUID: CodexProvider] = [:]
     @State private var fetchingCapabilities = false
     @State private var capabilityMessage: String?
     @State private var capabilityTask: Task<Void, Never>?
@@ -42,7 +43,7 @@ struct GatewayProviderImportView: View {
     private var joined: Set<String> { Set(gateway.pool.members.map(\.id)) }
     private var selectedEntries: [Entry] { entries.filter { selected.contains($0.id) && !joined.contains($0.id) && issue(for: $0.providerID) == nil } }
     private var syncableCount: Int { gateway.pool.members.filter { !$0.discovered
-        && fetchedCapabilities[$0.providerID.uuidString + ":" + $0.model.lowercased()] != nil }.count }
+        && capability(for: $0.providerID, model: $0.model) != nil }.count }
     private var validSelection: Bool {
         !selectedEntries.isEmpty && selectedEntries.allSatisfy { (Int($0.context) ?? 0) > 0 }
     }
@@ -151,7 +152,13 @@ struct GatewayProviderImportView: View {
         }.frame(width: 620, height: 680).background(Theme.bgPrimary).foregroundStyle(Theme.textPrimary)
             .interactiveDismissDisabled(submitted)
             .onAppear { syncEntries(); autoFetchIfReady() }
-            .onChange(of: gateway.connections) { _, _ in syncEntries(); autoFetchIfReady() }
+            .onChange(of: gateway.connections) { _, _ in
+                capabilityTask?.cancel()
+                fetchedCapabilities.removeAll(); capabilitySources.removeAll()
+                fetchingCapabilities = false; capabilityMessage = nil; hasAutoFetched = false
+                syncEntries(); autoFetchIfReady()
+            }
+            .onChange(of: gateway.canEdit) { _, ready in if ready { autoFetchIfReady() } }
             .onDisappear { capabilityTask?.cancel() }
     }
 
@@ -252,7 +259,8 @@ struct GatewayProviderImportView: View {
     }
 
     private func capability(for providerID: UUID, model: String) -> ModelListFetcher.ModelCapability? {
-        fetchedCapabilities[providerID.uuidString + ":" + model.lowercased()]
+        guard let source = capabilitySources[providerID], gateway.connections.contains(source) else { return nil }
+        return fetchedCapabilities[providerID.uuidString + ":" + model.lowercased()]
     }
 
     private func capabilitySummary(_ value: ModelListFetcher.ModelCapability) -> String {
@@ -287,17 +295,20 @@ struct GatewayProviderImportView: View {
         capabilityMessage = nil
         capabilityTask = Task { @MainActor in
             var found: [String: ModelListFetcher.ModelCapability] = [:]
+            var sources: [UUID: CodexProvider] = [:]
             for provider in providers {
                 let outcome = await ModelListFetcher.fetch(baseURL: provider.baseURL, apiKey: provider.apiKey, wireAPI: provider.wireAPI)
                 guard !Task.isCancelled else { return }
                 guard gateway.connections.contains(provider) else { continue }
                 if case .success(let payload) = outcome {
+                    sources[provider.id] = provider
                     for (model, capability) in payload.capabilities {
                         found[provider.id.uuidString + ":" + model] = capability
                     }
                 }
             }
             fetchedCapabilities = found
+            capabilitySources = sources
             fetchingCapabilities = false
             capabilityMessage = found.isEmpty ? "供应商未返回逐模型模态，请手动声明" : "已读取 \(found.count) 个模型的能力"
         }
@@ -305,7 +316,10 @@ struct GatewayProviderImportView: View {
 
     private func syncExistingCapabilities() {
         guard syncableCount > 0 else { return }
-        let known = fetchedCapabilities
+        let known = fetchedCapabilities.filter { key, _ in
+            guard let id = UUID(uuidString: String(key.prefix(36))), let source = capabilitySources[id] else { return false }
+            return gateway.connections.contains(source)
+        }
         gateway.change { pool in
             for index in pool.members.indices where !pool.members[index].discovered {
                 let member = pool.members[index]
@@ -319,10 +333,16 @@ struct GatewayProviderImportView: View {
 
     private func submit() {
         let members = selectedEntries.map { entry in
+            var known = Set<GatewayCapabilityEvidence>()
+            if tools { known.insert(.tools) }
+            if images { known.insert(.images) }
+            if json { known.insert(.json) }
+            if !media.isDisjoint(with: [.audioInput, .videoInput, .fileInput]) { known.insert(.inputMedia) }
+            if !media.isDisjoint(with: [.audioOutput, .imageOutput]) { known.insert(.outputMedia) }
             let member = FreeModelPool.Member(providerID: entry.providerID, model: entry.model, name: entry.model,
                 contextLength: Int(entry.context) ?? 0, supportsTools: tools, supportsImages: images,
                 supportsJSON: json, difficulties: tiers, mediaCapabilities: media.isEmpty ? nil : media,
-                supportsChat: supportsChat)
+                supportsChat: supportsChat, knownCapabilities: known)
             guard let capability = capability(for: entry.providerID, model: entry.model) else { return member }
             var resolved = GatewayProviderImport.applying(
                 input: capability.inputModalities, output: capability.outputModalities,

@@ -105,6 +105,9 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
         var oldMedia = try JSONSerialization.jsonObject(with:JSONEncoder().encode(mediaMember)) as! [String:Any]
         oldMedia.removeValue(forKey:"mediaCapabilities")
         precondition(try JSONDecoder().decode(FreeModelPool.Member.self,from:JSONSerialization.data(withJSONObject:oldMedia)).mediaCapabilities == nil)
+        oldMedia.removeValue(forKey:"knownCapabilities")
+        let legacyMedia = try JSONDecoder().decode(FreeModelPool.Member.self,from:JSONSerialization.data(withJSONObject:oldMedia))
+        precondition(legacyMedia.knownCapabilities.isEmpty && legacyMedia.hasUnknownMedia)
         for invalid in ["", "====", "ab=c", "abc", "not base64!"] {
             do { try GatewayMediaValidation.base64(invalid); fatalError("accepted malformed base64") }
             catch { precondition(error as? GatewayFailure == .invalidRequest) }
@@ -365,13 +368,18 @@ func expect(_ failure: GatewayFailure, _ operation: () async throws -> Void) asy
             models:[.init(name:"manual-a"),.init(name:"manual-b")])
         let manualA = FreeModelPool.Member(providerID:importID,model:"manual-a",name:"A",contextLength:64000,
             supportsTools:true,supportsImages:false,supportsJSON:false,difficulties:[.medium])
+        precondition(manualA.displayedTools == true && manualA.displayedImages == nil && manualA.displayedJSON == nil && manualA.hasUnknownMedia)
         var manualB = manualA; manualB.model = "manual-b"; manualB.name = "B"
         let declared = GatewayProviderImport.applying(input:["text","image","audio"], output:["text","audio"],
             tools:true,json:false,to:manualB)
         precondition(declared.supportsImages && declared.supportsTools && !declared.supportsJSON)
         precondition(declared.mediaCapabilities == [.audioInput,.audioOutput])
+        precondition(declared.displayedImages == true && declared.displayedJSON == false && !declared.hasUnknownMedia)
         let revised = GatewayProviderImport.applying(input:["text"],output:nil,tools:nil,json:nil,to:declared)
         precondition(!revised.supportsImages && revised.mediaCapabilities == [.audioOutput])
+        let partial = GatewayProviderImport.applying(input:nil,output:["text"],tools:nil,json:nil,to:manualB)
+        precondition(partial.mediaCapabilities == [] && partial.hasUnknownMedia)
+        precondition(partial.knownCapabilities.contains(.outputMedia) && !partial.knownCapabilities.contains(.inputMedia))
         var importPool = FreeModelPool()
         importPool.members = [manualA]; importPool.members[0].enabled = false
         var duplicateA = manualA; duplicateA.difficulties = [.high]
@@ -698,8 +706,10 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         weighted.providerRequestsPerMinute = [a.uuidString:1,b.uuidString:1]
         let rates = await configured(weighted)
         let rateNow = Date()
-        let one = try await rates.begin(medium,now:rateNow); await rates.finish(one)
-        let two = try await rates.begin(medium,now:rateNow); await rates.finish(two)
+        let one = try await rates.begin(medium,now:rateNow)
+        try await rates.started(one.candidates[0],plan:one,now:rateNow); await rates.finish(one)
+        let two = try await rates.begin(medium,now:rateNow)
+        try await rates.started(two.candidates[0],plan:two,now:rateNow); await rates.finish(two)
         check(one.candidates[0].endpoint.id != two.candidates[0].endpoint.id,"provider RPM must route around exhausted account")
         await expect(.rateLimited) { _ = try await rates.begin(medium,now:rateNow) }
         let renewed = try await rates.begin(medium,now:rateNow.addingTimeInterval(61)); await rates.finish(renewed)
@@ -707,11 +717,45 @@ func cancelled<T>(_ task: Task<T, Error>) async {
         let tokenCost = max(1, medium.context - 1024)
         weighted.providerTokensPerMinute = [a.uuidString:tokenCost,b.uuidString:tokenCost]
         let tokenRates = await configured(weighted)
-        let tokenOne = try await tokenRates.begin(medium,now:rateNow); await tokenRates.finish(tokenOne)
-        let tokenTwo = try await tokenRates.begin(medium,now:rateNow); await tokenRates.finish(tokenTwo)
+        let tokenOne = try await tokenRates.begin(medium,now:rateNow)
+        try await tokenRates.started(tokenOne.candidates[0],plan:tokenOne,now:rateNow); await tokenRates.finish(tokenOne)
+        let tokenTwo = try await tokenRates.begin(medium,now:rateNow)
+        try await tokenRates.started(tokenTwo.candidates[0],plan:tokenTwo,now:rateNow); await tokenRates.finish(tokenTwo)
         check(tokenOne.candidates[0].endpoint.id != tokenTwo.candidates[0].endpoint.id,"TPM must route around exhausted provider")
         await expect(.rateLimited) { _ = try await tokenRates.begin(medium,now:rateNow) }
         let tokenRenewed = try await tokenRates.begin(medium,now:rateNow.addingTimeInterval(61)); await tokenRates.finish(tokenRenewed)
+        var cancelledPool = weighted
+        cancelledPool.requestsPerMinute = 1
+        cancelledPool.providerRequestsPerMinute = [a.uuidString:1,b.uuidString:1]
+        let cancelledRates = await configured(cancelledPool)
+        let unused = try await cancelledRates.begin(medium,now:rateNow); await cancelledRates.finish(unused)
+        let spent = try await cancelledRates.begin(medium,now:rateNow)
+        try await cancelledRates.started(spent.candidates[0],plan:spent,now:rateNow); await cancelledRates.finish(spent)
+        await expect(.rateLimited) { _ = try await cancelledRates.begin(medium,now:rateNow) }
+        cancelledPool.providerRequestsPerMinute = [:]
+        cancelledPool.providerTokensPerMinute = [a.uuidString:tokenCost,b.uuidString:tokenCost]
+        let cancelledTokens = await configured(cancelledPool)
+        let unusedTokens = try await cancelledTokens.begin(medium,now:rateNow); await cancelledTokens.finish(unusedTokens)
+        let spentTokens = try await cancelledTokens.begin(medium,now:rateNow)
+        try await cancelledTokens.started(spentTokens.candidates[0],plan:spentTokens,now:rateNow); await cancelledTokens.finish(spentTokens)
+        var reassignmentPool = weighted
+        reassignmentPool.strategy = .priority
+        reassignmentPool.defaultProviderConcurrent = 2
+        reassignmentPool.providerTokensPerMinute = [:]
+        reassignmentPool.providerRequestsPerMinute = [a.uuidString:2,b.uuidString:1]
+        let reassigned = await configured(reassignmentPool)
+        let activeA = try await reassigned.begin(medium,now:rateNow)
+        try await reassigned.started(activeA.candidates[0],plan:activeA,now:rateNow)
+        let heldA = try await reassigned.begin(medium,now:rateNow)
+        check(heldA.candidates[0].endpoint.id == a,"second request should hold A")
+        await reassigned.report(activeA.candidates[0],plan:activeA,status:429,latency:0.1,retryAfter:1,now:rateNow)
+        await reassigned.finish(activeA)
+        guard let fallbackB = heldA.candidates.first(where: { $0.endpoint.id == b }) else { fatalError("missing fallback") }
+        try await reassigned.started(fallbackB,plan:heldA,now:rateNow)
+        await reassigned.finish(heldA)
+        let afterReassignment = try await reassigned.begin(medium,now:rateNow.addingTimeInterval(2))
+        check(afterReassignment.candidates[0].endpoint.id == a,"unused A reservation should be refunded on transfer")
+        await reassigned.finish(afterReassignment)
         weighted.providerRequestsPerMinute = [:]; weighted.defaultProviderConcurrent = 8
         weighted.providerTokensPerMinute = [:]
         weighted.members = [member(a,"a",[.medium])]
@@ -1242,7 +1286,8 @@ with tempfile.TemporaryDirectory(prefix='claudebar-gateway-') as temporary:
                     assert response.getheader('Content-Length') == '999999'
                     data = error.partial
                 else:
-                    assert not auth or mode != 'media-native-speech-truncated', 'client must detect truncated audio'
+                    assert not auth or mode != 'media-native-speech-truncated', \
+                        f'client must detect truncated audio: status={status}, headers={dict(response.getheaders())}, body={data[:120]!r}'
                 if auth and mode != 'count-tokens':
                     assert response.getheader('X-Request-ID'), (mode,dict(response.getheaders()))
                 connection.close()

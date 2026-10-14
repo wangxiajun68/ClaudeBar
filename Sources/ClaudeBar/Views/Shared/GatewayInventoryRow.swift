@@ -68,8 +68,8 @@ struct GatewayInventoryRow: View, Equatable {
                 .lineLimit(1).truncationMode(.middle).help(item.provider)
             Text(item.member.contextLength >= 1000 ? "\(item.member.contextLength / 1000)K" : "\(item.member.contextLength)").font(Theme.Font.captionMono).foregroundStyle(Theme.textSecondary)
                 .fixedSize().help("\(item.member.contextLength.formatted()) tokens 上下文")
-            GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON,
-                media: item.member.discovered ? item.member.mediaCapabilities : (item.member.mediaCapabilities?.isEmpty == true ? nil : item.member.mediaCapabilities))
+            GatewayCapabilities(tools: item.member.displayedTools, images: item.member.displayedImages, json: item.member.displayedJSON,
+                media: item.member.mediaCapabilities, mediaUnknown: item.member.hasUnknownMedia)
         }
     }
     private var coverage: some View {

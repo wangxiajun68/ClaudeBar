@@ -236,9 +236,10 @@ struct FreeModelGatewayView: View {
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                GatewayCapabilities(tools: item.member.supportsTools, images: item.member.supportsImages, json: item.member.supportsJSON, text: true,
-                    media: item.member.discovered ? item.member.mediaCapabilities : (item.member.mediaCapabilities?.isEmpty == true ? nil : item.member.mediaCapabilities))
-                if !item.member.discovered && (item.member.mediaCapabilities?.isEmpty ?? true) {
+                GatewayCapabilities(tools: item.member.displayedTools, images: item.member.displayedImages, json: item.member.displayedJSON, text: true,
+                    media: item.member.mediaCapabilities, mediaUnknown: item.member.hasUnknownMedia)
+                if !item.member.discovered && (item.member.hasUnknownMedia || item.member.displayedTools == nil
+                    || item.member.displayedImages == nil || item.member.displayedJSON == nil) {
                     Button { edit(item.member) } label: { AppGlyph(name: "slider.horizontal.3", size: 13) }
                         .buttonStyle(.plain).disabled(!editable).help("编辑并确认这个模型的能力")
                         .accessibilityLabel("编辑并确认模型能力")
@@ -816,9 +817,16 @@ struct FreeModelGatewayView: View {
         } else {
             submitted = true
             gateway.change(completion: completeManual) { value in
+                var known = editingMember == nil ? Set<GatewayCapabilityEvidence>() : Set(GatewayCapabilityEvidence.allCases)
+                if tools { known.insert(.tools) }
+                if images { known.insert(.images) }
+                if json { known.insert(.json) }
+                if !media.isDisjoint(with: [.audioInput, .videoInput, .fileInput]) { known.insert(.inputMedia) }
+                if !media.isDisjoint(with: [.audioOutput, .imageOutput]) { known.insert(.outputMedia) }
                 let member = FreeModelPool.Member(providerID: provider.id, model: model, name: model,
                     contextLength: length, supportsTools: tools, supportsImages: images, supportsJSON: json,
-                    difficulties: difficulties, mediaCapabilities: media, supportsChat: supportsChat)
+                    difficulties: difficulties, mediaCapabilities: editingMember == nil && media.isEmpty ? nil : media,
+                    supportsChat: supportsChat, knownCapabilities: known)
                 if let index = value.members.firstIndex(where: { $0.id == member.id }) {
                     var updated = member; updated.enabled = value.members[index].enabled
                     value.members[index] = updated

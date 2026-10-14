@@ -50,11 +50,12 @@ struct GatewayMapMember: Equatable, Identifiable {
 }
 
 struct GatewayCapabilities: View {
-    var tools: Bool
-    var images: Bool
-    var json: Bool
+    var tools: Bool?
+    var images: Bool?
+    var json: Bool?
     var text = false
     var media: Set<GatewayMediaCapability>? = nil
+    var mediaUnknown = false
     var body: some View {
         HStack(spacing: 8) {
             capability("wrench.and.screwdriver", "工具", enabled: tools)
@@ -64,7 +65,8 @@ struct GatewayCapabilities: View {
                 AppGlyph(name: "square.stack.3d.up", size: 12)
                     .help(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
                     .accessibilityLabel(GatewayMediaCapability.allCases.filter { media.contains($0) }.map(\.title).joined(separator: "、"))
-            } else if media == nil {
+            }
+            if media == nil || mediaUnknown {
                 HStack(spacing: 4) {
                     AppGlyph(name: "questionmark.circle", size: 12)
                     if text { Text("其他模态待核实").font(Theme.Font.caption) }
@@ -75,21 +77,24 @@ struct GatewayCapabilities: View {
             }
         }
     }
-    private func capability(_ icon: String, _ title: String, enabled: Bool) -> some View {
+    private func capability(_ icon: String, _ title: String, enabled: Bool?) -> some View {
         HStack(spacing: 4) {
             AppGlyph(name: icon, size: 12)
                 .overlay {
-                    if !enabled {
+                    if enabled == false {
                         Rectangle().fill(Theme.textPrimary.opacity(0.72))
                             .frame(width: 14, height: 1).rotationEffect(.degrees(-45))
                             .allowsHitTesting(false).accessibilityHidden(true)
+                    } else if enabled == nil {
+                        AppGlyph(name: "questionmark.circle", size: 7).offset(x: 7, y: -7)
+                            .foregroundStyle(Theme.textSecondary).accessibilityHidden(true)
                     }
                 }
-            if text { Text(title).font(Theme.Font.caption).strikethrough(!enabled) }
+            if text { Text(title).font(Theme.Font.caption).strikethrough(enabled == false) }
         }
         .foregroundStyle(Theme.textPrimary.opacity(0.72))
-        .help("\(title)：\(enabled ? "支持" : "不支持")")
-        .accessibilityLabel("\(title)\(enabled ? "支持" : "不支持")")
+        .help("\(title)：\(enabled.map { $0 ? "支持" : "不支持" } ?? "待核实")")
+        .accessibilityLabel("\(title)\(enabled.map { $0 ? "支持" : "不支持" } ?? "待核实")")
     }
 }
 

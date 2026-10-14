@@ -32,6 +32,10 @@ enum GatewayMediaCapability: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum GatewayCapabilityEvidence: String, Codable, CaseIterable, Sendable {
+    case tools, images, json, inputMedia, outputMedia
+}
+
 enum GatewayTaskDifficulty: String, Codable, CaseIterable, Sendable {
     case low, medium, high
     var title: String {
@@ -89,7 +93,14 @@ struct FreeModelPool: Codable, Equatable, Sendable {
         var difficulties = GatewayTaskDifficulty.allCases
         var mediaCapabilities: Set<GatewayMediaCapability>?
         var supportsChat = true
+        var knownCapabilities: Set<GatewayCapabilityEvidence> = []
         var id: String { providerID.uuidString + ":" + model }
+        var displayedTools: Bool? { supportsTools ? true : (discovered || knownCapabilities.contains(.tools) ? false : nil) }
+        var displayedImages: Bool? { supportsImages ? true : (discovered || knownCapabilities.contains(.images) ? false : nil) }
+        var displayedJSON: Bool? { supportsJSON ? true : (discovered || knownCapabilities.contains(.json) ? false : nil) }
+        var hasUnknownMedia: Bool {
+            !discovered && (!knownCapabilities.contains(.inputMedia) || !knownCapabilities.contains(.outputMedia))
+        }
     }
 
     struct CatalogModel: Codable, Equatable, Identifiable, Sendable {
@@ -105,7 +116,8 @@ struct FreeModelPool: Codable, Equatable, Sendable {
         func member(providerID: UUID) -> Member {
             .init(providerID: providerID, model: id, name: name, contextLength: contextLength,
                   supportsTools: supportsTools, supportsImages: supportsImages,
-                  supportsJSON: supportsJSON, discovered: true, mediaCapabilities: mediaCapabilities)
+                  supportsJSON: supportsJSON, discovered: true, mediaCapabilities: mediaCapabilities,
+                  knownCapabilities: Set(GatewayCapabilityEvidence.allCases))
         }
     }
 
@@ -368,7 +380,7 @@ enum GatewayMediaValidation {
 /// Pools saved before task tiers apply to every tier until the user narrows them.
 extension FreeModelPool.Member {
     private enum CodingKeys: String, CodingKey {
-        case providerID, model, name, enabled, contextLength, supportsTools, supportsImages, supportsJSON, discovered, difficulties, mediaCapabilities, supportsChat
+        case providerID, model, name, enabled, contextLength, supportsTools, supportsImages, supportsJSON, discovered, difficulties, mediaCapabilities, supportsChat, knownCapabilities
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -383,7 +395,8 @@ extension FreeModelPool.Member {
                   discovered: try container.decodeIfPresent(Bool.self, forKey: .discovered) ?? false,
                   difficulties: try container.decodeIfPresent([GatewayTaskDifficulty].self, forKey: .difficulties) ?? GatewayTaskDifficulty.allCases,
                   mediaCapabilities: try container.decodeIfPresent(Set<GatewayMediaCapability>.self, forKey: .mediaCapabilities),
-                  supportsChat: try container.decodeIfPresent(Bool.self, forKey: .supportsChat) ?? true)
+                  supportsChat: try container.decodeIfPresent(Bool.self, forKey: .supportsChat) ?? true,
+                  knownCapabilities: try container.decodeIfPresent(Set<GatewayCapabilityEvidence>.self, forKey: .knownCapabilities) ?? [])
     }
 }
 

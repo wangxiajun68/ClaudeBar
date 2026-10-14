@@ -339,7 +339,9 @@ enum ModelListFetcher {
             ?? (root as? [[String: Any]]) ?? []
         var capabilities: [String: ModelCapability] = [:]
         for row in rows {
-            guard let id = (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String) else { continue }
+            guard let rawID = (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String) else { continue }
+            let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { continue }
             let architecture = row["architecture"] as? [String: Any] ?? [:]
             let input = (architecture["input_modalities"] ?? row["input_modalities"]) as? [String]
             let output = (architecture["output_modalities"] ?? row["output_modalities"]) as? [String]
