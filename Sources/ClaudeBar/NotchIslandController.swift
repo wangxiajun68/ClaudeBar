@@ -7,7 +7,7 @@ import Combine
 /// View-facing state of the notch island; the controller is its only writer.
 @MainActor
 final class NotchIslandState: ObservableObject {
-    enum Mode { case collapsed, alert, expanded }
+    enum Mode: Equatable { case collapsed, alert, expanded }
 
     @Published var mode: Mode = .collapsed
     @Published var geometry: NotchGeometry
@@ -542,15 +542,28 @@ final class NotchIslandController {
         }
     }
 
-    private func transition(_ hardware: Animation) -> Animation? {
+    private enum TransitionKind { case expand, alert, collapse }
+
+    /// Hardware notches keep their existing springs. The external deck is a
+    /// shorter 48→212 morph, so its springs are a little tighter — still
+    /// sprung, not a linear cut. Reduce Motion skips the transaction.
+    private func transition(_ kind: TransitionKind) -> Animation? {
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return nil }
-        return state?.geometry.hasHardwareNotch == false ? .easeOut(duration: 0.22) : hardware
+        let external = state?.geometry.hasHardwareNotch == false
+        switch kind {
+        case .expand:
+            return external ? .spring(response: 0.36, dampingFraction: 0.86) : IslandStyle.expandSpring
+        case .alert:
+            return external ? .spring(response: 0.34, dampingFraction: 0.84) : IslandStyle.alertSpring
+        case .collapse:
+            return external ? .spring(response: 0.30, dampingFraction: 0.92) : IslandStyle.collapseSpring
+        }
     }
 
     private func expand() {
         guard let state, state.mode != .expanded else { return }
         alertDeadline = nil
-        withAnimation(transition(IslandStyle.expandSpring)) {
+        withAnimation(transition(.expand)) {
             state.mode = .expanded
             state.alert = nil
         }
@@ -593,7 +606,7 @@ final class NotchIslandController {
         }
         guard let state else { return }
         alertDeadline = Date().addingTimeInterval(Self.alertDuration)
-        withAnimation(transition(IslandStyle.alertSpring)) {
+        withAnimation(transition(.alert)) {
             state.alert = alert
             state.mode = .alert
         }
@@ -696,7 +709,7 @@ final class NotchIslandController {
             state.alert = nil
         }
         if animated {
-            withAnimation(transition(IslandStyle.collapseSpring), apply)
+            withAnimation(transition(.collapse), apply)
         } else {
             apply()
         }
