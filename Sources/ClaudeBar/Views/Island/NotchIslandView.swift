@@ -145,6 +145,14 @@ struct NotchIslandView: View {
     @State private var tokenStyle = AppPreferences.shared.tokenUnitStyle
     @State private var vpnEnabled = AppPreferences.shared.vpnEnabled
     @State private var selectedSessionID: String?
+    /// Pointer is anywhere on the detached deck. Drives the rim only — the
+    /// controller still owns expand and collapse.
+    @State private var deckHovered = false
+    /// Hover-revealed "all sessions" list. Open and close are delayed so the
+    /// pointer can cross the header gap without the list flickering.
+    @State private var sessionListOpen = false
+    @State private var sessionListToken = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         island
@@ -211,27 +219,53 @@ struct NotchIslandView: View {
 
     // The header has one identity throughout the morph. Only the lower stage
     // enters; live index updates never reset a deliberately selected session.
+    //
+    // Hover switches which session the stage shows. It must not call
+    // `expandFromAlert`: that path click-opens the external deck, takes key
+    // focus, and stops the leave timer. Opening another app (the session or
+    // the workbench) stays on the click.
+
+    private func showSession(_ id: String, persistExpand: Bool) {
+        if selectedSessionID != id {
+            withAnimation(reduceMotion ? nil : IslandStyle.hoverSpring) {
+                selectedSessionID = id
+            }
+        }
+        if persistExpand, state.mode != .expanded { actions.expandFromAlert() }
+    }
+
+    private func beginSessionList() {
+        guard !model.sessions.isEmpty else { return }
+        sessionListToken += 1
+        let token = sessionListToken
+        // Collapsed hover expands the deck at 160ms. Wait past that so a count
+        // hovered on the way in can reveal the list once the stage exists.
+        let delay: TimeInterval = state.mode == .expanded ? 0.10 : 0.22
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard token == sessionListToken, state.mode == .expanded else { return }
+            withAnimation(reduceMotion ? nil : IslandStyle.hoverSpring) {
+                sessionListOpen = true
+            }
+        }
+    }
+
+    private func endSessionList() {
+        sessionListToken += 1
+        let token = sessionListToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            guard token == sessionListToken else { return }
+            withAnimation(reduceMotion ? nil : IslandStyle.hoverSpring) {
+                sessionListOpen = false
+            }
+        }
+    }
 
     private func sessionTab(_ session: IslandSession) -> some View {
-        let selected = session.id == focusedSession?.id
-        let tint: Color = session.isWaiting ? FocusDeck.orange : FocusDeck.blue
-        return Button {
-            selectedSessionID = session.id
-            if state.mode != .expanded { actions.expandFromAlert() }
-        } label: {
-            IslandAgentBadge(agent: session.agent, size: 22)
-                .padding(3)
-                .background(RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(selected ? 0.09 : 0)))
-                .overlay(alignment: .bottom) {
-                    Capsule().fill(tint).frame(width: 10, height: 2)
-                        .offset(y: 2).opacity(selected ? 1 : 0)
-                }
+        DeckSessionTab(session: session, selected: session.id == focusedSession?.id) {
+            showSession(session.id, persistExpand: false)
+        } onCommit: {
+            showSession(session.id, persistExpand: true)
         }
-        .buttonStyle(.plain)
-        .help(session.agent.label + " · " + session.project)
-        .accessibilityLabel(session.agent.label + " · " + session.project)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var deckHeader: some View {
@@ -240,13 +274,16 @@ struct NotchIslandView: View {
                 Button(action: actions.expandFromAlert) {
                     Image(systemName: "rectangle.topthird.inset.filled")
                         .frame(width: 40, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .deckHover(corner: 10, scale: 1.06, fill: 0.08)
                 .accessibilityLabel("打开会话面板")
             } else {
                 Button("ClaudeBar", action: actions.openMainWindow)
                     .font(.system(size: 11, weight: .semibold))
                     .buttonStyle(.plain)
+                    .deckHover(corner: 6, scale: 1.03, fill: 0.08)
                     .help("打开工作台")
                 Rectangle().fill(FocusDeck.rule).frame(width: 1, height: 20)
                 HStack(spacing: 4) {
@@ -256,8 +293,7 @@ struct NotchIslandView: View {
                     Menu {
                         ForEach(model.sessions) { session in
                             Button {
-                                selectedSessionID = session.id
-                                if state.mode != .expanded { actions.expandFromAlert() }
+                                showSession(session.id, persistExpand: true)
                             } label: {
                                 Text((session.id == focusedSession?.id ? "✓ " : "") + session.agent.label + " · " + session.project + (session.isWaiting ? " · 待确认" : ""))
                             }
@@ -266,9 +302,14 @@ struct NotchIslandView: View {
                         Text("\(model.sessions.count) 会话").font(.system(size: 10, weight: .medium).monospacedDigit())
                             .foregroundStyle(FocusDeck.secondary)
                             .frame(width: 38, height: 28)
+                            .contentShape(Rectangle())
+                            .onHover { inside in
+                                if inside { beginSessionList() } else { endSessionList() }
+                            }
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .disabled(model.sessions.isEmpty)
+                    .deckHover(corner: 6, scale: 1, fill: 0.10)
                     .help("选择会话（共 \(model.sessions.count) 个）")
                     .accessibilityLabel("选择全部 \(model.sessions.count) 个会话")
                 }
@@ -285,23 +326,23 @@ struct NotchIslandView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .deckHover(corner: 8, scale: 1, fill: 0.06)
                 let waiting = model.sessions.filter(\.isWaiting).count
                 let busy = model.sessions.filter(\.isBusy).count
                 let statusTint = waiting > 0 ? FocusDeck.orange : (busy > 0 ? FocusDeck.running : FocusDeck.secondary)
-                Button {
-                    if let session = model.sessions.first(where: \.isWaiting) { selectedSessionID = session.id }
-                    if state.mode != .expanded { actions.expandFromAlert() }
-                } label: {
-                    Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "\(busy) 运行" : "待命"))
-                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(statusTint)
-                        .padding(.horizontal, 8).frame(height: 23)
-                        .background(RoundedRectangle(cornerRadius: 7)
-                            .fill(statusTint.opacity(waiting > 0 ? 0.12 : 0.08)))
+                DeckAttentionChip(title: waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "\(busy) 运行" : "待命"),
+                                  tint: statusTint, emphasized: waiting > 0,
+                                  help: waiting > 0 ? "查看待确认会话" : "查看当前会话") {
+                    if let session = model.sessions.first(where: \.isWaiting) {
+                        showSession(session.id, persistExpand: false)
+                    }
+                } onCommit: {
+                    if let session = model.sessions.first(where: \.isWaiting) {
+                        showSession(session.id, persistExpand: true)
+                    } else if state.mode != .expanded {
+                        actions.expandFromAlert()
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(waiting > 0 ? "查看待确认会话" : "查看当前会话")
-
             }
         }
         .lineLimit(1)
@@ -309,68 +350,108 @@ struct NotchIslandView: View {
         .frame(height: 48)
     }
 
+    private var deckStage: some View {
+        HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(focusedSession.map { $0.project.isEmpty ? $0.agent.label : $0.project } ?? "一切就绪")
+                    .font(.system(size: 22, weight: .semibold)).tracking(-0.5)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(focusedSession.map(DetachedSessionRow.detail) ?? "开始使用 Claude、Codex 或 Cursor")
+                    .font(.system(size: 11))
+                    .foregroundStyle(focusedSession?.isWaiting == true ? FocusDeck.orange : FocusDeck.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .id(focusedSession?.id ?? "empty")
+            .transition(.opacity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(focusedSession.map { $0.project + "\n" + DetachedSessionRow.detail($0) } ?? "暂无会话")
+            DeckReturnButton(session: focusedSession) {
+                if let session = focusedSession { actions.openSession(session) }
+                else { actions.openMainWindow() }
+            }
+        }
+        .padding(.horizontal, 20).frame(height: 95)
+    }
+
+    private var deckMeta: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "cpu").font(.system(size: 10))
+            Text(focusedSession.map { $0.model.isEmpty ? "模型未提供" : $0.model } ?? "暂无模型")
+                .lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            if let session = focusedSession, session.contextRatio > 0 {
+                Text("上下文 \(Int(min(1, session.contextRatio) * 100))%")
+                    .foregroundStyle(session.contextRatio >= 0.8 ? FocusDeck.orange : FocusDeck.secondary)
+                    .help("当前会话上下文窗口占用")
+            } else {
+                Text("上下文 —").help("客户端未提供上下文占用")
+            }
+        }
+        .font(.system(size: 10).monospacedDigit())
+        .foregroundStyle(FocusDeck.secondary)
+        .padding(.horizontal, 20).frame(height: 28)
+        .background(Color.black.opacity(0.10))
+    }
+
     private var detachedContent: some View {
         VStack(spacing: 0) {
             deckHeader
             if state.mode == .expanded {
-                Rectangle().fill(FocusDeck.rule).frame(height: 1)
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(focusedSession.map { $0.project.isEmpty ? $0.agent.label : $0.project } ?? "一切就绪")
-                            .font(.system(size: 22, weight: .semibold)).tracking(-0.5)
-                            .lineLimit(1).truncationMode(.middle)
-                        Text(focusedSession.map(DetachedSessionRow.detail) ?? "开始使用 Claude、Codex 或 Cursor")
-                            .font(.system(size: 11))
-                            .foregroundStyle(focusedSession?.isWaiting == true ? FocusDeck.orange : FocusDeck.secondary)
-                            .lineLimit(1).truncationMode(.middle)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .help(focusedSession.map { $0.project + "\n" + DetachedSessionRow.detail($0) } ?? "暂无会话")
-                    Button {
-                        if let session = focusedSession { actions.openSession(session) }
-                        else { actions.openMainWindow() }
-                    } label: {
-                        HStack(spacing: 7) {
-                            Text(focusedSession == nil ? "打开工作台" : (focusedSession?.isWaiting == true ? "去确认" : "回到会话"))
-                            Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+                VStack(spacing: 0) {
+                    Rectangle().fill(FocusDeck.rule).frame(height: 1)
+                    ZStack(alignment: .top) {
+                        VStack(spacing: 0) {
+                            deckStage
+                            deckMeta
                         }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(focusedSession?.isWaiting == true ? Color(hex: 0x241306) : Color(hex: 0xE4EDFF))
-                        .padding(.horizontal, 13).frame(height: 36)
-                        .background(RoundedRectangle(cornerRadius: 10)
-                            .fill(focusedSession?.isWaiting == true ? FocusDeck.orange : Color(hex: 0x203A65)))
-                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5))
+                        if sessionListOpen {
+                            DeckSessionList(sessions: model.sessions, focusedID: focusedSession?.id) { id in
+                                showSession(id, persistExpand: false)
+                            } onCommit: { id in
+                                showSession(id, persistExpand: false)
+                                sessionListToken += 1
+                                withAnimation(reduceMotion ? nil : IslandStyle.hoverSpring) {
+                                    sessionListOpen = false
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .background(Color(hex: 0x121E33).opacity(0.98))
+                            .onHover { inside in
+                                if inside { beginSessionList() } else { endSessionList() }
+                            }
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                        }
                     }
-                    .buttonStyle(IslandPressStyle())
+                    .frame(height: 123)
+                    DetachedUsageSummary(usage: model.usage)
+                        .frame(height: 40)
+                        .background(LinearGradient(colors: [Color(hex: 0xCCD5E0), Color(hex: 0xB3C0D0)], startPoint: .top, endPoint: .bottom))
                 }
-                .padding(.horizontal, 20).frame(height: 95)
-                .transition(.opacity)
-                HStack(spacing: 10) {
-                    Image(systemName: "cpu").font(.system(size: 10))
-                    Text(focusedSession.map { $0.model.isEmpty ? "模型未提供" : $0.model } ?? "暂无模型")
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    if let session = focusedSession, session.contextRatio > 0 {
-                        Text("上下文 \(Int(min(1, session.contextRatio) * 100))%")
-                            .foregroundStyle(session.contextRatio >= 0.8 ? FocusDeck.orange : FocusDeck.secondary)
-                            .help("当前会话上下文窗口占用")
-                    } else {
-                        Text("上下文 —").help("客户端未提供上下文占用")
-                    }
-                }
-                .font(.system(size: 10).monospacedDigit())
-                .foregroundStyle(FocusDeck.secondary)
-                .padding(.horizontal, 20).frame(height: 28)
-                .background(Color.black.opacity(0.10))
-                DetachedUsageSummary(usage: model.usage)
-                    .frame(height: 40)
-                    .background(LinearGradient(colors: [Color(hex: 0xCCD5E0), Color(hex: 0xB3C0D0)], startPoint: .top, endPoint: .bottom))
-                    .transition(.opacity)
+                .transition(reduceMotion ? .opacity : .deckReveal)
             }
         }
         .foregroundStyle(Color(hex: 0xF1F5FF))
         .frame(width: state.islandSize.width, alignment: .top)
         .background(LinearGradient(colors: [Color(hex: 0x18263D), FocusDeck.ink], startPoint: .topLeading, endPoint: .bottomTrailing))
+        .onHover { inside in
+            if deckHovered != inside { deckHovered = inside }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.white.opacity(deckHovered ? 0.20 : 0), lineWidth: 1)
+                .padding(1)
+                .allowsHitTesting(false)
+                .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: deckHovered)
+        }
+        .onChange(of: state.mode) { _, mode in
+            if mode != .expanded {
+                sessionListToken += 1
+                sessionListOpen = false
+            }
+        }
+        .onDisappear { sessionListToken += 1 }
     }
 
     private var wings: some View {
@@ -510,6 +591,264 @@ struct NotchIslandView: View {
                 open: { actions.openSession($0) },
                 cost: { model.sessionCosts[$0.id] })
         }
+    }
+}
+
+/// Hover plate for external-deck controls. Scale stays out of layout so a
+/// lit control does not shove its neighbours. `scale == 1` is highlight only,
+/// used on wide labels where growing would feel like the row jumped.
+private struct DeckHoverPlate: ViewModifier {
+    var corner: CGFloat = 8
+    var scale: CGFloat = 1.04
+    var fill: Double = 0.10
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(Color.white.opacity(hovered ? fill : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(Color.white.opacity(hovered ? 0.18 : 0), lineWidth: 0.6)
+            )
+            .scaleEffect(hovered && !reduceMotion ? scale : 1)
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: hovered)
+    }
+}
+
+extension View {
+    /// External-deck hover highlight. No-op when `enabled` is false so the
+    /// hardware-notch alert can share the button without taking the plate.
+    @ViewBuilder fileprivate func deckHover(corner: CGFloat = 8, scale: CGFloat = 1.04,
+                                             fill: Double = 0.10, enabled: Bool = true) -> some View {
+        if enabled {
+            modifier(DeckHoverPlate(corner: corner, scale: scale, fill: fill))
+        } else {
+            self
+        }
+    }
+}
+
+/// One of the three session marks. Hover settles onto that session; click
+/// also keeps the deck open. The short arm skips a pointer that is only
+/// passing across the row.
+private struct DeckSessionTab: View {
+    let session: IslandSession
+    let selected: Bool
+    var onPreview: () -> Void
+    var onCommit: () -> Void
+    @State private var hovered = false
+    @State private var arm = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let tint: Color = session.isWaiting ? FocusDeck.orange : FocusDeck.blue
+        Button(action: onCommit) {
+            IslandAgentBadge(agent: session.agent, size: 22)
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(selected ? 0.12 : (hovered ? 0.08 : 0)))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(tint.opacity(hovered || selected ? 0.55 : 0), lineWidth: 0.8)
+                )
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(tint).frame(width: selected ? 12 : (hovered ? 8 : 6), height: 2)
+                        .offset(y: 2).opacity(selected || hovered ? 1 : 0)
+                }
+                .scaleEffect(hovered && !reduceMotion ? 1.06 : 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            if hovered != inside { hovered = inside }
+            arm += 1
+            guard inside else { return }
+            let token = arm
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                guard token == arm else { return }
+                onPreview()
+            }
+        }
+        .onDisappear { arm += 1 }
+        .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: hovered)
+        .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: selected)
+        .help(session.agent.label + " · " + session.project)
+        .accessibilityLabel(session.agent.label + " · " + session.project)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Waiting / running count. Hover moves the stage to the session that needs
+/// the user; it does not open that client.
+private struct DeckAttentionChip: View {
+    let title: String
+    let tint: Color
+    let emphasized: Bool
+    let help: String
+    var onPreview: () -> Void
+    var onCommit: () -> Void
+    @State private var hovered = false
+    @State private var arm = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: onCommit) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(tint)
+                .padding(.horizontal, 8).frame(height: 23)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(tint.opacity(hovered ? 0.22 : (emphasized ? 0.12 : 0.08)))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(tint.opacity(hovered ? 0.45 : 0), lineWidth: 0.6)
+                )
+                .scaleEffect(hovered && !reduceMotion ? 1.05 : 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            if hovered != inside { hovered = inside }
+            arm += 1
+            guard inside else { return }
+            let token = arm
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                guard token == arm else { return }
+                onPreview()
+            }
+        }
+        .onDisappear { arm += 1 }
+        .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: hovered)
+        .help(help)
+    }
+}
+
+/// Opens the focused client, or the workbench when nothing is running.
+/// Hover previews the control; the activation stays on the click.
+private struct DeckReturnButton: View {
+    let session: IslandSession?
+    let action: () -> Void
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let waiting = session?.isWaiting == true
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Text(session == nil ? "打开工作台" : (waiting ? "去确认" : "回到会话"))
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .offset(x: hovered && !reduceMotion ? 2 : 0, y: hovered && !reduceMotion ? -1 : 0)
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(waiting ? Color(hex: 0x241306) : Color(hex: 0xE4EDFF))
+            .padding(.horizontal, 13).frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(waiting ? FocusDeck.orange : Color(hex: 0x203A65))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(hovered ? 0.10 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(hovered ? 0.32 : 0.15), lineWidth: hovered ? 1 : 0.5)
+            )
+            .scaleEffect(hovered && !reduceMotion ? 1.035 : 1)
+        }
+        .buttonStyle(IslandPressStyle())
+        .onHover { if hovered != $0 { hovered = $0 } }
+        .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: hovered)
+    }
+}
+
+/// Sessions beyond the three header marks. Revealed by hovering the count,
+/// closed again after the pointer leaves. Rows only switch the stage.
+private struct DeckSessionList: View {
+    let sessions: [IslandSession]
+    let focusedID: String?
+    var onPreview: (String) -> Void
+    var onCommit: (String) -> Void
+
+    private var scrolls: Bool { sessions.count > 4 }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 2) {
+                ForEach(sessions) { session in
+                    DeckSessionListRow(session: session, selected: session.id == focusedID) {
+                        onPreview(session.id)
+                    } onCommit: {
+                        onCommit(session.id)
+                    }
+                }
+            }
+        }
+        .scrollIndicators(scrolls ? .visible : .hidden)
+        .scrollDisabled(!scrolls)
+    }
+}
+
+private struct DeckSessionListRow: View {
+    let session: IslandSession
+    let selected: Bool
+    var onPreview: () -> Void
+    var onCommit: () -> Void
+    @State private var hovered = false
+    @State private var arm = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: onCommit) {
+            HStack(spacing: 8) {
+                IslandAgentBadge(agent: session.agent, size: 16)
+                Text(session.project.isEmpty ? session.agent.label : session.project)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if session.isWaiting {
+                    Text("待确认").foregroundStyle(FocusDeck.orange)
+                }
+            }
+            .font(.system(size: 11, weight: selected ? .semibold : .medium))
+            .foregroundStyle(Color(hex: 0xF1F5FF))
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(selected ? 0.12 : (hovered ? 0.08 : 0)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color.white.opacity(hovered ? 0.16 : 0), lineWidth: 0.6)
+            )
+            .scaleEffect(hovered && !reduceMotion ? 1.015 : 1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            if hovered != inside { hovered = inside }
+            arm += 1
+            guard inside else { return }
+            let token = arm
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard token == arm else { return }
+                onPreview()
+            }
+        }
+        .onDisappear { arm += 1 }
+        .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: hovered)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -682,6 +1021,7 @@ private struct IslandAlertContent: View {
                         .contentShape(Capsule())
                     }
                     .buttonStyle(IslandPressStyle())
+                    .deckHover(corner: 13, scale: 1.04, fill: 0, enabled: detached)
                 } else {
                     // Nothing to open for a quota rollover — the figure itself
                     // is the whole message, so the space goes to a label that
@@ -702,6 +1042,7 @@ private struct IslandAlertContent: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(IslandPressStyle())
+                .deckHover(corner: 13, scale: 1.06, fill: 0.06, enabled: detached)
                 .help("收起通知")
                 .accessibilityLabel("收起通知")
             }
@@ -906,5 +1247,11 @@ extension AnyTransition {
     /// toward the top edge. Opacity + scale only, so it stays on the GPU.
     static var islandContent: AnyTransition {
         .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
+    }
+
+    /// External deck body. Same idea as `islandContent`, a little less scale
+    /// so a 48pt bar growing to 212pt does not feel like it lunges.
+    static var deckReveal: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
     }
 }
