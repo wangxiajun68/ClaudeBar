@@ -16,6 +16,7 @@ controller = controller.replace('NSEvent.mouseLocation', 'Pointer.location')
 controller = controller.replace('NSEvent.pressedMouseButtons', 'Pointer.buttons')
 controller = controller.replace('NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)', '// Haptics are inert in the isolated fixture.')
 source = prefix + r'''
+@MainActor enum MainWindowEvents { static var count = 0 }
 @MainActor enum Pointer { static var location = CGPoint.zero; static var buttons = 0 }
 @MainActor enum AppPresentation { static var allowsInterface = true }
 @MainActor enum UIWakePolicy {
@@ -68,6 +69,15 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         let external = controller.surfaces[b.id]!
         expect(external.state.collapsedSize == CGSize(width: 440, height: 48), "compact external capsule has no hardware gap")
         expect(external.panel.frame.maxY == b.geometry.anchorY, "capsule canvas starts below the menu bar")
+        let mainWindowObserver = NotificationCenter.default.addObserver(forName: .showMainWindow, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { MainWindowEvents.count += 1 }
+        }
+        let collapsedHost = external.panel.contentView!.subviews[0] as! NSHostingView<NotchIslandView>
+        collapsedHost.rootView.actions.openMainWindow()
+        expect(MainWindowEvents.count == 1 && external.state.mode == .collapsed,
+               "brand opens workbench from inactive collapsed display without expanding")
+        NotificationCenter.default.removeObserver(mainWindowObserver)
+
         let entry = b.geometry.topRect(external.state.collapsedSize)
         expect(!external.contains(CGPoint(x: entry.minX + 1, y: entry.maxY - 1)), "rounded transparent corners pass through")
         expect(external.contains(CGPoint(x: entry.midX, y: entry.midY)), "capsule center receives a click")
@@ -83,16 +93,16 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         expect(controller.armTimer == nil && controller.tickTimer == nil, "ordinary pointer movement starts no timers")
         Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
         controller.pointerMoved()
-        pause(0.17)
+        pause(0.08)
         expect(external.state.mode == .collapsed, "passing pointer does not open external HUD")
-        pause(0.18)
-        expect(controller.activeID == b.id && external.state.mode == .peek, "external hover previews without opening details")
-        expect(controller.surfaces[a.id]?.state.mode == .collapsed && !UIWakePolicy.expanded, "preview does not claim full UI refresh ownership")
+        pause(0.14)
+        expect(controller.activeID == b.id && external.state.mode == .expanded, "external hover opens details directly without a click")
+        expect(controller.surfaces[a.id]?.state.mode == .collapsed && UIWakePolicy.expanded && !external.panel.acceptsKeyboard, "hover opens full details without stealing keyboard focus")
         let aEntry = a.geometry.topRect(controller.surfaces[a.id]!.state.collapsedSize)
         Pointer.buttons = 1
         Pointer.location = CGPoint(x: aEntry.midX, y: aEntry.midY)
         controller.pointerMoved(); controller.tick(); pause(0.3)
-        expect(controller.armedID == nil && external.state.mode == .peek, "held click or drag cannot migrate/collapse details")
+        expect(controller.armedID == nil && external.state.mode == .expanded, "held click or drag cannot migrate/collapse details")
         Pointer.buttons = 0
         controller.pointerMoved(); pause(0.32)
         expect(controller.activeID == a.id && controller.state?.mode == .expanded, "deliberate cross-screen hover hands over details")
@@ -102,7 +112,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         let externalHost = external.panel.contentView!.subviews[0] as! NSHostingView<NotchIslandView>
         externalHost.rootView.actions.expandFromAlert()
         expect(external.state.mode == .expanded && controller.clickOpened, "click opens persistent external details")
-        expect(external.state.expandedSize == CGSize(width: 440, height: 184), "external details use a compact fixed layout")
+        expect(external.state.expandedSize == CGSize(width: 440, height: 212), "external details use a compact fixed layout")
         expect(controller.tickTimer == nil && external.panel.acceptsKeyboard, "click details accept Escape without a polling timer")
         Pointer.location = CGPoint(x: aEntry.midX, y: aEntry.midY)
         controller.pointerMoved(); controller.tick(); pause(0.35)
@@ -122,7 +132,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
                "Escape dismisses click-open details")
         expect(!controller.handleKeyEvent(escape), "collapsed entry does not swallow keyboard input")
         controller.pointerMoved(); pause(0.35)
-        expect(external.state.mode == .peek, "hover preview reopens after dismissal")
+        expect(external.state.mode == .expanded, "hover details reopen after dismissal")
         Pointer.location = .zero
         controller.tick(); pause(0.35)
         expect(external.state.mode == .collapsed && controller.tickTimer == nil,
@@ -185,7 +195,7 @@ func expect(_ ok: @autoclosure () -> Bool, _ message: String, line: UInt = #line
         Pointer.location = CGPoint(x: entry.midX, y: entry.midY)
         controller.pointerMoved()
         expect(controller.armTimer != nil, "hover armed before teardown")
-        controller.stop(); pause(0.17)
+        controller.stop(); pause(0.08)
         expect(controller.surfaces.isEmpty && controller.armTimer == nil && controller.tickTimer == nil && controller.model == nil,
                "teardown cancels pending open, ticks, models and panels")
         expect(controller.globalMonitor == nil && controller.localMonitor == nil && !UIWakePolicy.expanded,

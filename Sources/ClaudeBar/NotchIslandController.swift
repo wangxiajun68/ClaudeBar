@@ -7,7 +7,7 @@ import Combine
 /// View-facing state of the notch island; the controller is its only writer.
 @MainActor
 final class NotchIslandState: ObservableObject {
-    enum Mode { case collapsed, peek, alert, expanded }
+    enum Mode { case collapsed, alert, expanded }
 
     @Published var mode: Mode = .collapsed
     @Published var geometry: NotchGeometry
@@ -47,7 +47,7 @@ final class NotchIslandState: ObservableObject {
     var sessionsLaneHeight: CGFloat { IslandStyle.expandedLaneHeight }
 
     var expandedSize: CGSize {
-        if !geometry.hasHardwareNotch { return CGSize(width: 440, height: 184) }
+        if !geometry.hasHardwareNotch { return CGSize(width: 440, height: 212) }
         let width = max(IslandStyle.minExpandedWidth, notch.width + 2 * IslandStyle.topFlare + 320)
         let height = notch.height + IslandStyle.contentTopGap + sessionsLaneHeight
             + IslandStyle.sectionGap + IslandStyle.usageCardHeight + IslandStyle.bottomPadding
@@ -57,7 +57,6 @@ final class NotchIslandState: ObservableObject {
     var islandSize: CGSize {
         switch mode {
         case .collapsed: return collapsedSize
-        case .peek: return CGSize(width: 440, height: 80)
         case .alert: return alertSize
         case .expanded: return expandedSize
         }
@@ -68,7 +67,6 @@ final class NotchIslandState: ObservableObject {
         if !geometry.hasHardwareNotch { return 16 }
         switch mode {
         case .collapsed: return geometry.hasHardwareNotch ? IslandStyle.collapsedBottomRadius : notch.height / 2
-        case .peek: return 16
         case .alert: return IslandStyle.alertBottomRadius
         case .expanded: return IslandStyle.expandedBottomRadius
         }
@@ -252,7 +250,8 @@ final class NotchIslandController {
             },
             openMainWindow: { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, self.activeID == id, self.surfaces[id]?.state === state else { return }
+                    // The brand is also actionable on an inactive, collapsed display.
+                    guard let self, self.surfaces[id]?.state === state else { return }
                     NotificationCenter.default.post(name: .showMainWindow, object: nil)
                     self.collapse(animated: true)
                 }
@@ -493,7 +492,7 @@ final class NotchIslandController {
         cancelArming()
         let id = surface.id
         armedID = id
-        let delay = !surface.state.geometry.hasHardwareNotch ? 0.3 : (state?.mode == .expanded ? Self.leaveDelay : Self.armDelay)
+        let delay = !surface.state.geometry.hasHardwareNotch ? 0.16 : (state?.mode == .expanded ? Self.leaveDelay : Self.armDelay)
         armTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -502,11 +501,7 @@ final class NotchIslandController {
                       surface.state.mode == .collapsed,
                       self.collapsedHotZone(surface).contains(NSEvent.mouseLocation) else { return }
                 self.activate(id)
-                if surface.state.geometry.hasHardwareNotch {
-                    self.expand()
-                } else {
-                    self.peek()
-                }
+                self.expand()
             }
         }
         if let armTimer { RunLoop.main.add(armTimer, forMode: .common) }
@@ -534,13 +529,6 @@ final class NotchIslandController {
             surface.mouseCapture = ignore
             surface.panel.ignoresMouseEvents = ignore
         }
-    }
-
-    private func peek() {
-        guard let state, state.mode == .collapsed else { return }
-        withAnimation(transition(IslandStyle.expandSpring)) { state.mode = .peek }
-        syncMouseCapture()
-        startTicking()
     }
 
     private func expandFromClick() {
@@ -666,9 +654,9 @@ final class NotchIslandController {
             } else if now >= deadline {
                 collapse(animated: true)
             }
-        case .peek, .expanded:
+        case .expanded:
             if clickOpened { stopTicking(); return }
-            if inside || NSEvent.pressedMouseButtons != 0 {
+            if inside || NSEvent.pressedMouseButtons != 0 || RunLoop.current.currentMode == .eventTracking {
                 leaveDeadline = nil
             } else if let deadline = leaveDeadline {
                 if now >= deadline { collapse(animated: true) }

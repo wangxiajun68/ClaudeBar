@@ -168,8 +168,6 @@ struct NotchIslandView: View {
                 switch state.mode {
                 case .collapsed:
                     if state.showsWings { wings.transition(.opacity) }
-                case .peek:
-                    EmptyView()
                 case .alert:
                     if let alert = state.alert {
                         IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions, detached: !state.geometry.hasHardwareNotch)
@@ -265,8 +263,9 @@ struct NotchIslandView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 10, weight: .semibold))
-                            .frame(width: 18, height: 28)
+                        Text("\(model.sessions.count) 会话").font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .foregroundStyle(FocusDeck.secondary)
+                            .frame(width: 38, height: 28)
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .disabled(model.sessions.isEmpty)
@@ -278,7 +277,7 @@ struct NotchIslandView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(focusedSession?.agent.label ?? "就绪")
                             .font(.system(size: 11, weight: .medium))
-                        Text(focusedSession.map { $0.isWaiting ? $0.project : DetachedSessionRow.detail($0) } ?? "暂无会话")
+                        Text(focusedSession.map { $0.isWaiting ? "等待你的处理" : ($0.isBusy ? "任务进行中" : "等待新指令") } ?? "暂无会话")
                             .truncationMode(.middle)
                             .font(.system(size: 9)).foregroundStyle(FocusDeck.secondary)
                     }
@@ -287,26 +286,22 @@ struct NotchIslandView: View {
                 }
                 .buttonStyle(.plain)
                 let waiting = model.sessions.filter(\.isWaiting).count
+                let busy = model.sessions.filter(\.isBusy).count
+                let statusTint = waiting > 0 ? FocusDeck.orange : (busy > 0 ? FocusDeck.running : FocusDeck.secondary)
                 Button {
                     if let session = model.sessions.first(where: \.isWaiting) { selectedSessionID = session.id }
                     if state.mode != .expanded { actions.expandFromAlert() }
                 } label: {
-                    Text(waiting > 0 ? "\(waiting) 待确认" : (focusedSession?.isBusy == true ? "运行中" : "待命"))
+                    Text(waiting > 0 ? "\(waiting) 待确认" : (busy > 0 ? "\(busy) 运行" : "待命"))
                         .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(waiting > 0 ? FocusDeck.orange : FocusDeck.blue)
+                        .foregroundStyle(statusTint)
                         .padding(.horizontal, 8).frame(height: 23)
                         .background(RoundedRectangle(cornerRadius: 7)
-                            .fill((waiting > 0 ? FocusDeck.orange : FocusDeck.blue).opacity(0.12)))
+                            .fill(statusTint.opacity(waiting > 0 ? 0.12 : 0.08)))
                 }
                 .buttonStyle(.plain)
                 .help(waiting > 0 ? "查看待确认会话" : "查看当前会话")
-                Button(action: state.mode == .expanded ? actions.dismissAlert : actions.expandFromAlert) {
-                    Image(systemName: state.mode == .expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold)).frame(width: 20, height: 28)
-                }
-                .buttonStyle(.plain)
-                .help(state.mode == .expanded ? "收起面板 · Esc" : "展开会话")
-                .accessibilityLabel(state.mode == .expanded ? "收起面板" : "展开会话")
+
             }
         }
         .lineLimit(1)
@@ -321,11 +316,12 @@ struct NotchIslandView: View {
                 Rectangle().fill(FocusDeck.rule).frame(height: 1)
                 HStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(focusedSession.map { $0.isWaiting ? "需要你确认" : ($0.project.isEmpty ? $0.agent.label : $0.project) } ?? "一切就绪")
+                        Text(focusedSession.map { $0.project.isEmpty ? $0.agent.label : $0.project } ?? "一切就绪")
                             .font(.system(size: 22, weight: .semibold)).tracking(-0.5)
                             .lineLimit(1).truncationMode(.middle)
                         Text(focusedSession.map(DetachedSessionRow.detail) ?? "开始使用 Claude、Codex 或 Cursor")
-                            .font(.system(size: 11)).foregroundStyle(FocusDeck.secondary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(focusedSession?.isWaiting == true ? FocusDeck.orange : FocusDeck.secondary)
                             .lineLimit(1).truncationMode(.middle)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -349,19 +345,27 @@ struct NotchIslandView: View {
                 }
                 .padding(.horizontal, 20).frame(height: 95)
                 .transition(.opacity)
+                HStack(spacing: 10) {
+                    Image(systemName: "cpu").font(.system(size: 10))
+                    Text(focusedSession.map { $0.model.isEmpty ? "模型未提供" : $0.model } ?? "暂无模型")
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    if let session = focusedSession, session.contextRatio > 0 {
+                        Text("上下文 \(Int(min(1, session.contextRatio) * 100))%")
+                            .foregroundStyle(session.contextRatio >= 0.8 ? FocusDeck.orange : FocusDeck.secondary)
+                            .help("当前会话上下文窗口占用")
+                    } else {
+                        Text("上下文 —").help("客户端未提供上下文占用")
+                    }
+                }
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundStyle(FocusDeck.secondary)
+                .padding(.horizontal, 20).frame(height: 28)
+                .background(Color.black.opacity(0.10))
                 DetachedUsageSummary(usage: model.usage)
                     .frame(height: 40)
-                    .background(LinearGradient(colors: [Color(hex: 0xDCE3ED), Color(hex: 0xBEC9D8)], startPoint: .top, endPoint: .bottom))
+                    .background(LinearGradient(colors: [Color(hex: 0xCCD5E0), Color(hex: 0xB3C0D0)], startPoint: .top, endPoint: .bottom))
                     .transition(.opacity)
-            } else if state.mode == .peek {
-                HStack(spacing: 8) {
-                    Text(focusedSession?.project ?? "暂无会话").lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    Text("点击展开").foregroundStyle(FocusDeck.secondary)
-                }
-                .font(.system(size: 10)).padding(.horizontal, 16).frame(height: 32)
-                .overlay(alignment: .top) { Rectangle().fill(FocusDeck.rule).frame(height: 1) }
-                .contentShape(Rectangle()).onTapGesture(perform: actions.expandFromAlert)
             }
         }
         .foregroundStyle(Color(hex: 0xF1F5FF))
@@ -514,7 +518,8 @@ private enum FocusDeck {
     static let ink = Color(hex: 0x0D1728)
     static let secondary = Color(hex: 0xACBED8)
     static let rule = Color(hex: 0x33445E)
-    static let blue = Color(hex: 0x8ABEFF)
+    static let blue = Color(hex: 0xA0BCDF)
+    static let running = Color(hex: 0x98CCBA)
     static let orange = Color(hex: 0xFFAE62)
 }
 
@@ -539,17 +544,17 @@ private struct DetachedUsageSummary: View {
             .map { ModelPricing.format($0.amount, currency: $0.currency) }.joined(separator: " + ")
         return HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "cylinder.split.1x2").foregroundStyle(Color(hex: 0x495B74))
-                Text("今日").foregroundStyle(Color(hex: 0x495B74))
+                Image(systemName: "cylinder.split.1x2").foregroundStyle(Color(hex: 0x3D4D64))
+                Text("今日").foregroundStyle(Color(hex: 0x3D4D64))
                 Text(UsageStats.formatTokens(usage.today)).id(tokenStyle).fontWeight(.semibold)
-                Text("Token").foregroundStyle(Color(hex: 0x495B74))
+                Text("Token").foregroundStyle(Color(hex: 0x3D4D64))
                 Spacer(minLength: 0)
             }
             .frame(width: 170)
             Rectangle().fill(Color(hex: 0xA4B2C5)).frame(width: 1, height: 14)
             Spacer(minLength: 0)
             Text(estimate.unpricedModels > 0 ? "估算*" : "估算")
-                .foregroundStyle(Color(hex: 0x495B74))
+                .foregroundStyle(Color(hex: 0x3D4D64))
             Text(money.isEmpty ? "—" : money).fontWeight(.semibold)
         }
         .font(.system(size: 10).monospacedDigit())
