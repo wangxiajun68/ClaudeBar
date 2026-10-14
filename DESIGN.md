@@ -633,11 +633,12 @@ those checks.
 
 Hardware-notched screens retain the black wings and existing session/usage
 layout. Unnotched screens use the approved A · Focus deck: a silver-edged
-indigo instrument, 440×48pt closed and 440×184pt expanded. The same header
+indigo instrument, 440×48pt closed and 440×212pt expanded. The same header
 persists through the 220ms vertical reveal. Three real session marks plus an
-all-session menu select one focused task; only waiting actions use warm orange.
-A silver 40pt lip carries token usage and mixed-currency estimates. Hovering
-for 300ms reveals a 440×80pt preview. Outside click, collapse and Escape dismiss
+all-session menu select one focused task; running uses muted sage; waiting and high context usage use warm orange.
+A 28pt row carries the real model and context usage; a silver 40pt lip carries
+token usage and mixed-currency estimates. Hovering for 160ms opens the full
+surface directly; leaving for 250ms closes it, except during native menu tracking. Outside click, collapse and Escape dismiss
 clicked details; pointer exit does not. The 440×72pt alert never takes focus.
 All chrome is opaque native geometry with a static directional shadow; there
 is no blur, decorative animation clock or numeric rolling.
