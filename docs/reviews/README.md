@@ -2,6 +2,10 @@
 
 此目录保存具体构建、机器和日期下的测量、问题清单与修复过程。内容保留实验上下文，不作为当前架构或性能保证。当前实现按模块维护在 [技术文档](../technical/README.md)；发布变更维护在 [CHANGELOG](../CHANGELOG.md)。
 
+## 发布验证
+
+- [1.17.0 本地发布验证](release-1.17.0-verification-2026-10-16.md)（105 组回归、双版本构建、安装包与演示素材）
+
 ## 性能与渲染审查
 
 - [Apple 官方性能规范摘录：前端渲染与后端运行时](apple-performance-docs-2026-10-05.md)（官方文档调研摘录、本项目系统集成边界与自检清单；不含本项目读数）
@@ -34,6 +38,8 @@
 
 ## 其他专项审查
 
+- [桌面架构深入调研与选型方案](desktop-architecture-selection-2026-10-15.md)（17 条路线、稳定版与实验能力核对、React / Rust / 原生平台层主线、GPUI 性能候选、视觉栈及原型验收方案；未实施迁移）
+- [架构演进与品牌升级评估](architecture-and-brand-evolution-2026-10-15.md)（Rust / React / 原生平台层的分阶段提案、性能验收与改名兼容边界；未实施迁移）
 - [灵动岛会话监控深度审查](island-session-monitor-audit-2026-10-01.md)（[复现脚本](island-session-monitor-repro-2026-10-01.py)）
 - [问候创意字体调研与管理](greeting-font-research-2026-10-01.md)
 - [电池管理深度审查](battery-control-audit-2026-09-27.md)

@@ -4,6 +4,7 @@
 
 ## 项目与目录
 
+- 日常开发使用 `dev`；`main` 在发布验证后从 `dev` 快进同步，发布 tag 指向同一提交。不要把所有日常工作直接堆到 `main`。
 - 原生 macOS SwiftUI / AppKit 菜单栏应用，macOS 15+，应用目标为 arm64。
 - 不使用 Xcode 工程或 Swift Package；以 `Makefile` → `Sources/build.sh` 为构建入口。
 - `Sources/ClaudeBar/Models`：状态、偏好和业务模型；`Utils`：持久化、客户端和系统集成；`Views` / `Theme`：界面与样式。

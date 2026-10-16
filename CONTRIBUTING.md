@@ -48,18 +48,11 @@ make run        # 启动开发版
 
 ## 分支策略
 
-采用 **GitHub Flow**，默认分支为 `main`。
+日常开发统一使用 **dev**。main 保留为发布入口，在验证完成后从 dev 快进同步；不覆盖或强推已有历史。
 
-| 分支前缀 | 用途 |
-|----------|------|
-| `feature/<topic>` | 新功能 |
-| `fix/<topic>` | 缺陷修复 |
-| `docs/<topic>` | 仅文档 |
-| `chore/<topic>` | 构建、CI、仓库元数据 |
-
-- 不维护长期 `develop` 分支。
-- 发版在 `main` 上打 annotated tag：`vMAJOR.MINOR.PATCH`（与根目录 `VERSION` 一致）。见 [docs/RELEASING.md](docs/RELEASING.md)。
-- 单人维护仓库可直接推 `main`；有多位贡献者时请走 Pull Request。
+- 当前不自动创建功能分支；多人协作需要独立分支时，在任务中明确约定，并以 dev 为合并目标。
+- 发布 annotated tag 为 `vMAJOR.MINOR.PATCH`，指向本次已验证的提交，与根目录 VERSION 一致。
+- 发布前运行完整回归和打包；日常单组检查不代替发布门禁。见 [发布流程](docs/RELEASING.md)。
 
 ## 代码约定
 
@@ -97,7 +90,7 @@ chore(ci): 升级 release workflow
 
 ## Pull Request
 
-1. 从 `main` 拉取最新代码，在功能分支上开发。
+1. 切换到 `dev` 并拉取最新代码，按当前任务约定开发。
 2. 填写 [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)。
 3. 确保 CI 通过：`macos-26` runner 编译 dev / release 两个版本，dev 版本运行 `make test`。
 4. 涉及 UI 时附简要说明或截图。

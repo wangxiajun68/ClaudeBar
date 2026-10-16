@@ -1,0 +1,621 @@
+{
+  "title": "Desktop architecture selection research sources",
+  "research_date": "2026-10-15",
+  "timezone": "Asia/Shanghai",
+  "transport": "Every recorded network request explicitly used the specified HTTP proxy; no direct fallback.",
+  "proxy": "http://127.0.0.1:17890",
+  "scope": "Source reading and repository analysis only; no framework or application performance benchmarks.",
+  "requests_recorded": 138,
+  "sources": [
+    {
+      "id": "S01",
+      "document_url": "https://github.com/tauri-apps/tauri/releases/tag/tauri-v2.12.4",
+      "fetched_url": "https://api.github.com/repos/tauri-apps/tauri/releases/tags/tauri-v2.12.4",
+      "effective_url": "https://api.github.com/repos/tauri-apps/tauri/releases/tags/tauri-v2.12.4",
+      "accessed_utc": "2026-10-15T06:29:44.436863+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "b550e9be9ebb262760a56f39c333008aedeb76ba926140f9883af53935c7fe5b"
+    },
+    {
+      "id": "S02",
+      "document_url": "https://crates.io/api/v1/crates/tauri",
+      "fetched_url": "https://crates.io/api/v1/crates/tauri",
+      "effective_url": "https://crates.io/api/v1/crates/tauri",
+      "accessed_utc": "2026-10-15T06:28:04.268821+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "4c92fbd8cfffe5fd09ef64cc5f49004042cdeb589e2d50c16cbc1590c131bc87"
+    },
+    {
+      "id": "S03",
+      "document_url": "https://github.com/zed-industries/zed/blob/170b2dbc96213d2fd910f0cdddf774bbb29322d1/crates/gpui/README.md",
+      "fetched_url": "https://raw.githubusercontent.com/zed-industries/zed/main/crates/gpui/README.md",
+      "effective_url": "https://raw.githubusercontent.com/zed-industries/zed/main/crates/gpui/README.md",
+      "accessed_utc": "2026-10-15T06:24:39.924267+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "989b10e5914dcc8a1f2568303849aeab2d6aa26f2c5dfead96de0491330ada79"
+    },
+    {
+      "id": "S04",
+      "document_url": "https://github.com/longbridge/gpui-kit/releases/tag/v0.7.3",
+      "fetched_url": "https://api.github.com/repos/longbridge/gpui-kit/releases/latest",
+      "effective_url": "https://api.github.com/repos/longbridge/gpui-kit/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:36.346043+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "706ba51900d66e6b740dc854574995288bc5313ddbfe246d33e49ac65568ebcf"
+    },
+    {
+      "id": "S05",
+      "document_url": "https://github.com/slint-ui/slint/releases/tag/v1.18.1",
+      "fetched_url": "https://api.github.com/repos/slint-ui/slint/releases/latest",
+      "effective_url": "https://api.github.com/repos/slint-ui/slint/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:36.870170+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "9ba3a445b011491e2e003a9572e7dc52e38dd76f09149641a276c9501410303c"
+    },
+    {
+      "id": "S06",
+      "document_url": "https://github.com/slint-ui/slint",
+      "fetched_url": "https://raw.githubusercontent.com/slint-ui/slint/master/README.md",
+      "effective_url": "https://raw.githubusercontent.com/slint-ui/slint/master/README.md",
+      "accessed_utc": "2026-10-15T06:26:10.484664+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "ce3f909837c281d9b1127381c8796b67c846847197338c6d3cc9307d97212a54"
+    },
+    {
+      "id": "S07",
+      "document_url": "https://github.com/wailsapp/wails/releases/tag/v2.14.0",
+      "fetched_url": "https://api.github.com/repos/wailsapp/wails/releases/latest",
+      "effective_url": "https://api.github.com/repos/wailsapp/wails/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:35.949715+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "22427a39cd7b067aaad6ed1ebd7e47911c88c1648a7cf55e5b626373b0804b77"
+    },
+    {
+      "id": "S08",
+      "document_url": "https://github.com/wailsapp/wails/blob/master/README.md",
+      "fetched_url": "https://raw.githubusercontent.com/wailsapp/wails/master/README.md",
+      "effective_url": "https://raw.githubusercontent.com/wailsapp/wails/master/README.md",
+      "accessed_utc": "2026-10-15T06:26:08.541314+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "a3faa4cf2f382d4387e134b9cb2c322c51292070e6f857177cc970bc6e732706"
+    },
+    {
+      "id": "S09",
+      "document_url": "https://github.com/blackboardsh/electrobun/blob/v2.0.2/README.md",
+      "fetched_url": "https://raw.githubusercontent.com/blackboardsh/electrobun/v2.0.2/README.md",
+      "effective_url": "https://raw.githubusercontent.com/blackboardsh/electrobun/v2.0.2/README.md",
+      "accessed_utc": "2026-10-15T06:31:42.281839+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "d2946fb23019268593e66fbfcb7ab48838d9426c1d164b2f580101055fbfc166"
+    },
+    {
+      "id": "S10",
+      "document_url": "https://framework.blackboard.sh/electrobun/guides/architecture/overview/",
+      "fetched_url": "https://framework.blackboard.sh/electrobun/guides/architecture/overview/",
+      "effective_url": "https://framework.blackboard.sh/electrobun/guides/architecture/overview/",
+      "accessed_utc": "2026-10-15T06:27:59.533699+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "db3715669917390eea289be2e6996bd891d83b96e7fd9be443d5c50ffa6a2e68"
+    },
+    {
+      "id": "S11",
+      "document_url": "https://github.com/DioxusLabs/dioxus/releases/tag/v0.7.10",
+      "fetched_url": "https://api.github.com/repos/DioxusLabs/dioxus/releases/latest",
+      "effective_url": "https://api.github.com/repos/DioxusLabs/dioxus/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:36.351104+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "846eac1d7101da0903520ecdb01f70d1f245b372d2624d8719f75b307c5feb51"
+    },
+    {
+      "id": "S12",
+      "document_url": "https://github.com/DioxusLabs/blitz",
+      "fetched_url": "https://raw.githubusercontent.com/DioxusLabs/blitz/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/DioxusLabs/blitz/main/README.md",
+      "accessed_utc": "2026-10-15T06:25:25.562973+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "66b68853f20b244b7f321f6fb7d82a930baaedd15d1e3613314e2ec159052f31"
+    },
+    {
+      "id": "S13",
+      "document_url": "https://github.com/iced-rs/iced/releases/tag/0.14.0",
+      "fetched_url": "https://api.github.com/repos/iced-rs/iced/releases/latest",
+      "effective_url": "https://api.github.com/repos/iced-rs/iced/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:38.816741+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "2094986b6c53310491d489d143bd7b8d473c5d12cd930ce4fccf3a0a89defa5d"
+    },
+    {
+      "id": "S14",
+      "document_url": "https://github.com/iced-rs/iced/blob/master/README.md",
+      "fetched_url": "https://raw.githubusercontent.com/iced-rs/iced/master/README.md",
+      "effective_url": "https://raw.githubusercontent.com/iced-rs/iced/master/README.md",
+      "accessed_utc": "2026-10-15T06:24:48.204222+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "58c0921d4adfa3ec01c0600007e02772599d6efa671320263792f3fe26c6d71d"
+    },
+    {
+      "id": "S15",
+      "document_url": "https://github.com/react/react/releases/tag/v19.3.1",
+      "fetched_url": "https://api.github.com/repos/facebook/react/releases/latest",
+      "effective_url": "https://api.github.com/repositories/10270250/releases/latest",
+      "accessed_utc": "2026-10-15T06:26:39.293812+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "83811ac8d0bafdd09cfb7e33ad2f02f08d768b41b3c3409f0fe47f50bbe9b040"
+    },
+    {
+      "id": "S16",
+      "document_url": "https://react.dev/learn/react-compiler",
+      "fetched_url": "https://react.dev/learn/react-compiler",
+      "effective_url": "https://react.dev/learn/react-compiler",
+      "accessed_utc": "2026-10-15T06:25:24.004706+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "e5c7cdbbeca1069fffd564f3268d3eccb9bc215afc36aaa5d9f061f060b5ed8c"
+    },
+    {
+      "id": "S17",
+      "document_url": "https://docs.flutter.dev/perf/impeller",
+      "fetched_url": "https://docs.flutter.dev/perf/impeller",
+      "effective_url": "https://docs.flutter.dev/perf/impeller",
+      "accessed_utc": "2026-10-15T06:24:44.465188+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "074cc57c59b8debf8dde85449bf22b545f306cb6d011cabdb88a130a2758d6f6"
+    },
+    {
+      "id": "S18",
+      "document_url": "https://flutter.dev/go/can-i-use-impeller",
+      "fetched_url": "https://flutter.dev/go/can-i-use-impeller",
+      "effective_url": "https://docs.google.com/spreadsheets/d/1AebMvprRkxP-D6ndx920lbvDBbhg-sNNRJ64XY2P2t0/edit?gid=0#gid=0",
+      "accessed_utc": "2026-10-15T06:31:51.032034+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "bc7300431df2c7371471050e111dd951596bb5c13b58ebf2c193d2dd44d56bac"
+    },
+    {
+      "id": "S19",
+      "document_url": "https://v2.tauri.app/concept/process-model/",
+      "fetched_url": "https://v2.tauri.app/concept/process-model/",
+      "effective_url": "https://v2.tauri.app/concept/process-model/",
+      "accessed_utc": "2026-10-15T06:24:40.266719+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "53191e62cd79ba17a03b32acd401fa788e1653417327952b8c02b50811dbe819"
+    },
+    {
+      "id": "S20",
+      "document_url": "https://github.com/longbridge/gpui-kit/blob/v0.7.3/README.md",
+      "fetched_url": "https://raw.githubusercontent.com/longbridge/gpui-kit/v0.7.3/README.md",
+      "effective_url": "https://raw.githubusercontent.com/longbridge/gpui-kit/v0.7.3/README.md",
+      "accessed_utc": "2026-10-15T06:31:42.281760+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "3325bdd3e8e3e2db588cf737db172d2f843e878ba3dbbb0b9ede1dd7ef1136cb"
+    },
+    {
+      "id": "S21",
+      "document_url": "https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html",
+      "fetched_url": "https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html",
+      "effective_url": "https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html",
+      "accessed_utc": "2026-10-15T06:24:44.659049+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "a5fbb035845a85d8eccabfc3a145baa368fb991826e30f5acef254e15caf5ef7"
+    },
+    {
+      "id": "S22",
+      "document_url": "https://www.electronjs.org/docs/latest/tutorial/performance",
+      "fetched_url": "https://www.electronjs.org/docs/latest/tutorial/performance",
+      "effective_url": "https://www.electronjs.org/docs/latest/tutorial/performance",
+      "accessed_utc": "2026-10-15T06:24:44.658729+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "250894f4fb068bd0506113c3f0b947ed3be0b568826727f7e23ba6eda88dd46f"
+    },
+    {
+      "id": "S23",
+      "document_url": "https://github.com/DioxusLabs/dioxus",
+      "fetched_url": "https://raw.githubusercontent.com/DioxusLabs/dioxus/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/DioxusLabs/dioxus/main/README.md",
+      "accessed_utc": "2026-10-15T06:24:46.735408+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "f8a4dc1f1005495e5b205cd0131e059989453d403465b7297d68ea2b1e6c91a1"
+    },
+    {
+      "id": "S24",
+      "document_url": "https://github.com/emilk/egui",
+      "fetched_url": "https://raw.githubusercontent.com/emilk/egui/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/emilk/egui/main/README.md",
+      "accessed_utc": "2026-10-15T06:27:35.090010+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "f682db56af90114cbd8b632ff3e0d72d2216663ad8b892bddb440ab06693305d"
+    },
+    {
+      "id": "S25",
+      "document_url": "https://github.com/linebender/xilem",
+      "fetched_url": "https://raw.githubusercontent.com/linebender/xilem/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/linebender/xilem/main/README.md",
+      "accessed_utc": "2026-10-15T06:24:42.028919+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "715125e5cc94a253ab9ee198f75a1e8aee77ba7a7b40b1c90236ef91a131edc8"
+    },
+    {
+      "id": "S26",
+      "document_url": "https://github.com/lapce/floem",
+      "fetched_url": "https://raw.githubusercontent.com/lapce/floem/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/lapce/floem/main/README.md",
+      "accessed_utc": "2026-10-15T06:24:47.691540+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "e59060386d9ae8e4c0c98c06ab7527f0fe10df13b360bed218de1e48abd1a00a"
+    },
+    {
+      "id": "S27",
+      "document_url": "https://github.com/marc2332/freya",
+      "fetched_url": "https://raw.githubusercontent.com/marc2332/freya/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/marc2332/freya/main/README.md",
+      "accessed_utc": "2026-10-15T06:24:48.022277+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "f7083eddcbc54d8165b43b31d77a9d47def60577caefdffa5048954e8e03da2e"
+    },
+    {
+      "id": "S28",
+      "document_url": "https://github.com/microsoft/react-native-macos",
+      "fetched_url": "https://raw.githubusercontent.com/microsoft/react-native-macos/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/microsoft/react-native-macos/main/README.md",
+      "accessed_utc": "2026-10-15T06:27:35.077226+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "d145448a9ad0ad48a5026476eff9a7e6d7fedf4ab65f949568e3b6d136fa94c2"
+    },
+    {
+      "id": "S29",
+      "document_url": "https://kotlinlang.org/docs/multiplatform/compose-multiplatform-and-jetpack-compose.html",
+      "fetched_url": "https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-and-jetpack-compose.html",
+      "effective_url": "https://kotlinlang.org/docs/multiplatform/compose-multiplatform-and-jetpack-compose.html",
+      "accessed_utc": "2026-10-15T06:27:38.561287+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "7023acfe9a6cb746032a1295a4e99955a79d6bd84c72f6d7fc2966aec394eb83"
+    },
+    {
+      "id": "S30",
+      "document_url": "https://docs.avaloniaui.net/docs/welcome",
+      "fetched_url": "https://docs.avaloniaui.net/docs/overview/what-is-avalonia",
+      "effective_url": "https://docs.avaloniaui.net/docs/welcome",
+      "accessed_utc": "2026-10-15T06:27:37.091286+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "06de525b23d2999cdf9d5e085f92fe4d4ee98e806cf0940e92e7c780b3de36cd"
+    },
+    {
+      "id": "S31",
+      "document_url": "https://github.com/lynx-family/lynx",
+      "fetched_url": "https://raw.githubusercontent.com/lynx-family/lynx/develop/README.md",
+      "effective_url": "https://raw.githubusercontent.com/lynx-family/lynx/develop/README.md",
+      "accessed_utc": "2026-10-15T06:29:44.303633+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "aaf74bd18a6e8be37979d98e267a8b1bb7241c8146a334f9091d1cdb22de8605"
+    },
+    {
+      "id": "S32",
+      "document_url": "https://github.com/servo/servo",
+      "fetched_url": "https://raw.githubusercontent.com/servo/servo/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/servo/servo/main/README.md",
+      "accessed_utc": "2026-10-15T06:27:35.602016+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "e5f8868937112b71af8abe1e56ff7cf0eaa4ee2c8eae2e07067250999c8fd9c9"
+    },
+    {
+      "id": "S33",
+      "document_url": "https://v2.tauri.app/develop/calling-frontend/",
+      "fetched_url": "https://v2.tauri.app/develop/calling-frontend/",
+      "effective_url": "https://v2.tauri.app/develop/calling-frontend/",
+      "accessed_utc": "2026-10-15T06:24:42.086410+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "4f5a8a5f21d9d101b83f7c78a8feeda3a4017d19b1e60c085ae44338f8e41162"
+    },
+    {
+      "id": "S34",
+      "document_url": "https://gpui-kit.com/docs/webview/",
+      "fetched_url": "https://gpui-kit.com/docs/webview",
+      "effective_url": "https://gpui-kit.com/docs/webview/",
+      "accessed_utc": "2026-10-15T06:31:43.873432+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "d8ab8fc8cb4b6a461993df9379017708f8f08bb436b5ba682a6cf3a655bb44e2"
+    },
+    {
+      "id": "S35",
+      "document_url": "https://gpui-kit.com/docs/accessibility/",
+      "fetched_url": "https://gpui-kit.com/docs/accessibility",
+      "effective_url": "https://gpui-kit.com/docs/accessibility/",
+      "accessed_utc": "2026-10-15T06:28:05.943048+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "ece7db0524f28ba3ab9c8ab9349b13eb982f67d8ae13ec7f6695c4f8601e445a"
+    },
+    {
+      "id": "S36",
+      "document_url": "https://docs.flutter.dev/platform-integration/macos/platform-views",
+      "fetched_url": "https://docs.flutter.dev/platform-integration/macos/platform-views",
+      "effective_url": "https://docs.flutter.dev/platform-integration/macos/platform-views",
+      "accessed_utc": "2026-10-15T06:26:13.864504+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "c06e46d019ced6ff4a9f961a31513f85a916e337fba3df71e66b0eba06b1b8d8"
+    },
+    {
+      "id": "S37",
+      "document_url": "https://github.com/solidjs/solid",
+      "fetched_url": "https://raw.githubusercontent.com/solidjs/solid/main/README.md",
+      "effective_url": "https://raw.githubusercontent.com/solidjs/solid/main/README.md",
+      "accessed_utc": "2026-10-15T06:26:12.568788+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "9bd2db801fad6c7872ec70a3b0277ca6803186031c2d14f963eb9182d1974f9d"
+    },
+    {
+      "id": "S38",
+      "document_url": "https://svelte.dev/docs/svelte/what-are-runes",
+      "fetched_url": "https://svelte.dev/docs/svelte/what-are-runes",
+      "effective_url": "https://svelte.dev/docs/svelte/what-are-runes",
+      "accessed_utc": "2026-10-15T06:25:23.977331+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "cfdea3fb3156db6bbcbe3b88e07c51f6d81b64b0d87c5203347b8a4a923f0224"
+    },
+    {
+      "id": "S39",
+      "document_url": "https://react-aria.adobe.com/",
+      "fetched_url": "https://react-spectrum.adobe.com/react-aria/",
+      "effective_url": "https://react-aria.adobe.com/",
+      "accessed_utc": "2026-10-15T06:25:26.840310+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "bb2dab719af9411ce3bb06b46666d24e637cfc8f65297e6dff097e487bc368d3"
+    },
+    {
+      "id": "S40",
+      "document_url": "https://tanstack.com/virtual/latest/docs/introduction",
+      "fetched_url": "https://tanstack.com/virtual/latest/docs/introduction",
+      "effective_url": "https://tanstack.com/virtual/latest/docs/introduction",
+      "accessed_utc": "2026-10-15T06:25:24.041610+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "b1b1a4aa3adb9f997bd753b0f9152a040e89cc99569f877ce1daf61f29480c51"
+    },
+    {
+      "id": "S41",
+      "document_url": "https://react.dev/reference/react/useSyncExternalStore",
+      "fetched_url": "https://react.dev/reference/react/useSyncExternalStore",
+      "effective_url": "https://react.dev/reference/react/useSyncExternalStore",
+      "accessed_utc": "2026-10-15T06:25:20.852876+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "3fcee81e14f3e45305f2a635361fb992d8fcbd755233d3bcb1fb227ce58ecbe8"
+    },
+    {
+      "id": "S42",
+      "document_url": "https://motion.dev/docs/performance",
+      "fetched_url": "https://motion.dev/docs/performance",
+      "effective_url": "https://motion.dev/docs/performance",
+      "accessed_utc": "2026-10-15T06:25:17.411977+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "bcc88091fb5cca2c638dc6644a82b287facfcfb7b4a7f85d72742acb9428c6cd"
+    },
+    {
+      "id": "S43",
+      "document_url": "https://github.com/leeoniya/uPlot",
+      "fetched_url": "https://raw.githubusercontent.com/leeoniya/uPlot/master/README.md",
+      "effective_url": "https://raw.githubusercontent.com/leeoniya/uPlot/master/README.md",
+      "accessed_utc": "2026-10-15T06:25:22.490493+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "2916707e503e93ea593d99d6cff3864f8ff8f12c0ae945fa119f9b1a2fb16a49"
+    },
+    {
+      "id": "S44",
+      "document_url": "https://pixijs.com/8.x/guides/components/renderers",
+      "fetched_url": "https://pixijs.com/8.x/guides/components/renderers",
+      "effective_url": "https://pixijs.com/8.x/guides/components/renderers",
+      "accessed_utc": "2026-10-15T06:25:16.272871+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "86d257d1a867566f578f32abc9a375c520d4d0db5badad2a23126dce892797d1"
+    },
+    {
+      "id": "S45",
+      "document_url": "https://rive.app/docs/runtimes/choose-a-renderer/overview",
+      "fetched_url": "https://rive.app/docs/runtimes/choose-a-renderer/overview",
+      "effective_url": "https://rive.app/docs/runtimes/choose-a-renderer/overview",
+      "accessed_utc": "2026-10-15T06:28:04.884415+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "a1f465cda1fab0e15d0df3881254682a5ae0fd3dad3d0d5c80891e0ce7c26c83"
+    },
+    {
+      "id": "S46",
+      "document_url": "https://threejs.org/docs/pages/WebGPURenderer.html",
+      "fetched_url": "https://threejs.org/docs/pages/WebGPURenderer.html",
+      "effective_url": "https://threejs.org/docs/pages/WebGPURenderer.html",
+      "accessed_utc": "2026-10-15T06:25:16.208347+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "67adc2c1c1e6634b00aca753d6df8edc5e533ec85a19b730c3597dafdf8436e7"
+    },
+    {
+      "id": "S47",
+      "document_url": "https://webkit.org/blog/16993/news-from-wwdc25-web-technology-coming-this-fall-in-safari-26-beta/",
+      "fetched_url": "https://webkit.org/blog/16993/news-from-wwdc25-web-technology-coming-this-fall-in-safari-26-beta/",
+      "effective_url": "https://webkit.org/blog/16993/news-from-wwdc25-web-technology-coming-this-fall-in-safari-26-beta/",
+      "accessed_utc": "2026-10-15T06:25:17.412184+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "93121316abb959c0dccdd8f00373a9309081c71e3c01b21912dcbdd00512ca6f"
+    },
+    {
+      "id": "S48",
+      "document_url": "https://r3f.docs.pmnd.rs/advanced/scaling-performance",
+      "fetched_url": "https://r3f.docs.pmnd.rs/advanced/scaling-performance",
+      "effective_url": "https://r3f.docs.pmnd.rs/advanced/scaling-performance",
+      "accessed_utc": "2026-10-15T06:25:20.187477+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "45bddf76b7e4e7ef96a124258c454f3f1d09f041a2a34c4ed8c268fdf338c543"
+    },
+    {
+      "id": "S49",
+      "document_url": "https://tokio.rs/tokio/tutorial",
+      "fetched_url": "https://tokio.rs/tokio/tutorial",
+      "effective_url": "https://tokio.rs/tokio/tutorial",
+      "accessed_utc": "2026-10-15T06:25:25.168607+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "f3f705626e45cd5cf003ea944eefba36037cc4ae4546f32dedcab866725f40cc"
+    },
+    {
+      "id": "S50",
+      "document_url": "https://mozilla.github.io/uniffi-rs/latest/swift/overview.html",
+      "fetched_url": "https://mozilla.github.io/uniffi-rs/latest/swift/overview.html",
+      "effective_url": "https://mozilla.github.io/uniffi-rs/latest/swift/overview.html",
+      "accessed_utc": "2026-10-15T06:29:45.359424+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "c3c20823057031add6fcfa2edc156569d6164fa97989f5959f011b216ff7a586"
+    },
+    {
+      "id": "S51",
+      "document_url": "https://tokio.rs/tokio/tutorial/channels",
+      "fetched_url": "https://tokio.rs/tokio/tutorial/channels",
+      "effective_url": "https://tokio.rs/tokio/tutorial/channels",
+      "accessed_utc": "2026-10-15T06:29:47.461872+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "880ce139af0d64f37adcfe802318eddbae7e0a0980489cb6ff1ef92b1b798787"
+    },
+    {
+      "id": "S52",
+      "document_url": "https://sqlite.org/wal.html",
+      "fetched_url": "https://sqlite.org/wal.html",
+      "effective_url": "https://sqlite.org/wal.html",
+      "accessed_utc": "2026-10-15T06:29:46.747005+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "f3467b530b883d4a00574fe1a898b3d121ed72764ae28cf66941080ac0badb9e"
+    },
+    {
+      "id": "S53",
+      "document_url": "https://v2.tauri.app/security/capabilities/",
+      "fetched_url": "https://v2.tauri.app/security/capabilities/",
+      "effective_url": "https://v2.tauri.app/security/capabilities/",
+      "accessed_utc": "2026-10-15T06:24:40.572265+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "382509eb5e317de2043204d56d1ef29cc5f2f56510eec17a880793e05092ea8b"
+    },
+    {
+      "id": "S54",
+      "document_url": "https://v2.tauri.app/distribute/sign/macos/",
+      "fetched_url": "https://v2.tauri.app/distribute/sign/macos/",
+      "effective_url": "https://v2.tauri.app/distribute/sign/macos/",
+      "accessed_utc": "2026-10-15T06:26:14.319730+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "524b0bca0c0d967ad7274ef7f814869b63253a2aca72a53521d1e2ef9e738164"
+    },
+    {
+      "id": "S55",
+      "document_url": "https://v2.tauri.app/develop/tests/webdriver/",
+      "fetched_url": "https://v2.tauri.app/develop/tests/webdriver/",
+      "effective_url": "https://v2.tauri.app/develop/tests/webdriver/",
+      "accessed_utc": "2026-10-15T06:26:13.648273+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "12b5078228b07fd83fd21842e085b06cf89401c6aef8901a8febd0b48729eb1c"
+    },
+    {
+      "id": "S56",
+      "document_url": "https://go.dev/doc/gc-guide",
+      "fetched_url": "https://go.dev/doc/gc-guide",
+      "effective_url": "https://go.dev/doc/gc-guide",
+      "accessed_utc": "2026-10-15T06:39:43.546751+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "4c4a708e113331ff95947a262f74e661799cf48b4b94bb191fbac3a66af4a1b9"
+    },
+    {
+      "id": "S57",
+      "document_url": "https://go.dev/doc/go1.26",
+      "fetched_url": "https://go.dev/doc/go1.26",
+      "effective_url": "https://go.dev/doc/go1.26",
+      "accessed_utc": "2026-10-15T06:39:43.689837+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "4399238e3ba0509479885d4d8494faa95259014ab11b17be392fbd0f8504affe"
+    },
+    {
+      "id": "S58",
+      "document_url": "https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop",
+      "fetched_url": "https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop",
+      "effective_url": "https://nodejs.org/learn/asynchronous-work/dont-block-the-event-loop",
+      "accessed_utc": "2026-10-15T06:39:43.733204+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "631b57136f13ff4c8ce940b43df8bf68a3450a5b3dbe0b3f1dccd2e5ee081d59"
+    },
+    {
+      "id": "S59",
+      "document_url": "https://nodejs.org/api/worker_threads.html",
+      "fetched_url": "https://nodejs.org/api/worker_threads.html",
+      "effective_url": "https://nodejs.org/api/worker_threads.html",
+      "accessed_utc": "2026-10-15T06:39:44.811814+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "ed0bfde69512a9bb5b59c8362a598febf85bc354be120aed5c37006470f073a8"
+    },
+    {
+      "id": "S60",
+      "document_url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+      "fetched_url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+      "effective_url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+      "accessed_utc": "2026-10-15T06:39:46.930955+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "e3fc7f4e1db60f35be5bf71f915af51863b2ad0ccc5dd0e78debf4ce57e966a5"
+    },
+    {
+      "id": "S61",
+      "document_url": "https://github.com/swiftlang/swift-book/blob/main/TSPL.docc/LanguageGuide/AutomaticReferenceCounting.md",
+      "fetched_url": "https://raw.githubusercontent.com/swiftlang/swift-book/main/TSPL.docc/LanguageGuide/AutomaticReferenceCounting.md",
+      "effective_url": "https://raw.githubusercontent.com/swiftlang/swift-book/main/TSPL.docc/LanguageGuide/AutomaticReferenceCounting.md",
+      "accessed_utc": "2026-10-15T06:41:29.505596+00:00",
+      "http_status": 200,
+      "proxy": "http://127.0.0.1:17890",
+      "content_sha256": "76f2feb11c6fd127c08355102a70201954307556aa4ff327bc6f50f4a5380a1e"
+    }
+  ]
+}

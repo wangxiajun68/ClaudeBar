@@ -5,23 +5,21 @@ Slides type declarations out of `Sources/ClaudeBar` (the same `declaration()`
 slicing `render-greeting-preview.py` and `render-control-preview.py` use) and
 re-assembles them into one `Probe.swift`, compiled head-less with
 `/usr/bin/swiftc -O -parse-as-library -target arm64-apple-macos15.0` and drawn
-with `ImageRenderer` at scale 2 — so a PNG cannot drift onto a layout the app
+with native `NSHostingView` bitmap capture at the screen scale — so a PNG cannot drift onto a layout the app
 has moved on from.
 
-Writes `.build/mainwindow-preview/{page}-{light,dark}.png`, ten files:
+Writes `.build/mainwindow-preview/{page}-{light,dark}.png`, eight files:
 
     overview  DashboardView    greeting/status sheet · title row · resource strip
                               (CPU/GPU/内存/硬盘/连接/风扇) · energy-flow card
                               · active-session grid
     sessions  SessionsView     CLAUDE CODE / CURSOR / CODEX sections
     usage     UsageView        period chips · heatmap · 来源/节奏/构成 · model tiles
-    vpn       VPNView          enable switch · live rates · node mosaic with
-                              latencies · subscription area · log
     traffic   TrafficView      request list + conversation inspector
 
-Pages reached, and the one omission
+Pages reached and capture boundaries
 -----------------------------------
-All five render. The greeting card is the **real** `GreetingStatusSheet` — sky,
+All four render. VPN surfaces use the separate native-host renderer in Tools/render-vpn-preview.py. The greeting card is the **real** `GreetingStatusSheet` — sky,
 script greeting, instruments and all — because the sky has a shipped still path
 (`AtmosphereSurface.stills`, the same shader drawn once into an image, exactly
 as `render-greeting-preview.py` does it). Its *store plumbing* is replaced: the
@@ -30,8 +28,8 @@ six stores `GreetingCard` reads are handed fixed readings by
 
 What a still cannot carry, and what the fixture does about it
 ------------------------------------------------------------
-`ImageRenderer` never runs view-graph lifecycle and never bridges AppKit, so
-three production idioms render as a yellow "unsupported" placeholder or as
+The original ImageRenderer assembly did not run view-graph lifecycle or bridge AppKit, so
+three production idioms rendered as a yellow "unsupported" placeholder or as
 nothing at all. Each is replaced by its own drawing, never by different content:
 
   * `ScrollView` (+ the `LazyVStack` inside it) has no viewport in a still, so
@@ -45,10 +43,9 @@ nothing at all. Each is replaced by its own drawing, never by different content:
     fields become the same string as `Text` and the fan tile's borderless
     buttons become `.plain` (identical chrome, and a still has no press state).
 
-Two page states are seeded that only `onAppear` would otherwise set, because a
-still never fires it: the traffic list (`TrafficView.init(fixtureRecords:)`) and
-the VPN disclosures (`VPNView(fixtureNodesOpen:fixtureLogsOpen:)`). Both are
-additive initialisers; no production body is rewritten.
+The traffic initializer seeds list membership before mounting. Production
+preparation tasks then run in the native host before bitmap capture, so analytics
+do not remain in a loading state. VPN uses its dedicated native-host tool.
 
 Fixtures are **synthetic**: no `~/.claude`, `~/.codex` or `~/.cursor` read, no
 network, no preference writes (`UserDefaults.volatileDomain` only, which is
@@ -848,8 +845,10 @@ final class ProviderStore: ObservableObject {
             self.activeDescendantCount = children.reduce(0) { $0 + $1.activeDescendantCount + ($1.session.isActive ? 1 : 0) }
         }
         var descendantCount: Int { flattened.count - 1 }
+        var descendants: [ExternalSessionInfo] { Array(flattened.dropFirst()) }
     }
 
+    let usageIndexDidRefresh = PassthroughSubject<Void, Never>()
     @Published var sessions: [SessionInfo] = []
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var externalSessions: [ExternalSessionInfo] = []
@@ -863,7 +862,7 @@ final class ProviderStore: ObservableObject {
     @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
     @Published var usageLoading = false
     @Published var usagePeriod: UsagePeriod = .month
-    @Published var usageReferenceDate: Date = Date()
+    @Published var usageReferenceDate: Date = Fixture.now
     /// The interval the store has finished publishing. `UsageView` gates its
     /// analytics section on it (`if usagePublishedInterval == interval`), and
     /// the fixture host seeds it in `populate()` — a still has no computation
@@ -926,6 +925,7 @@ struct Provider: Identifiable, Equatable {
     var name: String
     var models: [ModelInfo] = []
     var profileID: String = ""
+    var apiKey: String = "fixture-key"
     var asDisplayProvider: Provider { self }
 }
 struct ModelInfo: Identifiable, Equatable {
@@ -933,21 +933,9 @@ struct ModelInfo: Identifiable, Equatable {
     var name: String
 }
 
-struct CodexQuotaWindow: Equatable, Identifiable {
-    var id: String { label }
-    var label: String
-    var usedPercent: Double
-    var resetsAt: Date?
-    var durationMinutes: Int = 0
-
-    var usedText: String {
-        let rounded = usedPercent.rounded()
-        if abs(usedPercent - rounded) < 0.05 { return "\(Int(rounded))%" }
-        return String(format: "%.1f%%", usedPercent)
-    }
-    var resetClock: String { "" }
-    var resetWait: String { "" }
-}
+'''
+source += require('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
+source += r'''
 
 final class ExchangeRate: ObservableObject {
     @MainActor static let shared = ExchangeRate()
@@ -1024,6 +1012,7 @@ final class VpnManager: ObservableObject {
 
 final class VpnSubscriptionStore: ObservableObject {
     @MainActor static let shared = VpnSubscriptionStore()
+    @Published var loadFailed = false
     @Published var subscriptions: [VpnSubscription] = []
     @Published var activeID: UUID? = nil
     @Published var browsingID: UUID? = nil
@@ -1107,6 +1096,10 @@ final class VpnDomainLog: ObservableObject {
     @Published var entries: [VpnDomainEntry] = []
     @Published var received = 0
     @Published var revision = 0
+    @Published var proxiedTraffic = VpnDomainTraffic(upload: 350_000, download: 12_600_000)
+    @Published var directTraffic = VpnDomainTraffic(upload: 190_000, download: 7_100_000)
+    var trafficByHost: [String: VpnDomainTraffic] = [:]
+    var directTrafficByHost: [String: VpnDomainTraffic] = [:]
     func clear() {}
 }
 '''.lstrip('\n')
@@ -1204,47 +1197,8 @@ source += _dashboard
 _sessions = page_without_scroll('Sources/ClaudeBar/Views/Pages/SessionsView.swift', 'SessionsView')
 source += _sessions
 source += page_without_scroll('Sources/ClaudeBar/Views/Pages/UsageView.swift', 'UsageView')
-_vpn = page_without_scroll('Sources/ClaudeBar/Views/Pages/VPNView.swift', 'VPNView')
-_vpn, _n = rewrite_text_fields(_vpn, 'VPNView.swift')
-assert _n == 1, f'VPNView.swift: expected 1 TextField, rewrote {_n}'
-assert 'TextField(' not in _vpn, 'VPNView.swift: a TextField survived the rewrite'
-# Two scroll views live *inside* the page (the page-level one is already gone
-# above): the compact-page picker's owns and the log console's. The horizontal
-# strips that used to sit here moved into `VpnDomainLogSection` with the traffic
-# workspace; this count is what catches a container being added back.
-_vpn = unwrap_scroll_views(_vpn, 'VPNView.swift', 2)
-# `ScrollViewReader { proxy in … }` unwraps to the same content minus the
-# reader: the proxy only ever drove `.scrollTo` (which a still never needs) and
-# any remaining call to it is dropped with the reader.
-_vpn = unwrap_scroll_readers(_vpn, 'VPNView.swift')
-# The node mosaic and the log list both start collapsed (`nodesOpen` / `logsOpen`
-# are per-visit `@State`, and `onAppear` — which the renderer never runs — is the
-# only thing that ever flips them). That leaves the page's whole point, the node
-# list with its latencies, behind a "展开" row. The fixture seeds them open, so
-# the PNG shows what a user sees after one click.
-_vpn = inject_member(_vpn, 'VPNView', '    var body: some View {',
-    '''    /// Fixture-only: the two disclosures the page starts with closed.
-    init(fixtureNodesOpen: Bool = true, fixtureLogsOpen: Bool = true) {
-        _nodesOpen = State(initialValue: fixtureNodesOpen)
-        _logsOpen = State(initialValue: fixtureLogsOpen)
-    }
-
-''', 'VPNView.swift')
-# This page's body is `GeometryReader { ScrollView([.horizontal, .vertical]) { … } }`
-# rather than the other pages' `ScrollView { LazyVStack { … } }`. `ImageRenderer`
-# needs a concrete height, so the fixture replaces the *GeometryReader* with a
-# fixed-width container — the vertical `ScrollView` inside it then lays out
-# normally against that width. Same helper as the pages above; see its docstring.
-source += _vpn
-_domainlog = require_file('Sources/ClaudeBar/Views/Pages/VpnDomainLogSection.swift')
-_domainlog = unwrap_scroll_views(_domainlog, 'VpnDomainLogSection.swift', 4)
-_domainlog = unwrap_scroll_readers(_domainlog, 'VpnDomainLogSection.swift')
-source += _domainlog
-_sub, _n = rewrite_text_fields(require_file('Sources/ClaudeBar/Views/Pages/VPNSubscriptionSection.swift'),
-                               'VPNSubscriptionSection.swift')
-assert _n == 2, f'VPNSubscriptionSection.swift: expected 2 TextFields, rewrote {_n}'
-assert 'TextField(' not in _sub, 'VPNSubscriptionSection.swift: a TextField survived the rewrite'
-source += _sub
+# VPN previews have their own current native-host renderer, Tools/render-vpn-preview.py.
+# Keep this ImageRenderer assembly focused on the four workbench pages.
 _traffic = require_file('Sources/ClaudeBar/Views/Pages/TrafficView.swift')
 _traffic, _n = rewrite_text_fields(_traffic, 'TrafficView.swift')
 assert _n >= 1, f'TrafficView.swift: expected at least 1 TextField, rewrote {_n}'
@@ -1354,9 +1308,9 @@ source += require('Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift', 'enum 
 
 # The VPN domain log's value types + the watchlist are pure (no socket, no
 # store): slice them so the traffic-log rows cannot drift.
-source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'enum VpnDomainRoute: String, CaseIterable, Identifiable {')
+source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'enum VpnDomainRoute: String, Sendable {')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainEntry: Identifiable, Equatable {')
-source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainConnection: Identifiable, Equatable {')
+source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainConnection: Identifiable, Equatable, Sendable {')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainLogStat: Identifiable, Equatable {')
 source += require_file('Sources/ClaudeBar/Utils/VpnDomainQuery.swift')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'enum VpnWatchlist {')
@@ -1795,12 +1749,52 @@ source += r'''
 }
 '''.lstrip('\n')
 
+
+source += require_file('Sources/ClaudeBar/Models/SessionMigration.swift')
+source += require_file('Sources/ClaudeBar/Models/SessionUsageSummary.swift')
+source += require_file('Sources/ClaudeBar/Views/Shared/SessionUsageReadout.swift')
+source += require_file('Sources/ClaudeBar/Utils/TokenMagnitude.swift')
+source += require_file('Sources/ClaudeBar/Utils/UsageProviderInventory.swift')
+source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainTraffic: Equatable {')
+source += require_file('Sources/ClaudeBar/Utils/VpnDomainRules.swift')
+source += require_file('Sources/ClaudeBar/Utils/PrivateFileWriter.swift')
+source += require_file('Sources/ClaudeBar/Utils/VpnTrafficHistory.swift')
+source += r'''
+@MainActor final class SessionMigrationModel: ObservableObject {
+    @Published var records: [MigrationRecord] = []
+    @Published var selectedSource: MigrationSource?
+    @Published var selectionRequest = UUID()
+    @Published var opening: UUID?
+    @Published var error: String?
+    func requestMigration(_ source: MigrationSource) { selectedSource = source; selectionRequest = UUID() }
+    func refresh() async {}
+    func open(_ record: MigrationRecord, codexStore: CodexProviderStore) async throws { throw MigrationFailure.restricted }
+}
+actor SessionMigrationService {
+    static let shared = SessionMigrationService()
+    func preview(_ source: MigrationSource, includeCompletedTools: Bool, includeImages: Bool) throws -> MigrationPreview { throw MigrationFailure.restricted }
+    func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
+                 officialModel: String, includeCompletedTools: Bool, includeImages: Bool,
+                 bridgeProviderID: UUID?, bridgeModel: String) throws -> MigrationRecord { throw MigrationFailure.restricted }
+}
+extension Notification.Name { static let modelPriceDidChange = Notification.Name("fixture-model-price-change") }
+extension UsageIndex {
+    static func fetchSessionDailyFamilies(source: UsageSource, sessionIds: [String]) -> [String: [String: [ModelUsage]]] { [:] }
+}
+'''
+source += require('Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift', 'extension MigrationSource {')
+source += 'enum VpnDomainFeed {\n' + require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'nonisolated static func splitHostPort(') + '}\n'
+source += 'extension VpnFormat {\n' + require('Sources/ClaudeBar/Utils/VpnManager.swift', 'static func saturatingAdd(') + require('Sources/ClaudeBar/Utils/VpnManager.swift', 'static func saturatingSub(') + '}\n'
+_shared_migration = require_file('Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift')
+source += _shared_migration[_shared_migration.index('struct SessionMigrationButton:'):]
+source += require_file('Sources/ClaudeBar/Views/Pages/SessionMigrationView.swift')
+
 source += r'''
 // MARK: - Probe
 
 @main struct Probe {
     @MainActor static func main() throws {
-        _ = NSApplication.shared
+        NSApplication.shared.setActivationPolicy(.prohibited)
         // The dashboard's top card is the Metal sky. `ImageRenderer` cannot
         // capture an `MTKView`, so the sheet runs the production still path:
         // the same shader, drawn once into an image. Without a Metal device the
@@ -1831,15 +1825,27 @@ source += r'''
                     .environment(\.rendersHardwareSweep, false)
                     .environment(\.providerSource, Fixture.store)
                     .environmentObject(Fixture.codexStore)
+                    .environmentObject(SessionMigrationModel())
                     .frame(width: pageWidth, alignment: .topLeading)
                     .background(Theme.bgPrimary)
-                let renderer = ImageRenderer(content: content)
-                renderer.scale = 2
-                guard let image = renderer.cgImage,
-                      let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-                else { fatalError("Render failed for \(name)") }
+                // Native hosting runs the production preparation tasks before capture.
+                // ImageRenderer alone leaves asynchronous analytics in their loading state.
+                let host = NSHostingView(rootView: content.fixedSize(horizontal: false, vertical: true))
+                host.frame = NSRect(x: 0, y: 0, width: pageWidth, height: 1800)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(1.2))
+                let height = max(720, host.fittingSize.height)
+                host.frame = NSRect(x: 0, y: 0, width: pageWidth, height: height)
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("No bitmap for \(name)") }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("No PNG for \(name)") }
                 try png.write(to: out.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
-                print("\(name)-\(dark ? "dark" : "light")  \(Int(image.width))×\(Int(image.height))")
+                window.contentView = nil
+                print("\(name)-\(dark ? "dark" : "light")  \(Int(rep.pixelsWide))×\(Int(rep.pixelsHigh))")
             }
         }
     }
@@ -1980,8 +1986,6 @@ source += r'''
                 .environmentObject(Fixture.codexStore))),
             ("sessions", AnyView(SessionsView())),
             ("usage", AnyView(UsageView())),
-            ("vpn", AnyView(VPNView(fixtureNodesOpen: true, fixtureLogsOpen: true)
-                .frame(height: 1180))),
             ("traffic", AnyView(TrafficView(fixtureRecords: Fixture.trafficRecords())
                 .environmentObject(trafficState)
                 .frame(height: 720))),

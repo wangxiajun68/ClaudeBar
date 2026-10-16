@@ -7,8 +7,8 @@
 <h1 align="center">ClaudeBar</h1>
 
 <p align="center">
-  A native macOS workbench for AI development.<br>
-  Models, sessions, usage, and networking across the menu bar, notch island, and desktop.
+  A macOS workbench for Claude Code, Codex, and Cursor.<br>
+  Switch models, follow sessions, and inspect usage and requests.
 </p>
 
 <p align="center">
@@ -23,111 +23,129 @@
   <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><strong>Download for macOS</strong></a>
 </p>
 
-https://github.com/user-attachments/assets/eb0dd190-6cbf-4349-a3c6-a799a273f89e
+https://github.com/user-attachments/assets/1aef4455-aa53-42d1-a1a7-63cdc3926551
 
 <p align="center">
-  <a href="docs/promo/claudebar.mp4">Download the high-quality film (1080p · 66 seconds)</a><br>
+  <a href="docs/promo/claudebar.mp4">Download the high-quality film (1080p · 52 seconds)</a><br>
   Chinese interface and captions, matching the app
 </p>
 
 ---
 
-ClaudeBar gives developers using Claude Code, Codex, and Cursor a unified view of their work. Use the menu bar for quick status checks and model changes, the notch island for agent progress, and the desktop window for session, usage, and request analysis. The app is built with SwiftUI and AppKit.
+ClaudeBar brings Claude Code, Codex, and Cursor into one view. Check models and allowance in the menu bar, follow agents at the top of the screen, and open the desktop window for sessions, usage, and request details. Built with SwiftUI and AppKit for macOS 15+ on Apple Silicon.
 
-## Core capabilities
+## Install
 
-| Module | Features |
+Download the DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases/latest), drag ClaudeBar into Applications, then launch it. Add a provider in Models and enable other features as needed. See the [FAQ](docs/FAQ.md) for installation and permission issues.
+
+Claude Code and Codex keep separate model configurations. Open a new terminal session after switching models. Cursor integration reads sessions, usage, and allowance.
+
+## Interface
+
+### Menu-bar popup
+
+Check models, official allowance, and running sessions; switch models or open a desktop page.
+
+<p><a href="docs/promo/popup.png"><img src="docs/promo/popup.png" width="460" alt="ClaudeBar menu-bar Popup"></a></p>
+
+### Island
+
+Agent status, completion alerts, and session details at the top of the screen. Multiple displays are supported: notched displays follow the hardware outline; other displays use a separate Focus deck.
+
+[![Expanded island and external-display Focus deck](docs/promo/island.png)](docs/promo/island.png)
+
+### Desktop window
+
+Overview shows weather, system load, power flow, and active sessions. Sessions includes tools, context, lifetime tokens, and estimated cost. The migration workspace creates new sessions in supported target clients from existing histories.
+
+[![Desktop overview](docs/promo/overview.png)](docs/promo/overview.png)
+
+[![Session workspace](docs/promo/sessions.png)](docs/promo/sessions.png)
+
+> The film and examples use production views with fixed demonstration data. Spatial layers and camera moves are presentation effects. Models, allowance, and costs are not real account data.
+
+## Features
+
+| Feature | What it does |
 | --- | --- |
-| Models and providers | Manage Claude Code and Codex models and upstream providers independently; import providers from one runtime into the other. |
-| Session monitoring | View Claude Code, Codex, and Cursor sessions, running state, context usage, and tool activity; return to a terminal or Cursor to continue working. |
-| Usage analysis | Explore token sources, composition, and activity by day, month, year, all time, or a custom date; view cost estimates and actual Cursor charges separately. |
-| Local proxy | Provide a local API endpoint with Chat / Responses conversion; enable recording to inspect conversations, tool calls, images, and raw payloads. |
-| VPN and networking | Bundled mihomo with subscriptions, node selection, latency tests, system proxy, and TUN; inspect domains, matched rules, and outbound routes. |
-| Connectors | View Skills, MCP servers, and plugins for Claude Code, Codex, and Cursor, plus machine-wide shared CLIs, with details and client-supported enable, disable, and remove operations. |
-| Mac status | Monitor weather, CPU / GPU, memory, disk, network, fans, and power; configure a charge limit on Macs with a built-in battery. |
+| Models and providers | Manage Claude Code / Codex independently; import providers, switch models, and inspect available models and capabilities. |
+| Automatic gateway | Add models to an Auto pool; route by task tier and capabilities, manage provider concurrency, queues, RPM / estimated TPM, and fallback attempts. Inspect routing and request lanes. |
+| Sessions and migration | Follow Claude Code, Codex, and Cursor activity and return to the client; choose a source, target, and history preview for migration. See the [migration contract](docs/technical/session-migration.md). |
+| Usage and costs | Explore tokens by time, source, and model, with an activity heatmap. Estimates and actual Cursor charges stay separate; missing values are not zero. |
+| Request inspection | A local API proxy accepts Chat / Responses / Anthropic clients. Enable payload recording to inspect conversations, tools, images, and raw data. |
+| VPN | Bundled mihomo with subscriptions, nodes, system proxy, and TUN; inspect proxy / direct traffic history and configure domain rules. |
+| Connectors and documents | Inspect Skills, MCP, plugins, and shared CLIs, with supported enable / disable operations. Read and edit Feishu documents in the workbench. |
+| Mac and desktop | Weather, greetings, CPU / GPU, memory, disk, fans, and battery; charge limits on supported hardware, screenshots, and a floating wooden fish. |
+| Matrix CLI | Use `mtx` for resources, sessions, usage, and supported model / VPN / connector controls. Performance mode releases the frontend while keeping background work and CLI access. |
 
-## Three interfaces, one workflow
+[![Automatic model gateway](docs/promo/gateway.png)](docs/promo/gateway.png)
 
-- **Menu-bar popup:** Check work status, models, allowance, and sessions with fewer window switches.
-- **Notch island:** See agent status, completion alerts, and expanded details on supported notched displays.
-- **Desktop window:** Access Overview, Models, Sessions, Usage, Traffic, VPN, and Connectors in light or dark appearance.
+### Local API
 
-### Work overview
+Enable the proxy and use `http://127.0.0.1:15721/v1` (configurable), sending the local token with each request. Use model `auto` for automatic routing. Requests are not retried after output starts.
 
-Weather and greeting, system load, power flow, and active sessions form the desktop overview.
+Payload recording is opt-in: enable it on the provider for Claude Code / Codex, or use the third-party traffic recording setting for other clients. See the [gateway guide](docs/LLM_GATEWAY.md). ⌘K opens page, model, and session search.
 
-[![ClaudeBar desktop overview](docs/promo/overview.png)](docs/promo/overview.png)
+### Terminal
 
-### Sessions and usage
+![Matrix CLI with example data](docs/assets/cli-matrix-preview.png)
 
-Sessions brings together context, tool activity, and running state. Usage shows sources, composition, and activity over a selected period.
+```bash
+mtx sessions count
+mtx system --json
+mtx -w 1
+mtx mode performance
+mtx mode desktop
+```
 
-[![ClaudeBar session monitoring](docs/promo/sessions.png)](docs/promo/sessions.png)
-
-[![ClaudeBar usage analysis](docs/promo/usage.png)](docs/promo/usage.png)
-
-> The film and images above are rendered from the project source with fixed demonstration data. Models, allowance, and costs illustrate the interface and do not represent actual account data.
-
-## Installation and setup
-
-**Requirements: macOS 15 or later, Apple Silicon (arm64).**
-
-1. Download the DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases/latest).
-2. Open the DMG, drag ClaudeBar into Applications, and launch the app.
-3. Configure providers and models in Models, then enable the local proxy in Settings as needed and turn on the system features you need under Permissions & Privacy.
-
-Claude Code and Codex model changes update their respective configuration files. **Open a new terminal session after switching to apply the configuration.** Cursor integration provides sessions, usage, and allowance information.
-
-With the local proxy enabled, third-party clients can use `http://127.0.0.1:<port>/v1`; the default port is `15721`, and the proxy requires its local token on every request. Viewing full conversations, tool calls, and raw payloads requires recording to be on: enable request payload recording on the provider for Claude Code / Codex, and use the third-party traffic recording switch under third-party access for other clients. Use ⌘K to jump to pages, sessions, or models, and ⌘⇧A for region capture when that feature is enabled.
-
-For installation blocks, permissions, and integration troubleshooting, see the [FAQ](docs/FAQ.md).
+The CLI is built with the app; command installation is explicit. Development uses `mtx-dev` with system integrations restricted. See the [CLI guide](docs/CLI.md) for installation and commands.
 
 ## Data and permissions
 
-ClaudeBar reads session and usage data from each client's local files. Model switching and connector enable/disable operations update configuration through the corresponding client's mechanisms. See [connector documentation](docs/technical/16-connectors.md) for supported operations.
+ClaudeBar reads local client history and usage. Model switching and some connector operations update client configuration. System features request permission when enabled.
 
-| Source or feature | Main paths and behavior |
+| Source | Path or behavior |
 | --- | --- |
-| Claude Code | Reads `~/.claude/`; model switching updates `~/.claude/settings.json`. |
-| Codex | Reads `~/.codex/`; model switching updates `~/.codex/config.toml`. |
-| Cursor | Reads `~/.cursor/projects/` and `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`; retrieves allowance and billing through Cursor endpoints. |
-| Proxy records | The access log is written to `~/Library/Application Support/ClaudeBar/logs/`; capture bodies are controlled by a provider's request payload recording or by the third-party traffic recording switch under third-party access. |
-| VPN | Core, subscriptions, and configuration are stored in `~/Library/Application Support/ClaudeBar/vpn/`. |
+| Claude Code | Reads `~/.claude/`; switching updates `~/.claude/settings.json`. |
+| Codex | Reads `~/.codex/`; switching updates `~/.codex/config.toml`. |
+| Cursor | Reads project records and `state.vscdb`; allowance and billing come from Cursor endpoints. |
+| ClaudeBar | Production data lives in `~/Library/Application Support/ClaudeBar/`; request logs and VPN files use `logs/` and `vpn/`. |
 
-ClaudeBar does not perform model inference. The local proxy forwards requests to configured upstreams; weather, allowance, billing, and subscription features contact their respective services. Connector inventory scans do not start MCP servers. Opening MCP details connects to the service and reads its tool list without invoking tools.
+Inference runs on the configured upstream. Weather, allowance, documents, and subscriptions contact their respective services. Connector inventory scans do not start MCP servers; opening MCP details connects and lists tools without calling them. Recorded payloads may contain conversation text.
 
-Features requiring system permissions are configured in Settings and authorized through macOS prompts. Proxy recordings may contain conversation and request content; handle them according to your project's data requirements.
+Token costs use published prices and are estimates, not bills. Actual Cursor charges are shown separately. CNY and USD remain separate unless conversion is selected with an explicit rate; missing rates restore separate totals.
 
-**Cost accounting:** Model costs are estimates based on tokens and published list prices, rather than actual invoices. Actual charges returned by Cursor are displayed separately with their applicable time window; amounts with different accounting bases or periods are not combined. CNY and USD are shown side by side by default; switching to a single currency converts at an explicit exchange rate, and falls back to the split display when no rate is available.
+## Development
 
-## Development and builds
-
-Use macOS, Xcode Command Line Tools (including the Swift compiler), and Python 3. See [development and channel isolation](docs/DEVELOPMENT.md) and [build and signing documentation](docs/technical/07-build-and-signing.md) for dependencies and implementation details.
+Requires macOS, Xcode Command Line Tools, and Python 3. Work on `dev` with the isolated ClaudeBar Dev identity; production configuration and running instances stay separate.
 
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
 cd ClaudeBar
-make ci
+git switch dev
+make setup
+make build
 ```
 
 | Command | Result |
 | --- | --- |
-| `make ci` | Compiles to `.build/dev/ClaudeBar Dev.app` without installing. |
-| `make build` | Builds the isolated development app in `.build/dev/ClaudeBar Dev.app`. |
-| `make run` | Builds and launches the development app. |
-| `make test-fast` / `make test TEST=core` | Runs focused unit regressions without building the app. |
-| `make release` | Builds `.build/release/ClaudeBar.app` without installing. |
-| `make test` | Runs the project's regression checks. |
-| `make package` | Creates the release DMG, zip, and SHA-256 files in `.build/dist/`. |
+| `make build` | Builds `.build/dev/ClaudeBar Dev.app`; no install or launch. |
+| `make run` | Builds and launches development. |
+| `make test-fast` / `make test TEST=core` | Fast regressions / one suite. |
+| `make test` | All regressions, without launching the app or real integrations. |
+| `make release` | Builds production without installing. |
+| `make package` | Produces DMG, zip, and SHA-256 files. |
 
-The [film production specification](docs/promo/prompt.md) documents the storyboard, motion, and rendering workflow. Run `python3 Tools/serve-promo.py` locally, then open `http://127.0.0.1:8808/docs/promo/film.html` for chapter playback.
+[Development guide](docs/DEVELOPMENT.md) · [Build and signing](docs/technical/07-build-and-signing.md) · [Release process](docs/RELEASING.md)
 
-## Documentation and contributing
+See the [film specification](docs/promo/prompt.md) to rebuild the video. Run `python3 Tools/serve-promo.py`, then open `http://127.0.0.1:8808/docs/promo/film.html` for chapter playback.
 
-[Documentation index](docs/README.md) · [FAQ](docs/FAQ.md) · [Changelog](docs/CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security reports](SECURITY.md) · [Versioning](docs/VERSIONING.md) · [Release process](docs/RELEASING.md)
+## Documentation and contribution
 
-When reporting an issue, include the macOS version, app version, reproduction steps, and relevant logs. Remove credentials, account information, and sensitive conversation content before sharing.
+[Documentation](docs/README.md) · [FAQ](docs/FAQ.md) · [Changelog](docs/CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+Include system and app versions and reproduction steps in reports. Remove keys, account details, and private conversations from logs. Future architecture and naming research lives in [Reviews](docs/reviews/README.md); this release does not claim a completed Rust migration or rename.
 
 ## License
 
-ClaudeBar project code is licensed under the [MIT License](LICENSE). Third-party components and assets retain their own licenses. Interface icons use Lucide (ISC), with notices in [Lucide.txt](Sources/Licenses/Lucide.txt). Font and other asset notices are listed in [ASSET-LICENSES.md](Sources/ClaudeBar/Resources/ASSET-LICENSES.md). See the [mihomo notes](vendor/mihomo/README.md) for VPN core packaging.
+Code: [MIT](LICENSE). Lucide icons: [ISC](Sources/Licenses/Lucide.txt). Fonts and other assets: [asset notices](Sources/ClaudeBar/Resources/ASSET-LICENSES.md). VPN core: [mihomo notes](vendor/mihomo/README.md).

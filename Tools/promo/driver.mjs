@@ -28,12 +28,14 @@ const FRAMES = join(BUILD, 'frames');
 // ---------------------------------------------------------------- timeline
 // prompt.md §4, in order. `dur` is scene-local; the driver adds the head start.
 export const TIMELINE = [
-  { n: 1, id: 'weather', dur: 10, title: '天气，是工作台的第一眼。', subtitle: '天空、问候、天气与今日读数，同在一张卡片。' },
-  { n: 2, id: 'popup', dur: 12, title: '展开，\n就是全局。', subtitle: '从一眼概览，到每条会话。' },
-  { n: 3, id: 'island', dur: 11, title: '把进度，留在余光里。', subtitle: '灵动岛：常驻状态 → 完成提醒 → 展开详情。' },
-  { n: 4, id: 'desktop', dur: 13, title: '从顶栏，走进你的桌面。', subtitle: '原生主窗口：天气、系统负载、能源流向与会话。' },
-  { n: 5, id: 'workspace', dur: 12, title: '每一层设计，都装着真实的工作。', subtitle: '会话、用量、流量，各自展开。' },
-  { n: 6, id: 'closing', dur: 8, title: '一套工作台，三种打开方式。', subtitle: '天气卡片 · 菜单栏 popup · 灵动岛 · 桌面主窗口' },
+  { n: 1, id: 'weather', dur: 4, title: '天气与今天的工作。', subtitle: '天气、问候和系统读数，打开就能看到。' },
+  { n: 2, id: 'popup', dur: 6, title: '模型、额度，\n会话进度。', subtitle: '在菜单栏查看，也能直接切换模型。' },
+  { n: 3, id: 'island', dur: 6, title: 'Agent 的进度，抬眼可见。', subtitle: '常驻状态、完成提醒与展开详情。' },
+  { n: 4, id: 'desktop', dur: 5, title: '需要细看时，打开桌面。', subtitle: '天气、系统负载、能源流向与活跃会话。' },
+  { n: 5, id: 'workspace', dur: 8, title: '从会话，看到每一次请求。', subtitle: '会话、用量与流量检查。' },
+  { n: 6, id: 'gateway', dur: 8, title: '模型网关，分发与排队都看得见。', subtitle: '按任务路由，按供应商管理并发与额度。' },
+  { n: 7, id: 'tools', dur: 9, title: '网络、文档与终端。', subtitle: 'VPN 流量分析 · 飞书文档 · Matrix CLI' },
+  { n: 8, id: 'closing', dur: 6, title: 'ClaudeBar', subtitle: '菜单栏 · 灵动岛 · 桌面工作台' },
 ];
 // Scenes use seconds directly; no hidden second time base or overlapping cuts.
 export const TOTAL_SECONDS = TIMELINE.reduce((sum, s) => sum + s.dur, 0);
@@ -75,6 +77,11 @@ const SURFACE_FILES = [
     `window-${page}-light`, `.build/mainwindow-preview/${page}-light.png`,
   ]),
   ['window-traffic-dark', '.build/mainwindow-preview/traffic-dark.png'],
+  ['gateway-routes', '.build/gateway-topology-preview/gateway-routes.png'],
+  ['gateway-queue', '.build/gateway-topology-preview/gateway-queue.png'],
+  ['vpn-analytics', '.build/vpn-preview/analytics-light.png'],
+  ['document', '.build/feishu-preview/document-1200-light.png'],
+  ['cli', 'docs/assets/cli-matrix-preview.png'],
   // The greeting filenames carry the render mode (`auto-` for the automatic
   // sky; the `face-*` variants drop it), so the film's four skies must name the
   // `auto-` renders rather than a bare `light-1100-*` the tool never writes.
@@ -150,7 +157,7 @@ async function capture(argv) {
   }, loadAssets());
 
   if (argv.includes('--motion-check')) {
-    for (const time of [5, 16, 29, 39, 52, 64]) {
+    for (const time of [2, 7, 13, 18, 24, 31, 35, 39, 42, 44, 51]) {
       await page.evaluate(t => window.draw(t), time);
       const first = await page.screenshot();
       const originalStyles = await page.locator('#film-stage').evaluate(el => el.innerHTML);
@@ -161,7 +168,7 @@ async function capture(argv) {
         throw new Error(`No actual perspective plane at ${time}`);
       await page.evaluate(t => window.draw(t), time + .35);
       const next = await page.screenshot();
-      if (time < 63 && first.equals(next)) throw new Error(`Static motion sample at ${time}`);
+      if (time < 50 && first.equals(next)) throw new Error(`Static motion sample at ${time}`);
       await page.evaluate(t => window.draw(t), time);
       const repeatStyles = await page.locator('#film-stage').evaluate(el => el.innerHTML);
       if (originalStyles !== repeatStyles) throw new Error(`History-dependent frame at ${time}`);
@@ -180,7 +187,7 @@ async function capture(argv) {
       }
       start += scene.dur;
     }
-    for (const [name, time] of [['poster', 5], ['overview', 37], ['sessions', 48], ['usage', 52]]) {
+    for (const [name, time] of [['poster', 2], ['overview', 18], ['sessions', 22.4], ['usage', 25], ['gateway', 31]]) {
       await page.evaluate(t => window.draw(t), time);
       await page.screenshot({ path: join(ROOT, `docs/promo/${name}.png`) });
     }
@@ -261,7 +268,7 @@ function encode() {
   // Anything much past ~8 MB is a README nobody finishes loading.
   console.log('  encoding gif…');
   const teaser = join(BUILD, 'teaser.mp4');
-  const clips = [[2, 6], [14, 18], [26, 30], [36, 40], [59, 63]];
+  const clips = [[1, 5], [10, 14], [21, 25], [29, 33], [38, 42]];
   const segments = clips.map(([a, b], i) => `[0:v]trim=start=${a}:end=${b},setpts=PTS-STARTPTS[v${i}]`).join(';');
   ffmpeg(['-i', mp4, '-filter_complex', segments + ';' + clips.map((_, i) => `[v${i}]`).join('') + `concat=n=${clips.length}:v=1:a=0[teaser]`,
     '-map', '[teaser]', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', teaser]);

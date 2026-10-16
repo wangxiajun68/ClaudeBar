@@ -89,10 +89,13 @@ def require_surfaces() -> None:
     """
     # Refresh from production on every full render, not only on missing files.
     for script in ('render-popup-preview.py', 'render-mainwindow-preview.py',
-                   'render-greeting-preview.py', 'render-island-preview.py'):
+                   'render-greeting-preview.py', 'render-island-preview.py',
+                   'render-model-gateway-preview.py', 'render-vpn-preview.py',
+                   'render-feishu-preview.py'):
         print(f'  rendering current surfaces with Tools/{script}…', flush=True)
         run([sys.executable, str(ROOT / 'Tools' / script)])
     run([sys.executable, str(ROOT / 'Tools/promo/key-island.py')])
+    run([sys.executable, str(ROOT / 'Tools/promo/readme-surfaces.py')])
 
 
 def install_deps() -> None:

@@ -1,74 +1,77 @@
-# ClaudeBar 空间宣传影片
+# ClaudeBar 产品影片
 
-用户明确要求：从天气卡片带入，介绍 popup、灵动岛与桌面 UI，突出设计感，提供丰富动画、层次感和空间感。
+当前版本：2026-10-16，1.17 发布素材。52 秒、1920×1080、30fps、1560 帧，静音 H.264 / yuv420p / faststart。相较旧版 66 秒影片，压缩天气与概览停留，增加网关、网络、文档和 CLI；整体保留连续空间转场。
 
-## 叙事与镜头
+## 时间轴与动效
 
-一段连续的空间旅程。先处在天空卡的特写中，再拉出完整卡片。卡片退到后景，菜单栏面板从侧后方旋入。完整 popup 停稳后，模型 / 会话 / 用量三层沿深度轴拆开，重新合拢并压缩到顶栏。灵动岛依次从常驻状态扩展为完成提醒和展开详情，再落到显示器顶边。镜头拉远见到桌面，在原生主窗口中浏览天气、系统仪表和能源流向。会话 / 用量 / 流量窗口像空间中的连续轨道一样接力，最后四种表面汇成工作台，收束到品牌。
-
-这些是宣传片中的空间编排和状态演示，并非录制的真实用户操作，也不意味着应用具有影片中的爆炸分层功能。
-
-## 技术与视觉
-
-- 1920×1080，30fps，66 秒，1980 帧，静音 H.264 / yuv420p / faststart。
-- 使用 CSS 3D 场景，透视距离 1600px、透视中心 50% / 46%。坐标为 translate3d 与 rotateX/Y/Z；视图具有真实透视缩短、遮挡顺序、接触阴影和前后景差速。
-- 画布使用深蓝石墨、偏蓝环境光与地面透视网格，天气和实际界面保留本身的颜色。阴影随空间关系定位，避免只有缩放的平面幻灯片。
-- 全部动画由给定时间 `t` 确定，禁止 CSS 无限循环、实时钟和随机输入。缓动为四次 ease-out 与 smoothstep。帧捕获使用完整 DOM 截图，不能只截背景 canvas。
-- 文案固定在底部留白带或 popup 左侧。片头允许短暂的局部特写，但完整天气卡随后必须全部可见。展开的 popup 各层不得截断在画布外，也不得在停稳时透出重叠正文。
-- 天气由应用源码渲染的晴 / 云 / 雨 / 夜状态交叠。阵雨阶段额外叠加 36 条随时间运动的雨线，与镜头保持透视关系。
-- 主窗口图片置于带标题栏的真实比例滚动视口中，按时间浏览长页面，不把整张长页挤成细小缩略图。
-
-## 时间轴
-
-| 时间 | 表面 | 动效与表达 |
+| 时间 | 内容 | 动作与停稳 |
 | --- | --- | --- |
-| 00:00–00:10 | 天气卡片 | 天空特写 → 拉远完整卡 → 晴云雨夜交叠、阵雨前景；卡片具有透视姿态 |
-| 00:10–00:22 | Popup | 侧后方旋入 → 完整面板停稳 → 三层沿 z 轴展开 → 合拢压缩到顶栏 |
-| 00:22–00:33 | 灵动岛 | 常驻 → 完成提醒 → 展开；黑色轮廓连续增大；随后归位到屏幕顶边 |
-| 00:33–00:46 | 桌面 UI | 显示器拉远 → 主窗口浮起 → 原生概览滚动，展示天气、仪表、能源与会话 |
-| 00:46–00:58 | 工作视图 | 会话 / 用量 / 流量窗口沿空间轨道旋入、停稳与旋出；用量纵向浏览 |
-| 00:58–01:06 | 收束 | 天气、popup、岛、桌面构成前后交错的工作台 → 退到后景 → 图标与品牌落定 |
+| 0–4s | 天气 | 天空特写拉出完整卡片，晴云雨夜交叠，末段向左后方退出 |
+| 4–10s | Popup | 侧后旋入，完整停稳，模型 / 会话 / 用量沿深度轴展开，合拢至顶栏 |
+| 10–16s | 灵动岛 | 常驻 → 完成提醒 → 展开详情，随后向显示器顶边归位 |
+| 16–21s | 桌面概览 | 显示器拉远，窗口浮起，滚动浏览天气、仪表与能源 |
+| 21–29s | 会话 / 用量 / 请求 | 约 2.67 秒一个视图，沿同一轨道进入、停稳和退出；用量页面纵向浏览 |
+| 29–37s | 模型网关 | 前四秒展示路由关系，后四秒展示真实视图渲染的队列航道；界面在可阅读的正面停稳 |
+| 37–46s | 网络 / 文档 / CLI | 每项三秒：VPN 历史分析、文档正文、终端观测；短入场、正面停留、同向退出 |
+| 46–52s | 收束 | 多个界面在空间汇集，退到后景，再落定图标、项目名与仓库地址 |
 
-场景元素跨越章界继续移动，不使用逐章黑场或卡片消失后换下一张的方式。时间轴只有一套秒数基准。
+分镜信息由 `Tools/promo/driver.mjs` 的 TIMELINE 执行，字幕和播放器按上表同步。旧镜头姿态通过 `shotTime` 映射到当前章节秒数；它只复用运动曲线，输出时钟仍是当前 52 秒时间轴。没有实时钟、随机输入或无限动画。
+
+每章抽查入场、早期、停稳、晚期与退出；章界检查前后一帧。视频中的分层、桌面边框和镜头是宣传编排，不表示产品具备爆炸分层等操作。
+
+## 视觉
+
+深蓝石墨背景、偏蓝环境光和透视地面；真实 UI 保持原生颜色。CSS 3D 使用 1600px 透视及 50% / 46% 的投影中心，以旋转、深度、遮挡和差速建立空间关系。标题固定在独立留白带，正文停稳时接近正面；不依靠持续摇晃制造运动。
+
+完整视图不得拉伸或越界。长页面放入符合比例的窗口视口，通过滚动呈现；CLI 按原图比例限制高度。Popup 完整展示后再分层，不叠压正文。纹理全部解码后捕获完整 DOM 画面。
 
 ## 素材与真实性
 
-生产 Swift 视图通过以下脚本渲染为固定演示数据纹理：
+| 素材 | 来源 |
+| --- | --- |
+| 天气 | `Tools/render-greeting-preview.py`，生产视图与固定数据；裁切去掉 48px 外边距，卡片 2200×948px |
+| Popup | `Tools/render-popup-preview.py`，920×1712px；三层源区 y=0/h=384、398/710、1120/592 |
+| 灵动岛 | `Tools/render-island-preview.py`，生产视图；`key-island.py` 仅清除连通的外部背景 |
+| 概览 / 会话 / 用量 / 请求 | `Tools/render-mainwindow-preview.py`，生产视图及隔离 store；不执行真实迁移或后台服务 |
+| 模型网关 | `Tools/render-model-gateway-preview.py`，固定请求状态的路由与队列；不是实际网络录制 |
+| VPN 历史分析 | `Tools/render-vpn-preview.py`，生产原生视图与临时目录样本，不启动内核 |
+| 文档正文 | `Tools/render-feishu-preview.py`，生产 Markdown 阅读 / 编辑表面；不是云端文档组件登录过程 |
+| CLI | 仓库既有 `docs/assets/cli-matrix-preview.png` 合成演示图，未访问真实终端账户数据 |
+| README 示例 | `Tools/promo/readme-surfaces.py`，复制 Popup，组合刘海屏与外接屏的最新原生预览 |
 
-- `Tools/render-greeting-preview.py`：天气卡片。去掉48px预览外边距，卡片完整2200×948px。
-- `Tools/render-popup-preview.py`：完整920×1712px面板；三层源区为 y=0/h=384、y=398/h=710、y=1120/h=592。
-- `Tools/render-island-preview.py` + `Tools/promo/key-island.py`：常驻、提醒与展开三种轮廓。
-- `Tools/render-mainwindow-preview.py`：原生概览、会话、用量与流量。流量固定数据包含用户、Read工具和助手正文。
+以上渲染是源码切片与固定样本的视图展示，不等于整应用运行。模型、额度、费用、文档和请求正文均为演示内容；不读取正式配置、密钥或私人会话。
 
-窗口标题栏、显示器边框、桌面环境与空间运动由影片构造；数据与正文来自固定演示模型。影片与播放器必须明示这一边界。源图不会经过 AI 重画，避免让模型名称、数字和布局失真。
-
-## 构建
+## 重建
 
 ```bash
 python3 Tools/render-promo-film.py --check
-node Tools/promo/driver.mjs --motion-check  # 依赖与素材准备后：3D位移/回跳检查
-python3 Tests/promo-key-regressions.py
 python3 Tools/render-promo-film.py --storyboard
-python3 Tools/render-promo-film.py
+node Tools/promo/driver.mjs --motion-check
+python3 Tests/promo-key-regressions.py
+python3 Tools/render-promo-film.py --reuse-surfaces
 python3 Tools/serve-promo.py
 ```
 
-全量构建默认刷新生产素材；在本次会话中已刷新素材时，可显式用 `--reuse-surfaces`。驱动执行 `Tools/promo/driver.mjs`，依赖与中间帧存在 `.build/promo/`。
+需要 Node、固定版本的 playwright-core、Google Chrome、Swift 工具链、Pillow 和 ffmpeg。依赖与中间帧位于 `.build/promo/`，生产脚本位于 `Tools/`。下载命令使用当前任务指定代理；工具不修改系统代理。
 
-交付：完整 MP4、20秒动画 GIF 预览、高清天气封面、桌面介绍图、响应式 `film.html`、视频外中文字幕。播放器章节为0、10、22、33、46、58秒，与成片一致。预览服务支持 Range，以保证跳转和拖动进度有效。
+先刷新素材和检查分镜，再全量捕获 1560 帧并编码。仅在本轮素材已刷新后使用 `--reuse-surfaces`。时间轴或全局素材改变必须重建全序列；不能把旧 1980 帧缓存混入本版。
 
-## 验证
+输出包括 MP4、20 秒 / 800px / 6fps 的 GIF、poster / overview / sessions / usage / gateway PNG、Popup / island 示例、中文字幕和章节播放器。GIF 只作轻量预览，不用它判断成片帧率。
 
-检查每段的入场、停稳、展开、退出与跨章共享画面；检查正文不重叠、纹理解码完整、完整天气 / popup / 灵动岛停留画面不越界。桌面和手机检查播放器。编码后检查66秒、1980帧、H.264与完整解码，并抽取运动跨度中的多个帧验证真实位移、旋转与层间差速。
+完整解码检查：
 
-透明轮廓只移除与预览外角连通的背景，保留岛内浅色正文。部分修复可用 `node Tools/promo/driver.mjs --range 21.9:36,57.5:66 --frames`，仅限已有同一时间轴的完整帧序列，再统一 `--encode`。
-
-## 可复用技能
-
-本仓库保存 [product-promo-film](../../skills/product-promo-film/SKILL.md) 技能源文件，包含通用制作流程、ClaudeBar 编辑适配与视频验收脚本。需要在其他环境使用时，将 `skills/product-promo-film/` 复制到该环境的 Codex 用户技能目录；后续可通过 `$product-promo-film` 发起版本更新或局部编辑。
+```bash
+python3 skills/product-promo-film/scripts/inspect_video.py docs/promo/claudebar.mp4 --width 1920 --height 1080 --fps 30 --duration 52 --frames 1560 --codec h264 --pixel-format yuv420p --count-frames --decode
+```
 
 ## GitHub README 视频播放
 
-中英文 README 使用单独成段的 GitHub 视频附件地址，显示原生点击播放控件。仓库 MP4 链接用于下载高清原片；GIF 不再作为 README 主预览。当前附件为完整66秒、1080p/30fps的播放版，约7.8MB；高清原片保留不变。
+双语 README 使用单独成段的 GitHub 视频附件 URL，原生播放器提供点击播放；仓库 MP4 用于高清下载。更新成片时生成小于 10MB 的 H.264 播放版并重新上传附件，同时替换两版 README 链接，不能沿用旧片地址。
 
-更新影片后，从高清 MP4 生成小于10MB的 H.264 播放版，例如 `ffmpeg -i docs/promo/claudebar.mp4 -c:v libx264 -preset fast -crf 26 -pix_fmt yuv420p -movflags +faststart -an .build/promo/readme.mp4`，验证时长、帧数和解码后，通过 GitHub Markdown 编辑器的附件入口上传。将生成的 `https://github.com/user-attachments/assets/...` 地址同时更新到两版 README，保持空行分段，不包在 HTML `<p>` 或 Markdown 链接中。预览及推送后检查播放按钮与完整播放时长。网页附件上传不要求提交编辑器中的临时内容。
+```bash
+ffmpeg -i docs/promo/claudebar.mp4 -c:v libx264 -preset fast -crf 26 -pix_fmt yuv420p -movflags +faststart -an .build/promo/readme.mp4
+```
+
+可通过 GitHub Markdown 编辑器上传附件，不必创建 Issue 或提交临时网页编辑。播放器位于 `http://127.0.0.1:8808/docs/promo/film.html`；验证桌面 / 手机布局、字幕、章节和字节 Range。实际检查结果记录在 DESIGN.md，未做的检查不得标记完成。
+
+本仓库的可复用制作技能见 [product-promo-film](../../skills/product-promo-film/SKILL.md)。

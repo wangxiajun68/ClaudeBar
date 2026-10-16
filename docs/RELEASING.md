@@ -46,7 +46,7 @@ open .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.dmg
 
 ## 发版步骤
 
-1. `main` 处于要发布的提交（CI 绿）。
+1. `dev` 处于要发布的提交（CI 绿）；tag 从该提交创建。main 作为发布入口，在本地验证完成后从 dev 快进同步。
 2. 按 [VERSIONING.md](VERSIONING.md) 更新 `VERSION`，并把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成 `## [x.y.z] — 日期`。
 3. 提交，例如 `chore(release): 1.15.1`。
 4. 打 tag 并推送：
@@ -54,7 +54,8 @@ open .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.dmg
 ```bash
 VERSION=$(tr -d '[:space:]' < VERSION)
 git tag -a "v${VERSION}" -m "ClaudeBar ${VERSION}"
-git push origin main
+git push origin dev
+git push origin dev:main  # 仅允许快进；main 与发布提交保持一致
 git push origin "v${VERSION}"
 ```
 

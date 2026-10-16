@@ -78,6 +78,11 @@ export function setupFilm(assets) {
   windowPlane('sessions', 'window-sessions-light');
   windowPlane('usage', 'window-usage-light');
   windowPlane('traffic', 'window-traffic-dark', true);
+  windowPlane('gateway-routes', 'gateway-routes');
+  windowPlane('gateway-queue', 'gateway-queue');
+  windowPlane('vpn-analytics', 'vpn-analytics');
+  windowPlane('document', 'document');
+  addPlane('cli', texture('cli', null, 18), 'cli');
   addPlane('icon', texture('icon', null, 180), 'icon');
   // A physical screen rim locates the notch, rather than leaving a black tile
   // floating without context. Its interior is a designed presentation backdrop.
@@ -198,7 +203,27 @@ function renderGallery(t) {
     scrollWindow(id, scroll);
   });
 }
-function renderClosing(t) {
+function renderGateway(t) {
+  const enter = progress(t, 57.0, 59.6);
+  const handoff = smooth(t, 62.1, 64.3);
+  const leave = smooth(t, 67.8, 70.0);
+  pose('gateway-routes', {
+    x: between(1400, -40, enter) - handoff * 1360,
+    y: -15, z: between(-420, 55, enter) - handoff * 240,
+    ry: between(-30, 0, enter) + handoff * 24, rx: 1,
+    w: 1200, h: 740, alpha: enter * (1 - handoff),
+  });
+  scrollWindow('gateway-routes', .62 + smooth(t, 59.8, 62.1) * .25);
+  pose('gateway-queue', {
+    x: between(1400, 0, handoff) - leave * 1380,
+    y: -15, z: between(-300, 55, handoff) - leave * 250,
+    ry: between(-28, 0, handoff) + leave * 24, rx: 1,
+    w: 1200, h: 740, alpha: handoff * (1 - leave),
+  });
+  scrollWindow('gateway-queue', smooth(t, 65.5, 68.3) * .35);
+}
+function renderClosing(time) {
+  const t = time - 12;
   const gather = progress(t, 57.5, 60.5), quiet = smooth(t, 61.4, 63.2);
   if (t >= 57.5) {
     pose('sky-sun', { x: -440, y: -130, z: -200, rx: 10, ry: 20, rz: -4,
@@ -228,11 +253,37 @@ function renderCopy(t) {
   copy.className = `copy ${s.id === 'popup' ? 'left' : 'bottom'}`;
   document.getElementById('headline').textContent = s.title;
   let subtitle = s.subtitle;
-  if (s.id === 'workspace') subtitle = t < 50 ? '会话：看清上下文、工具与运行状态。' : t < 54 ? '用量：来源、构成与费用分开看。' : '流量：查看对话与工具调用，追踪一次请求。';
+  if (s.id === 'workspace') subtitle = t < 23.67 ? '会话：看清上下文、工具与运行状态。' : t < 26.33 ? '用量：来源、构成与费用分开看。' : '流量：查看对话与工具调用，追踪一次请求。';
+  if (s.id === 'gateway') subtitle = t < 33 ? '任务档位与模型之间的路由关系，直接查看。' : '排队、连接、等待、输出，沿请求航道依次展开。';
+  if (s.id === 'tools') subtitle = t < 40 ? 'VPN：代理与直连流量，历史趋势与域名规则。' : t < 43 ? '飞书文档：在工作台内阅读与编辑。' : 'Matrix CLI：终端观测与无界面的性能模式。';
   document.getElementById('subline').textContent = subtitle;
   copy.style.opacity = alpha;
   copy.style.transform = `translateY(${(1 - alpha) * 24}px)`;
   copy.style.filter = `blur(${(1 - alpha) * 5}px)`;
+}
+// Shared shot grammar uses its original scene clock; chapter timing remains
+// defined by CUT_DATA. This mapping shortens the cut without stale time offsets.
+function shotTime(t) {
+  const original = [[0,10],[10,22],[22,33],[33,46],[46,58],[58,70],[70,70],[70,78]];
+  const index = CUT_DATA.findLastIndex(s => t >= s.start);
+  const i = Math.max(0, index), cut = CUT_DATA[i], [a,b] = original[i];
+  return between(a, b, motionClamp((t - cut.start) / cut.dur));
+}
+function renderTools(t) {
+  if (t < 36.5 || t >= 46.5) return;
+  const ids = ['vpn-analytics', 'document', 'cli'];
+  ids.forEach((id, i) => {
+    const a = 37 + i * 3, enter = progress(t, a - .45, a + .5);
+    const exit = smooth(t, a + 2.55, a + 3.45);
+    const img = motionAssets[id];
+    const h = id === 'cli' ? 700 : 720;
+    const w = id === 'cli' ? h * img.width / img.height : 1200;
+    pose(id, { x: between(1370, 0, enter) - exit * 1370,
+      y: -10, z: between(-260, 30, enter) - exit * 170,
+      ry: between(-24, 0, enter) + exit * 22, rx: 0,
+      w, h, alpha: enter * (1 - exit) });
+    if (id !== 'cli') scrollWindow(id, smooth(t, a + .8, a + 2.5) * .25);
+  });
 }
 export function renderFilm(t) {
   if (!Number.isFinite(t)) throw new Error('Film time must be finite');
@@ -243,6 +294,13 @@ export function renderFilm(t) {
   document.getElementById('ground').style.transform = `translateX(-50%) rotateX(68deg) rotateZ(${between(-8, 8, smooth(t, 0, 60))}deg)`;
   document.getElementById('brand').style.opacity = progress(t, 2.8, 4.5);
   for (const el of Object.values(motionNodes)) el.style.display = 'none';
-  renderWeather(t); renderPopup(t); renderIsland(t); renderDesktop(t); renderGallery(t); renderClosing(t); renderCopy(t);
+  const shot = shotTime(t);
+  if (t < 37 || t >= 46) {
+    renderWeather(shot); renderPopup(shot); renderIsland(shot); renderDesktop(shot); renderGallery(shot); renderGateway(shot);
+    if (t >= 46) renderClosing(shot);
+    else document.getElementById('end-lockup').style.opacity = 0;
+  }
+  else { document.getElementById('end-lockup').style.opacity = 0; document.getElementById('layer-labels').style.opacity = 0; document.getElementById('island-halo').style.opacity = 0; }
+  renderTools(t); renderCopy(t);
   return `cinematic @ ${t.toFixed(3)}`;
 }
